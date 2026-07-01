@@ -250,5 +250,5 @@ ModelManifest.xml
 Src/ILGPU.Optix/OptixPayload.cs
 Src/ILGPU.Optix/OptixTrace.cs
 .claude
-examples
+example
 docs

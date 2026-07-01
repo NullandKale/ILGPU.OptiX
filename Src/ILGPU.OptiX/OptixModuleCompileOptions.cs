@@ -45,6 +45,19 @@ namespace ILGPU.OptiX
         /// set to 0 if unused
         /// </summary>
         public uint NumBoundValues;
+
+        /// <summary>
+        /// The number of different payload types available for compilation. Must be
+        /// zero if <see cref="OptixPipelineCompileOptions.NumPayloadValues"/> is not
+        /// zero. Set to 0 if unused.
+        /// </summary>
+        public uint NumPayloadTypes;
+
+        /// <summary>
+        /// Points to host array of payload type definitions, size must match
+        /// <see cref="NumPayloadTypes"/>. IntPtr.Zero if unused.
+        /// </summary>
+        public IntPtr PayloadTypes;
     }
 }
 

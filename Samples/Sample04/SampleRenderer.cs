@@ -94,7 +94,7 @@ namespace Sample04
         Action<Index1D, int, int, ArrayView<byte>, ArrayView<byte>> flipBitmap;
 
         //world data
-        Camera camera;
+        public Camera camera { get; private set; }
         TriangleMesh model;
         MemoryBuffer1D<byte, Stride1D.Dense> asBuffer;
         IntPtr traversable;
@@ -118,7 +118,7 @@ namespace Sample04
             pipelineCompileOptions = new OptixPipelineCompileOptions()
             {
                 TraversableGraphFlags = OptixTraversableGraphFlags.OPTIX_TRAVERSABLE_GRAPH_FLAG_ALLOW_SINGLE_GAS,
-                NumPayloadValues = 2,
+                NumPayloadValues = 3,
                 NumAttributeValues = 2,
                 ExceptionFlags = OptixExceptionFlags.OPTIX_EXCEPTION_FLAG_NONE,
                 PipelineLaunchParamsVariableName = OptixLaunchParams.VariableName
@@ -231,7 +231,7 @@ namespace Sample04
                 {
                     ColorBuffer = (uint*)colorBuffer0.NativePtr,
                     camera = this.camera,
-                    traversable = this.traversable
+                    traversable = unchecked((ulong)this.traversable.ToInt64())
                 };
             }
         }
@@ -290,19 +290,21 @@ namespace Sample04
             };
 
             using MemoryBuffer1D<byte, Stride1D.Dense> tempBuffer = accelerator.Allocate1D<byte>((long)blasBufferSizes.TempSizeInBytes);
-            using MemoryBuffer1D<byte, Stride1D.Dense> outputBuffer = accelerator.Allocate1D<byte>((long)blasBufferSizes.OutputSizeInBytes);
 
-            asHandle = deviceContext.AccelBuild(accelerator.DefaultStream, accelOptions, buildInputs, tempBuffer, outputBuffer, emitDesc);
+            // asBuffer must outlive this method - the traversable handle returned by
+            // AccelBuild points into it, so it's kept as a class field and disposed
+            // alongside the rest of the renderer rather than compacted/freed here.
+            asBuffer = accelerator.Allocate1D<byte>((long)blasBufferSizes.OutputSizeInBytes);
 
-            ulong compactedSize = 0;
-            compactedSizeBuffer.View.CopyToCPU(ref compactedSize, 1);
-            asBuffer = accelerator.Allocate1D<byte>((long)compactedSize);
+            asHandle = deviceContext.AccelBuild(accelerator.DefaultStream, accelOptions, buildInputs, tempBuffer, asBuffer, emitDesc);
 
             return asHandle;
         }
 
         public void setCamera(Camera camera)
         {
+            this.camera = camera;
+            launchParams.camera = new Camera(camera, width, height);
         }
 
         public void render()

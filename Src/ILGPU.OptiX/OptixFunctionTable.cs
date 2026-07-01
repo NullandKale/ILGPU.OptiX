@@ -15,10 +15,20 @@ using System;
 
 namespace ILGPU.OptiX
 {
+    // Mirrors OptixFunctionTable in optix_function_table.h (OptiX SDK 9.0.0, ABI 105 -
+    // this is the exact version the nvoptix.dll bundled with the installed driver
+    // ships, confirmed via its file version; see OptixAPI.Init.cs for why this can
+    // differ from the newest SDK you have headers for). The driver fills this struct
+    // positionally via optixQueryFunctionTable, so every field must be present in this
+    // exact order even if unused by this binding - see docs/OPTIX_ROADMAP.md for the
+    // audit process.
     internal struct OptixFunctionTable
     {
+        // Error handling
         public IntPtr OptixGetErrorName;
         public IntPtr OptixGetErrorString;
+
+        // Device context
         public IntPtr OptixDeviceContextCreate;
         public IntPtr OptixDeviceContextDestroy;
         public IntPtr OptixDeviceContextGetProperty;
@@ -29,32 +39,62 @@ namespace ILGPU.OptiX
         public IntPtr OptixDeviceContextGetCacheEnabled;
         public IntPtr OptixDeviceContextGetCacheLocation;
         public IntPtr OptixDeviceContextGetCacheDatabaseSizes;
-        public IntPtr OptixModuleCreateFromPTX;
+
+        // Modules
+        public IntPtr OptixModuleCreate;
+        public IntPtr OptixModuleCreateWithTasks;
+        public IntPtr OptixModuleGetCompilationState;
         public IntPtr OptixModuleDestroy;
         public IntPtr OptixBuiltinISModuleGet;
+
+        // Tasks
+        public IntPtr OptixTaskExecute;
+
+        // Program groups
         public IntPtr OptixProgramGroupCreate;
         public IntPtr OptixProgramGroupDestroy;
         public IntPtr OptixProgramGroupGetStackSize;
+
+        // Pipeline
         public IntPtr OptixPipelineCreate;
         public IntPtr OptixPipelineDestroy;
         public IntPtr OptixPipelineSetStackSize;
+
+        // Acceleration structures
         public IntPtr OptixAccelComputeMemoryUsage;
         public IntPtr OptixAccelBuild;
         public IntPtr OptixAccelGetRelocationInfo;
-        public IntPtr OptixAccelCheckRelocationCompatibility;
+        public IntPtr OptixCheckRelocationCompatibility;
         public IntPtr OptixAccelRelocate;
         public IntPtr OptixAccelCompact;
+        public IntPtr OptixAccelEmitProperty;
         public IntPtr OptixConvertPointerToTraversableHandle;
+        public IntPtr OptixOpacityMicromapArrayComputeMemoryUsage;
+        public IntPtr OptixOpacityMicromapArrayBuild;
+        public IntPtr OptixOpacityMicromapArrayGetRelocationInfo;
+        public IntPtr OptixOpacityMicromapArrayRelocate;
+        public IntPtr OptixDisplacementMicromapArrayComputeMemoryUsage;
+        public IntPtr OptixDisplacementMicromapArrayBuild;
+        public IntPtr OptixClusterAccelComputeMemoryUsage;
+        public IntPtr OptixClusterAccelBuild;
+
+        // Launch
         public IntPtr OptixSbtRecordPackHeader;
         public IntPtr OptixLaunch;
+
+        // Cooperative Vector
+        public IntPtr OptixCoopVecMatrixConvert;
+        public IntPtr OptixCoopVecMatrixComputeSize;
+
+        // Denoiser
         public IntPtr OptixDenoiserCreate;
         public IntPtr OptixDenoiserDestroy;
         public IntPtr OptixDenoiserComputeMemoryResources;
         public IntPtr OptixDenoiserSetup;
         public IntPtr OptixDenoiserInvoke;
-        public IntPtr OptixDenoiserSetModel;
         public IntPtr OptixDenoiserComputeIntensity;
         public IntPtr OptixDenoiserComputeAverageColor;
+        public IntPtr OptixDenoiserCreateWithUserModel;
     }
 
     internal delegate OptixResult DeviceContextCreate(
@@ -64,7 +104,7 @@ namespace ILGPU.OptiX
 
     internal delegate OptixResult DeviceContextDestroy(IntPtr deviceContext);
 
-    internal delegate OptixResult ModuleCreateFromPTX(
+    internal delegate OptixResult ModuleCreate(
         IntPtr deviceContext,
         IntPtr moduleCompileOptions,
         IntPtr pipelineCompileOptions,

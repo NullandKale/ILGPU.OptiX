@@ -221,6 +221,12 @@ namespace ILGPU.OptiX
                     kernelPrefix,
                     out entryFunctionName);
 
+            System.IO.File.WriteAllText(
+                System.IO.Path.Combine(
+                    System.IO.Path.GetTempPath(),
+                    $"ilgpu-optix-debug-{kernelPrefix}.ptx"),
+                ptxAssembly);
+
             return deviceContext.CreateModule(
                 moduleCompileOptions,
                 pipelineCompileOptions,
@@ -246,7 +252,7 @@ namespace ILGPU.OptiX
             if (deviceContext == null)
                 throw new ArgumentNullException(nameof(deviceContext));
 
-            var result = OptixAPI.Current.ModuleCreateFromPTX(
+            var result = OptixAPI.Current.ModuleCreate(
                 deviceContext.DeviceContextPtr,
                 moduleCompileOptions,
                 pipelineCompileOptions,

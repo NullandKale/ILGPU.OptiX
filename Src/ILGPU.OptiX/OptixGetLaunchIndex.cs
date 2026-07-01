@@ -20,6 +20,8 @@ namespace ILGPU.OptiX
     [CLSCompliant(false)]
     public static class OptixGetLaunchIndex
     {
+        public static Index2D AsIndex2D => new Index2D((int)X, (int)Y);
+
         public static uint X
         {
             get

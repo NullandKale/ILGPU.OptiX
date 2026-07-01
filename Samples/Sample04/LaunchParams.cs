@@ -9,8 +9,6 @@
 // Source License. See LICENSE.txt for details.
 // ---------------------------------------------------------------------------------------
 
-using System;
-
 namespace Sample04
 {
     public unsafe struct LaunchParams
@@ -18,6 +16,6 @@ namespace Sample04
         public int FrameID;
         public uint* ColorBuffer;
         public Camera camera;
-        public IntPtr traversable;
+        public ulong traversable;
     }
 }

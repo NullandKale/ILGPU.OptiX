@@ -14,9 +14,28 @@ using Microsoft.Win32;
 using Microsoft.Win32.SafeHandles;
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.Runtime.InteropServices;
+
+// This binding targets NVIDIA OptiX SDK 9.0.0 (ABI version 105) - this is the exact
+// version the nvoptix.dll bundled with the installed graphics driver ships (confirmed
+// via its file version), which is NOT necessarily the same as the latest OptiX SDK you
+// might have installed for headers (ABI is driver-runtime-bound, not SDK-download-
+// bound - a newer SDK's ABI can be rejected with OPTIX_ERROR_UNSUPPORTED_ABI_VERSION
+// even on a recent driver if the driver's bundled OptiX runtime hasn't caught up).
+// Ground-truth headers live at
+// "C:\ProgramData\NVIDIA Corporation\OptiX SDK 9.0.0\include" (optix_types.h for
+// structs/enums, optix_function_table.h for the ABI version and OptixFunctionTable
+// layout, internal/optix_device_impl.h for device-side intrinsic pseudo-call
+// conventions used by OptixTrace.tt/OptixPayload.tt). When upgrading, first check
+// nvoptix.dll's actual file version (Windows: right-click properties, or PowerShell
+// (Get-Item <path>).VersionInfo) against the driver you're targeting - don't just grab
+// the newest SDK - then diff every struct/enum/function-pointer in this project
+// against the matching SDK's headers field-for-field - silent field/order drift here
+// causes native heap corruption or cryptic driver-side compile errors, not C# compile
+// errors. See docs/OPTIX_ROADMAP.md for the full audit checklist.
 
 namespace ILGPU.OptiX
 {
@@ -25,7 +44,7 @@ namespace ILGPU.OptiX
         #region Static
 
         [SuppressMessage("Naming", "CA1707:Identifiers should not contain underscores")]
-        public const int OPTIX_ABI_VERSION = 41;
+        public const int OPTIX_ABI_VERSION = 105;
 
         private delegate OptixResult OptixQueryFunctionTable(
             int abiId,
@@ -54,6 +73,11 @@ namespace ILGPU.OptiX
                 return OptixResult.OPTIX_ERROR_ENTRY_SYMBOL_NOT_FOUND;
 
             var functionTableSize = Marshal.SizeOf<OptixFunctionTable>();
+            Debug.Assert(
+                functionTableSize == IntPtr.Size * 52,
+                "OptixFunctionTable field count no longer matches the native " +
+                "OptixFunctionTable (52 function pointers in OptiX SDK 9.0.0) - " +
+                "re-check optix_function_table.h. See docs/OPTIX_ROADMAP.md.");
             using var functionTablePtr = SafeHGlobal.Alloc(functionTableSize);
 
             var query =

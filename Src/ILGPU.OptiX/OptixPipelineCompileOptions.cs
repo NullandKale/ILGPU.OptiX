@@ -9,6 +9,7 @@
 // Source License. See LICENSE.txt for details.
 // ---------------------------------------------------------------------------------------
 
+using System;
 using System.Runtime.InteropServices;
 
 #pragma warning disable CA1051 // Do not declare visible instance fields
@@ -16,6 +17,7 @@ using System.Runtime.InteropServices;
 
 namespace ILGPU.OptiX
 {
+    [CLSCompliant(false)]
     public struct OptixPipelineCompileOptions
     {
         /// <summary>
@@ -59,6 +61,18 @@ namespace ILGPU.OptiX
         /// OPTIX_PRIMITIVE_TYPE_FLAGS_TRIANGLE.
         /// </summary>
         public OptixPrimitiveTypeFlags UsesPrimitiveTypeFlags;
+
+        /// <summary>
+        /// Boolean value indicating whether opacity micromaps may be used.
+        /// </summary>
+        public int AllowOpacityMicromaps;
+
+        /// <summary>
+        /// Boolean value indicating whether clusters (cluster acceleration
+        /// structures) may be used. This value MUST be set if clusters are present in
+        /// the BVH, otherwise validation will return an error.
+        /// </summary>
+        public int AllowClusteredGeometry;
     }
 }
 

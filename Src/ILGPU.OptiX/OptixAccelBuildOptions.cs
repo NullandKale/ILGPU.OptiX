@@ -33,6 +33,7 @@ namespace ILGPU.OptiX
         OPTIX_BUILD_FLAG_PREFER_FAST_TRACE = 1u << 2,
         OPTIX_BUILD_FLAG_PREFER_FAST_BUILD = 1u << 3,
         OPTIX_BUILD_FLAG_ALLOW_RANDOM_VERTEX_ACCESS = 1u << 4,
+        OPTIX_BUILD_FLAG_ALLOW_RANDOM_INSTANCE_ACCESS = 1u << 5,
     }
 
     public enum OptixBuildOperation

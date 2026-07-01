@@ -24,11 +24,6 @@ namespace ILGPU.OptiX
         /// launched, but can't trace any rays. The maximum allowed value is 31.
         /// </summary>
         public uint MaxTraceDepth;
-
-        /// <summary>
-        /// Generate debug information.
-        /// </summary>
-        public OptixCompileDebugLevel DebugLevel;
     }
 }
 

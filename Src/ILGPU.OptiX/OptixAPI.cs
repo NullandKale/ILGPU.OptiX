@@ -95,7 +95,7 @@ namespace ILGPU.OptiX
         /// <param name="logString">Filled in with the log string.</param>
         /// <returns>The OptiX result.</returns>
         [CLSCompliant(false)]
-        public unsafe OptixResult ModuleCreateFromPTX(
+        public unsafe OptixResult ModuleCreate(
             IntPtr deviceContext,
             OptixModuleCompileOptions moduleCompileOptions,
             OptixPipelineCompileOptions pipelineCompileOptions,
@@ -103,7 +103,7 @@ namespace ILGPU.OptiX
             out IntPtr module,
             out string logString)
         {
-            var func = Marshal.GetDelegateForFunctionPointer<ModuleCreateFromPTX>(functionTable.OptixModuleCreateFromPTX);
+            var func = Marshal.GetDelegateForFunctionPointer<ModuleCreate>(functionTable.OptixModuleCreate);
 
             using var moduleCompileOptionsPtr = SafeHGlobal.AllocFrom(moduleCompileOptions);
             using var pipelineCompileOptionsPtr = SafeHGlobal.AllocFrom(pipelineCompileOptions);

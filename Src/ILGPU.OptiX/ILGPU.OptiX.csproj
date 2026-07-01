@@ -34,7 +34,7 @@
     </ItemGroup>
 
     <ItemGroup>
-      <PackageReference Include="ILGPU" Version="1.2.0" />
+      <PackageReference Include="ILGPU" Version="1.5.3" />
       <PackageReference Include="T4.Build" Version="0.2.4" />
     </ItemGroup>
 

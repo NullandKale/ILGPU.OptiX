@@ -1,16 +1,16 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <OutputType>WinExe</OutputType>
-    <TargetFrameworks>net471;net6.0-windows</TargetFrameworks>
+    <OutputType>Exe</OutputType>
+    <TargetFrameworks>net471;net8.0-windows</TargetFrameworks>
     <UseWPF>true</UseWPF>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <LangVersion>8.0</LangVersion>
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="ILGPU.Algorithms" Version="1.2.0" />
-    <PackageReference Include="ILGPU" Version="1.2.0" />
+    <PackageReference Include="ILGPU.Algorithms" Version="1.5.3" />
+    <PackageReference Include="ILGPU" Version="1.5.3" />
   </ItemGroup>
 
   <ItemGroup>

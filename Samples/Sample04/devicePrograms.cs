@@ -10,6 +10,7 @@
 // ---------------------------------------------------------------------------------------
 
 using ILGPU;
+using ILGPU.Algorithms;
 using ILGPU.OptiX;
 
 namespace Sample04
@@ -20,11 +21,44 @@ namespace Sample04
         {
             var ix = OptixGetLaunchIndex.X;
             var iy = OptixGetLaunchIndex.Y;
-            int frameID = launchParams.FrameID;
+            var camera = launchParams.camera;
 
-            uint r = ((uint)((ix + frameID) % 256));
-            uint g = ((uint)((iy + frameID) % 256));
-            uint b = ((uint)((ix + iy + frameID) % 256));
+            float screenX = (2f * ((ix + 0.5f) * camera.reciprocalWidth)) - 1f;
+            float screenY = (2f * ((iy + 0.5f) * camera.reciprocalHeight)) - 1f;
+
+            Vec3 rayDir = Vec3.unitVector(camera.axis.transform(
+                new Vec3(screenX * camera.aspectRatio, screenY, camera.cameraPlaneDist)));
+
+            // per-ray color is passed back via payload registers as bit-reinterpreted
+            // floats (ILGPU has no support for pointer<->integer conversions inside a
+            // kernel, so the usual optix7course "packed pointer to a PRD" trick doesn't
+            // work here).
+            uint p0 = 0, p1 = 0, p2 = 0;
+
+            OptixTrace.Trace(
+                launchParams.traversable,
+                (camera.origin.x, camera.origin.y, camera.origin.z),
+                (rayDir.x, rayDir.y, rayDir.z),
+                1e-3f,
+                1e20f,
+                0.0f,
+                0xff,
+                OptixRayFlags.OPTIX_RAY_FLAG_DISABLE_ANYHIT,
+                0,
+                1,
+                0,
+                ref p0,
+                ref p1,
+                ref p2);
+
+            Vec3 pixelColor = new Vec3(
+                Interop.IntAsFloat(p0),
+                Interop.IntAsFloat(p1),
+                Interop.IntAsFloat(p2));
+
+            uint r = (uint)(XMath.Clamp(pixelColor.x, 0f, 1f) * 255f);
+            uint g = (uint)(XMath.Clamp(pixelColor.y, 0f, 1f) * 255f);
+            uint b = (uint)(XMath.Clamp(pixelColor.z, 0f, 1f) * 255f);
 
             // convert to 32-bit bgra value (we explicitly set alpha to 0xff
             // to make stb_image_write happy ...
@@ -36,13 +70,28 @@ namespace Sample04
         }
 
         public static void __miss__radiance(LaunchParams launchParams)
-        { }
+        {
+            SetPRD(launchParams.camera.noHitColor);
+        }
 
         public static void __closest__radiance(LaunchParams launchParams)
-        { }
+        {
+            // no attribute/hit-info wrappers are exposed by ILGPU.OptiX yet
+            // (e.g. barycentrics, geometric normal), so hits are shaded flat. Uses a
+            // color distinct from camera.noHitColor so hit vs. miss is visually
+            // distinguishable.
+            SetPRD(new Vec3(0.9f, 0.2f, 0.2f));
+        }
 
         public static void __anyhit__radiance(LaunchParams launchParams)
         { }
+
+        private static void SetPRD(Vec3 color)
+        {
+            OptixPayload.Payload0 = Interop.FloatAsInt(color.x);
+            OptixPayload.Payload1 = Interop.FloatAsInt(color.y);
+            OptixPayload.Payload2 = Interop.FloatAsInt(color.z);
+        }
 
         public static void flipBitmap(Index1D index, int width, int height, ArrayView<byte> source, ArrayView<byte> dest)
         {

@@ -2,13 +2,13 @@
   
   <PropertyGroup>
     <OutputType>Exe</OutputType>
-    <TargetFrameworks>net471;net6.0</TargetFrameworks>
+    <TargetFrameworks>net471;net8.0</TargetFrameworks>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <LangVersion>8.0</LangVersion>
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="ILGPU" Version="1.2.0" />
+    <PackageReference Include="ILGPU" Version="1.5.3" />
     <PackageReference Include="StbImageWriteSharp" Version="1.13.5" />
   </ItemGroup>
 

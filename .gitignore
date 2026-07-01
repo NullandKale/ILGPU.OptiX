@@ -249,3 +249,6 @@ ModelManifest.xml
 # Ignore T4 generated files
 Src/ILGPU.Optix/OptixPayload.cs
 Src/ILGPU.Optix/OptixTrace.cs
+.claude
+examples
+docs

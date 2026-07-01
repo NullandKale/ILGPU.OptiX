@@ -9,6 +9,8 @@
 // Source License. See LICENSE.txt for details.
 // ---------------------------------------------------------------------------------------
 
+using System;
+
 #pragma warning disable CA1051 // Do not declare visible instance fields
 #pragma warning disable CA1815 // Override equals and operator equals on value types
 
@@ -17,9 +19,12 @@ namespace ILGPU.OptiX
     public struct OptixProgramGroupOptions
     {
         /// <summary>
-        /// Currently no options, so include a placeholder.
+        /// Specifies the payload type of this program group. All programs in the
+        /// group must support the payload type. If left IntPtr.Zero, a unique type
+        /// is deduced (this is the correct default when not using custom payload
+        /// types).
         /// </summary>
-        public int Placeholder;
+        public IntPtr PayloadType;
     }
 }
 

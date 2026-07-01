@@ -1,4 +1,4 @@
-﻿// ---------------------------------------------------------------------------------------
+// ---------------------------------------------------------------------------------------
 //                                     ILGPU OptiX
 //                           Copyright (c) 2022 ILGPU Project
 //                                    www.ilgpu.net
@@ -24,28 +24,65 @@ namespace ILGPU.OptiX
     /// <summary>
     /// Provides the functionality of the optixTrace built-in function.
     /// </summary>
+    /// <remarks>
+    /// The underlying OptiX driver only recognizes the unified
+    /// "_optix_trace_typed_32" pseudo-call (see internal/optix_device_impl.h in the
+    /// OptiX SDK) - it always takes 32 output payload slots and a fixed-size input
+    /// list containing a payload-type ID, the traversable handle, the ray
+    /// parameters, a payload count, and all 32 payload initial values. The
+    /// payload-type ID and payload count must each be a genuine 32-bit PTX register
+    /// assigned via its own "mov.u32" instruction immediately before the call (this
+    /// matches nvcc's own reference PTX output, verified by compiling a probe .cu
+    /// against this SDK) - a plain CudaAsm.EmitRef Input&lt;uint&gt; does not work
+    /// here because it round-trips the value through a local memory store+load
+    /// rather than a direct "mov" (OptiX's frontend rejects that with "Type in
+    /// optixTrace is not a constant"), and a bare text literal embedded directly in
+    /// the call's argument list does not work either (OptiX's frontend infers it as
+    /// a 64-bit value and rejects it as the wrong width). Unused payload slots are
+    /// pointed at one shared dummy register. CudaAsm.EmitRef caps out at 44 ref
+    /// arguments, well under the 81 %N slots the call syntax needs, so %N is reused
+    /// in the format string (each %N is the index of its argument in the EmitRef
+    /// call, not an OptiX ABI slot number) rather than passed as 81 distinct
+    /// arguments.
+    /// </remarks>
     [CLSCompliant(false)]
     public static class OptixTrace
     {
 <#
+    const int MaxPayloadValues = 32;
+    // Non-payload arguments, in EmitRef order: pad, typeReg, countReg, handle, then
+    // 9 ray-parameter floats, then 5 trailing uints.
+    const int NonPayloadArgCount = 1 + 1 + 1 + 1 + 9 + 5;
+
     for (int paramIdx = 0; paramIdx <= 8; paramIdx++) {
-        string callInstruction = "call";
-        if (paramIdx > 0)
-        {
-            callInstruction += " (";
-            callInstruction += string.Join(
-                ", ",
-                Enumerable.Range(0, paramIdx).Select(x => $"%{x}"));
-            callInstruction += ")";
-        }
-        callInstruction += $" _optix_trace_{paramIdx}, (";
-        callInstruction += string.Join(
-            ", ",
-            Enumerable.Range(paramIdx, 15 + paramIdx).Select(x => $"%{x}"));
+        int padArg = paramIdx;
+        int typeArg = paramIdx + 1;
+        int countArg = paramIdx + 2;
+        int handleArg = paramIdx + 3;
+        int floatsStart = paramIdx + 4;
+        int uintsStart = floatsStart + 9;
+
+        Func<int, int> payloadSlotArg = i => i < paramIdx ? i : padArg;
+        var outputArgs = Enumerable.Range(0, MaxPayloadValues).Select(payloadSlotArg);
+        var fixedArgs = new List<int> { handleArg }
+            .Concat(Enumerable.Range(floatsStart, 9))
+            .Concat(Enumerable.Range(uintsStart, 5));
+        var inputPayloadArgs = Enumerable.Range(0, MaxPayloadValues).Select(payloadSlotArg);
+
+        var bodyArgs = new List<string> { $"%{typeArg}" };
+        bodyArgs.AddRange(fixedArgs.Select(x => $"%{x}"));
+        bodyArgs.Add($"%{countArg}");
+        bodyArgs.AddRange(inputPayloadArgs.Select(x => $"%{x}"));
+
+        string callInstruction =
+            $"mov.u32 %{typeArg}, 0; mov.u32 %{countArg}, {paramIdx}; call (";
+        callInstruction += string.Join(", ", outputArgs.Select(x => $"%{x}"));
+        callInstruction += "), _optix_trace_typed_32, (";
+        callInstruction += string.Join(", ", bodyArgs);
         callInstruction += ");";
 #>
         public static void Trace(
-            IntPtr traversableHandle
+            ulong traversableHandle
             , (float X, float Y, float Z) rayOrigin
             , (float X, float Y, float Z) rayDirection
             , float tmin
@@ -61,7 +98,13 @@ namespace ILGPU.OptiX
 <#      } #>
             )
         {
-            Input<IntPtr> _traversableHandle = traversableHandle;
+<#      for (int i = 0; i < paramIdx; i++) { #>
+            Ref<uint> _p<#= i #> = p<#= i #>;
+<#      } #>
+            Ref<uint> _pad = 0u;
+            Output<uint> _type = default;
+            Output<uint> _count = default;
+            Input<ulong> _traversableHandle = traversableHandle;
             Input<float> _ox = rayOrigin.X;
             Input<float> _oy = rayOrigin.Y;
             Input<float> _oz = rayOrigin.Z;
@@ -76,12 +119,15 @@ namespace ILGPU.OptiX
             Input<uint> _SBToffset = SBToffset;
             Input<uint> _SBTstride = SBTstride;
             Input<uint> _missSBTIndex = missSBTIndex;
-<#      for (int i = 0; i < paramIdx; i++) { #>
-            Ref<uint> _p<#= i #> = p<#= i #>;
-<#      } #>
 
             CudaAsm.EmitRef(
                 "<#= callInstruction #>"
+<#      for (int i = 0; i < paramIdx; i++) { #>
+                , ref _p<#= i #>
+<#      } #>
+                , ref _pad
+                , ref _type
+                , ref _count
                 , ref _traversableHandle
                 , ref _ox
                 , ref _oy
@@ -97,9 +143,6 @@ namespace ILGPU.OptiX
                 , ref _SBToffset
                 , ref _SBTstride
                 , ref _missSBTIndex
-<#      for (int i = 0; i < paramIdx; i++) { #>
-                , ref _p<#= i #>
-<#      } #>
                 );
 
 <#      for (int i = 0; i < paramIdx; i++) { #>

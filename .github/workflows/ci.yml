@@ -28,10 +28,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v3
 
-      - name: Setup the latest .NET 6 SDK
+      - name: Setup the latest .NET 8 SDK
         uses: actions/setup-dotnet@v2
         with:
-          dotnet-version: 6.0.x
+          dotnet-version: 8.0.x
 
       - name: Build
         run: dotnet build --configuration=Release -p:TreatWarningsAsErrors=true ${{ matrix.path }}

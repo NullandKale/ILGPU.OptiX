@@ -35,7 +35,7 @@ namespace ILGPU.OptiX
     [CLSCompliant(false)]
     public static class OptixPayload
     {
-<# for (int payloadIdx = 0; payloadIdx <= 8; payloadIdx++) { #>
+<# for (int payloadIdx = 0; payloadIdx <= 18; payloadIdx++) { #>
         public static uint Payload<#= payloadIdx #>
         {
             get

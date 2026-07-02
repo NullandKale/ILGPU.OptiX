@@ -331,8 +331,6 @@ namespace Sample04
 
             //draws colorArray to window and waits for completion avoiding locking
             Application.Current.Dispatcher.Invoke(() => { window.draw(ref colorArray); });
-
-            Thread.Sleep(10);
         }
     }
 }

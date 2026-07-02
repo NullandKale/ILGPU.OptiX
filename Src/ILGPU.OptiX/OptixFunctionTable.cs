@@ -179,6 +179,60 @@ namespace ILGPU.OptiX
         IntPtr outputHandle,
         IntPtr emittedProperties,
         uint numEmittedProperties);
+
+    internal delegate OptixResult DenoiserCreate(
+        IntPtr context,
+        OptixDenoiserModelKind modelKind,
+        IntPtr options,
+        out IntPtr denoiser);
+
+    internal delegate OptixResult DenoiserDestroy(IntPtr denoiser);
+
+    internal delegate OptixResult DenoiserComputeMemoryResources(
+        IntPtr denoiser,
+        uint maximumInputWidth,
+        uint maximumInputHeight,
+        IntPtr returnSizes);
+
+    internal delegate OptixResult DenoiserSetup(
+        IntPtr denoiser,
+        IntPtr stream,
+        uint inputWidth,
+        uint inputHeight,
+        IntPtr state,
+        ulong stateSizeInBytes,
+        IntPtr scratch,
+        ulong scratchSizeInBytes);
+
+    internal delegate OptixResult DenoiserInvoke(
+        IntPtr denoiser,
+        IntPtr stream,
+        IntPtr parameters,
+        IntPtr denoiserState,
+        ulong denoiserStateSizeInBytes,
+        IntPtr guideLayer,
+        IntPtr layers,
+        uint numLayers,
+        uint inputOffsetX,
+        uint inputOffsetY,
+        IntPtr scratch,
+        ulong scratchSizeInBytes);
+
+    internal delegate OptixResult DenoiserComputeIntensity(
+        IntPtr denoiser,
+        IntPtr stream,
+        IntPtr inputImage,
+        IntPtr outputIntensity,
+        IntPtr scratch,
+        ulong scratchSizeInBytes);
+
+    internal delegate OptixResult DenoiserComputeAverageColor(
+        IntPtr denoiser,
+        IntPtr stream,
+        IntPtr inputImage,
+        IntPtr outputAverageColor,
+        IntPtr scratch,
+        ulong scratchSizeInBytes);
 }
 
 #pragma warning restore CS0649 // Field is never assigned to

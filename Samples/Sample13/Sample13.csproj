@@ -1,0 +1,68 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFrameworks>net471;net8.0-windows</TargetFrameworks>
+    <UseWPF>true</UseWPF>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <LangVersion>8.0</LangVersion>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="ILGPU" Version="1.5.3" />
+    <PackageReference Include="ILGPU.Algorithms" Version="1.5.3" />
+    <!-- Only used by VideoReader.cs to probe a video file's width/height/fps before
+         handing off actual frame decode to an ffmpeg.exe child process - no managed
+         video decode dependency. -->
+    <PackageReference Include="OpenCvSharp4" Version="4.11.0.20250507" />
+    <PackageReference Include="OpenCvSharp4.runtime.win" Version="4.11.0.20250507" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\Src\ILGPU.OptiX\ILGPU.OptiX.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Page Update="MainWindow.xaml">
+      <XamlRuntime>$(DefaultXamlRuntime)</XamlRuntime>
+      <SubType>Designer</SubType>
+      <Generator>MSBuild:Compile</Generator>
+    </Page>
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- cow.obj/stanford-bunny.obj/teapot.obj/xyzrgb_dragon.obj, bundled as-is matching
+         the Sponza precedent - fetched from example/YetAnotherConsoleGameEngine's own
+         bundled Assets (already vetted/committed there), not re-downloaded. -->
+    <None Include="..\Models\meshes\**\*.*">
+      <Link>models\meshes\%(RecursiveDir)%(Filename)%(Extension)</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- One texture reused from Sponza's already-bundled asset set (Sample07-12) for
+         the M7 texture-test scene - no new asset needed. -->
+    <None Include="..\Models\sponza\textures\spnza_bricks_a_diff.png">
+      <Link>models\sponza\textures\spnza_bricks_a_diff.png</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Museum scene's video-textured boxes + demo texture, copied from
+         example/YetAnotherConsoleGameEngine's own bundled Assets (already vetted/
+         committed there, matching the meshes/Sponza precedent above). RTConsole.mp4
+         requires ffmpeg.exe on PATH at runtime to actually play (see VideoReader.cs) -
+         degrades to an untextured material if ffmpeg.exe or the file itself is missing. -->
+    <None Include="..\Models\museum\RTConsole.mp4">
+      <Link>models\museum\RTConsole.mp4</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Include="..\Models\museum\RGBW-8k.png">
+      <Link>models\museum\RGBW-8k.png</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+</Project>

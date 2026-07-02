@@ -11,14 +11,14 @@
 
 namespace Sample07
 {
-    // All device pointers below are single-level (Vec3*/Vec3i*/uint*, never
-    // pointer-to-pointer) and index a single merged model buffer - see Model.cs for why:
-    // ILGPU.OptiX doesn't wrap optixGetSbtDataPointer, and ILGPU's
-    // TypeInformationManager infinite-recurses on pointer-to-pointer LaunchParams
-    // fields, so per-mesh/per-material data can't be an array-of-pointers indexed by
-    // mesh or material ID. Instead the whole model is one GAS build input/one hitgroup
-    // record, and per-triangle material lookup goes through MaterialIds[primId], then
-    // MaterialColors[materialId].
+    // The whole model still shares one merged vertex/index buffer (one GAS build
+    // input) rather than one buffer set per mesh - that part was never blocked by any
+    // ILGPU limitation, it's just simpler than the reference's per-material buffer
+    // splitting. What DOES vary per material is looked up via OptixGetSbtDataPointer
+    // (see devicePrograms.cs/HitgroupRecord in SampleRenderer.cs): the build input's
+    // SbtIndexOffsetBuffer is Model's per-triangle TriangleMaterialIds array, so OptiX
+    // itself selects the right hitgroup record's custom data per triangle - no flat
+    // MaterialColors[] lookup array needed in LaunchParams.
     public unsafe struct LaunchParams
     {
         public int FrameID;
@@ -30,8 +30,5 @@ namespace Sample07
         public Vec3* Normals;
         public Vec2* TexCoords;
         public Vec3i* Indices;
-
-        public uint* MaterialIds;
-        public Vec3* MaterialColors;
     }
 }

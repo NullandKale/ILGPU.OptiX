@@ -406,7 +406,16 @@ namespace ILGPU.OptiX
 
             using var accelBuildOptions = SafeHGlobal.AllocFrom(accelOptions);
             using var accelBuildInputs = SafeHGlobal.AllocFrom(buildInputs);
-            using var emittedPropertiesInputs = SafeHGlobal.AllocFrom(emittedProperties);
+
+            // SafeHGlobal.AllocFrom always Marshal.AllocHGlobal's a real (non-null)
+            // block, even for a zero-length span - OptiX's validator rejects a non-null
+            // emittedProperties pointer when numEmittedProperties is 0 ("emittedProperties
+            // is non-null but numEmittedProperties is 0"), so an empty span must pass a
+            // true null pointer instead of an empty-but-allocated one.
+            using var emittedPropertiesInputs = emittedProperties.IsEmpty
+                ? null
+                : SafeHGlobal.AllocFrom(emittedProperties);
+            IntPtr emittedPropertiesPtr = emittedProperties.IsEmpty ? IntPtr.Zero : emittedPropertiesInputs!;
 
             var asHandle = stackalloc IntPtr[1];
             OptixException.ThrowIfFailed(
@@ -421,9 +430,34 @@ namespace ILGPU.OptiX
                     outputBuffer.BaseView.LoadEffectiveAddressAsPtr(),
                     (ulong)outputBuffer.LengthInBytes,
                     new IntPtr(asHandle),
-                    emittedPropertiesInputs,
+                    emittedPropertiesPtr,
                     (uint)emittedProperties.Length));
             return asHandle[0];
+        }
+
+        /// <summary>
+        /// Creates a new OptiX denoiser.
+        /// </summary>
+        /// <param name="deviceContext">The OptiX device context.</param>
+        /// <param name="modelKind">The denoiser model kind.</param>
+        /// <param name="options">The denoiser options.</param>
+        /// <returns>The denoiser.</returns>
+        [CLSCompliant(false)]
+        public static OptixDenoiser CreateDenoiser(
+            this OptixDeviceContext deviceContext,
+            OptixDenoiserModelKind modelKind,
+            OptixDenoiserOptions options)
+        {
+            if (deviceContext == null)
+                throw new ArgumentNullException(nameof(deviceContext));
+
+            var result = OptixAPI.Current.DenoiserCreate(
+                deviceContext.DeviceContextPtr,
+                modelKind,
+                options,
+                out var denoiser);
+            OptixException.ThrowIfFailed(result);
+            return new OptixDenoiser(denoiser);
         }
     }
 }

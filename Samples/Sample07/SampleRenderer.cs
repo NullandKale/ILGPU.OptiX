@@ -37,11 +37,14 @@ namespace Sample07
         public int ObjectID;
     }
 
+    // One record per material - custom data layout must match MaterialSbtData.cs,
+    // which is what __closest__radiance actually reads via OptixGetSbtDataPointer
+    // (that pointer starts right after Header, not at the start of this struct).
     [StructLayout(LayoutKind.Sequential, Pack = OptixAPI.OPTIX_SBT_RECORD_ALIGNMENT, Size = 48)]
     public unsafe struct HitgroupRecord
     {
         public fixed byte Header[OptixAPI.OPTIX_SBT_RECORD_HEADER_SIZE];
-        public int ObjectID;
+        public Vec3 Color;
     }
 
     public class SampleRenderer
@@ -95,8 +98,12 @@ namespace Sample07
         MemoryBuffer1D<Vec3, Stride1D.Dense> d_normals;
         MemoryBuffer1D<Vec2, Stride1D.Dense> d_texCoords;
         MemoryBuffer1D<Vec3i, Stride1D.Dense> d_indices;
+
+        // Also the GAS build input's SbtIndexOffsetBuffer - see buildAccel - so OptiX
+        // selects the right per-material hitgroup record (built in the constructor)
+        // per triangle natively, instead of an explicit LaunchParams lookup array.
         MemoryBuffer1D<uint, Stride1D.Dense> d_materialIds;
-        MemoryBuffer1D<Vec3, Stride1D.Dense> d_materialColors;
+
         MemoryBuffer1D<byte, Stride1D.Dense> asBuffer;
         IntPtr traversable;
 
@@ -148,8 +155,14 @@ namespace Sample07
 
             raygenKernels = new[] { raygenKernel };
             missKernels = new[] { missKernel };
-            hitgroupKernels = new[] { hitgroupKernel };
-            allKernels = (raygenKernels.Concat(missKernels).Concat(hitgroupKernels)).ToArray();
+            // One hitgroup record per material, all sharing the same hitgroupKernel
+            // program group - PackRecords below packs an identical header into each
+            // (SbtRecordPackHeader only depends on the program group), and the
+            // per-material Color is filled in afterward.
+            var modelPath = Path.Combine(AppContext.BaseDirectory, "models", "sponza.obj");
+            model = OBJModel.Load(modelPath);
+            hitgroupKernels = Enumerable.Repeat(hitgroupKernel, model.Materials.Length).ToArray();
+            allKernels = (raygenKernels.Concat(missKernels).Concat(new[] { hitgroupKernel })).ToArray();
 
             pipeline = deviceContext.CreatePipeline(
                 pipelineCompileOptions,
@@ -165,6 +178,8 @@ namespace Sample07
             raygenRecordsArray = OptixSbt.PackRecords<RaygenRecord>(raygenKernels);
             missRecordsArray = OptixSbt.PackRecords<MissRecord>(missKernels);
             hitgroupRecordsArray = OptixSbt.PackRecords<HitgroupRecord>(hitgroupKernels);
+            for (var i = 0; i < hitgroupRecordsArray.Length; i++)
+                hitgroupRecordsArray[i].Color = model.Materials[i].Diffuse;
 
             raygenRecordsBuffer = accelerator.Allocate1D(raygenRecordsArray);
             missRecordsBuffer = accelerator.Allocate1D(missRecordsArray);
@@ -181,15 +196,11 @@ namespace Sample07
                 HitgroupRecordCount = (uint)hitgroupRecordsBuffer.Length
             };
 
-            var modelPath = Path.Combine(AppContext.BaseDirectory, "models", "sponza.obj");
-            model = OBJModel.Load(modelPath);
-
             d_vertices = accelerator.Allocate1D(model.Vertices);
             d_normals = accelerator.Allocate1D(model.Normals);
             d_texCoords = accelerator.Allocate1D(model.TexCoords);
             d_indices = accelerator.Allocate1D(model.Indices);
             d_materialIds = accelerator.Allocate1D(model.TriangleMaterialIds);
-            d_materialColors = accelerator.Allocate1D(model.Materials.Select(m => m.Diffuse).ToArray());
 
             camera = FitCameraToModel(model, width, height);
 
@@ -208,13 +219,13 @@ namespace Sample07
             Vec3 max = new Vec3(float.MinValue, float.MinValue, float.MinValue);
             foreach (var v in model.Vertices)
             {
-                min = new Vec3(MathF.Min(v.x, min.x), MathF.Min(v.y, min.y), MathF.Min(v.z, min.z));
-                max = new Vec3(MathF.Max(v.x, max.x), MathF.Max(v.y, max.y), MathF.Max(v.z, max.z));
+                min = new Vec3(Math.Min(v.x, min.x), Math.Min(v.y, min.y), Math.Min(v.z, min.z));
+                max = new Vec3(Math.Max(v.x, max.x), Math.Max(v.y, max.y), Math.Max(v.z, max.z));
             }
 
             Vec3 center = (min + max) / 2f;
             Vec3 size = max - min;
-            float radius = MathF.Max(size.x, MathF.Max(size.y, size.z)) * 0.5f;
+            float radius = Math.Max(size.x, Math.Max(size.y, size.z)) * 0.5f;
             if (radius <= 0f)
                 radius = 1f;
 
@@ -224,7 +235,6 @@ namespace Sample07
 
         public void Dispose()
         {
-            d_materialColors.Dispose();
             d_materialIds.Dispose();
             d_indices.Dispose();
             d_texCoords.Dispose();
@@ -267,9 +277,7 @@ namespace Sample07
                     Vertices = (Vec3*)d_vertices.NativePtr,
                     Normals = (Vec3*)d_normals.NativePtr,
                     TexCoords = (Vec2*)d_texCoords.NativePtr,
-                    Indices = (Vec3i*)d_indices.NativePtr,
-                    MaterialIds = (uint*)d_materialIds.NativePtr,
-                    MaterialColors = (Vec3*)d_materialColors.NativePtr
+                    Indices = (Vec3i*)d_indices.NativePtr
                 };
             }
         }
@@ -294,11 +302,15 @@ namespace Sample07
             triangleInput.TriangleArray.NumIndexTriplets = (uint)model.Indices.Length;
             triangleInput.TriangleArray.IndexBuffer = d_indices.NativePtr;
 
-            var triangleInputFlags = stackalloc uint[1];
+            // One SBT record per material - OptiX looks up d_materialIds[triangleIndex]
+            // (Model's TriangleMaterialIds, one uint per triangle) to select which
+            // hitgroup record's custom data (see HitgroupRecord/MaterialSbtData)
+            // applies, so every material needs its own flag entry here too.
+            var triangleInputFlags = stackalloc uint[model.Materials.Length];
             triangleInput.TriangleArray.Flags = triangleInputFlags;
-            triangleInput.TriangleArray.NumSbtRecords = 1;
-            triangleInput.TriangleArray.SbtIndexOffsetBuffer = IntPtr.Zero;
-            triangleInput.TriangleArray.SbtIndexOffsetSizeInBytes = 0;
+            triangleInput.TriangleArray.NumSbtRecords = (uint)model.Materials.Length;
+            triangleInput.TriangleArray.SbtIndexOffsetBuffer = d_materialIds.NativePtr;
+            triangleInput.TriangleArray.SbtIndexOffsetSizeInBytes = sizeof(uint);
             triangleInput.TriangleArray.SbtIndexOffsetStrideInBytes = 0;
 
             OptixAccelBuildOptions accelOptions = new OptixAccelBuildOptions()

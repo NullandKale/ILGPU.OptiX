@@ -429,6 +429,184 @@ namespace ILGPU.OptiX
                 numEmittedProperties);
         }
 
+        /// <summary>
+        /// Creates a new OptiX denoiser.
+        /// </summary>
+        /// <param name="deviceContext">The OptiX device context.</param>
+        /// <param name="modelKind">The denoiser model kind.</param>
+        /// <param name="options">The denoiser options.</param>
+        /// <param name="denoiser">Filled in with the new denoiser.</param>
+        /// <returns>The OptiX result.</returns>
+        [CLSCompliant(false)]
+        public OptixResult DenoiserCreate(
+            IntPtr deviceContext,
+            OptixDenoiserModelKind modelKind,
+            OptixDenoiserOptions options,
+            out IntPtr denoiser)
+        {
+            var func = Marshal.GetDelegateForFunctionPointer<DenoiserCreate>(functionTable.OptixDenoiserCreate);
+            using var optionsPtr = SafeHGlobal.AllocFrom(options);
+            return func(deviceContext, modelKind, optionsPtr, out denoiser);
+        }
+
+        /// <summary>
+        /// Destroys the OptiX denoiser.
+        /// </summary>
+        /// <param name="denoiser">The OptiX denoiser.</param>
+        /// <returns>The OptiX result.</returns>
+        public OptixResult DenoiserDestroy(IntPtr denoiser)
+        {
+            var func = Marshal.GetDelegateForFunctionPointer<DenoiserDestroy>(functionTable.OptixDenoiserDestroy);
+            return func(denoiser);
+        }
+
+        /// <summary>
+        /// Computes the memory resources required by the denoiser.
+        /// </summary>
+        /// <param name="denoiser">The OptiX denoiser.</param>
+        /// <param name="maximumInputWidth">The maximum input image width.</param>
+        /// <param name="maximumInputHeight">The maximum input image height.</param>
+        /// <param name="sizes">Filled in with the required memory sizes.</param>
+        /// <returns>The OptiX result.</returns>
+        [CLSCompliant(false)]
+        public unsafe OptixResult DenoiserComputeMemoryResources(
+            IntPtr denoiser,
+            uint maximumInputWidth,
+            uint maximumInputHeight,
+            out OptixDenoiserSizes sizes)
+        {
+            var func = Marshal.GetDelegateForFunctionPointer<DenoiserComputeMemoryResources>(functionTable.OptixDenoiserComputeMemoryResources);
+            var sizesPtr = stackalloc OptixDenoiserSizes[1];
+            var result = func(denoiser, maximumInputWidth, maximumInputHeight, new IntPtr(sizesPtr));
+            sizes = sizesPtr[0];
+            return result;
+        }
+
+        /// <summary>
+        /// Sets up the denoiser for a given input resolution.
+        /// </summary>
+        /// <param name="denoiser">The OptiX denoiser.</param>
+        /// <param name="stream">The CUDA stream.</param>
+        /// <param name="inputWidth">The input image width.</param>
+        /// <param name="inputHeight">The input image height.</param>
+        /// <param name="state">The denoiser state buffer.</param>
+        /// <param name="stateSizeInBytes">The denoiser state buffer size.</param>
+        /// <param name="scratch">The denoiser scratch buffer.</param>
+        /// <param name="scratchSizeInBytes">The denoiser scratch buffer size.</param>
+        /// <returns>The OptiX result.</returns>
+        [CLSCompliant(false)]
+        public OptixResult DenoiserSetup(
+            IntPtr denoiser,
+            IntPtr stream,
+            uint inputWidth,
+            uint inputHeight,
+            IntPtr state,
+            ulong stateSizeInBytes,
+            IntPtr scratch,
+            ulong scratchSizeInBytes)
+        {
+            var func = Marshal.GetDelegateForFunctionPointer<DenoiserSetup>(functionTable.OptixDenoiserSetup);
+            return func(denoiser, stream, inputWidth, inputHeight, state, stateSizeInBytes, scratch, scratchSizeInBytes);
+        }
+
+        /// <summary>
+        /// Invokes the denoiser.
+        /// </summary>
+        /// <param name="denoiser">The OptiX denoiser.</param>
+        /// <param name="stream">The CUDA stream.</param>
+        /// <param name="parameters">The denoiser parameters.</param>
+        /// <param name="denoiserState">The denoiser state buffer.</param>
+        /// <param name="denoiserStateSizeInBytes">The denoiser state buffer size.</param>
+        /// <param name="guideLayer">The denoiser guide layer.</param>
+        /// <param name="layers">The denoiser input/output layers.</param>
+        /// <param name="inputOffsetX">The input tile X offset.</param>
+        /// <param name="inputOffsetY">The input tile Y offset.</param>
+        /// <param name="scratch">The denoiser scratch buffer.</param>
+        /// <param name="scratchSizeInBytes">The denoiser scratch buffer size.</param>
+        /// <returns>The OptiX result.</returns>
+        [CLSCompliant(false)]
+        public OptixResult DenoiserInvoke(
+            IntPtr denoiser,
+            IntPtr stream,
+            OptixDenoiserParams parameters,
+            IntPtr denoiserState,
+            ulong denoiserStateSizeInBytes,
+            OptixDenoiserGuideLayer guideLayer,
+            ReadOnlySpan<OptixDenoiserLayer> layers,
+            uint inputOffsetX,
+            uint inputOffsetY,
+            IntPtr scratch,
+            ulong scratchSizeInBytes)
+        {
+            var func = Marshal.GetDelegateForFunctionPointer<DenoiserInvoke>(functionTable.OptixDenoiserInvoke);
+            using var parametersPtr = SafeHGlobal.AllocFrom(parameters);
+            using var guideLayerPtr = SafeHGlobal.AllocFrom(guideLayer);
+            using var layersPtr = SafeHGlobal.AllocFrom(layers);
+            return func(
+                denoiser,
+                stream,
+                parametersPtr,
+                denoiserState,
+                denoiserStateSizeInBytes,
+                guideLayerPtr,
+                layersPtr,
+                (uint)layers.Length,
+                inputOffsetX,
+                inputOffsetY,
+                scratch,
+                scratchSizeInBytes);
+        }
+
+        /// <summary>
+        /// Computes the average log intensity of an input image, for use as
+        /// OptixDenoiserParams.HdrIntensity.
+        /// </summary>
+        /// <param name="denoiser">The OptiX denoiser.</param>
+        /// <param name="stream">The CUDA stream.</param>
+        /// <param name="inputImage">The input image.</param>
+        /// <param name="outputIntensity">The output device buffer (a single float).</param>
+        /// <param name="scratch">The denoiser scratch buffer.</param>
+        /// <param name="scratchSizeInBytes">The denoiser scratch buffer size.</param>
+        /// <returns>The OptiX result.</returns>
+        [CLSCompliant(false)]
+        public OptixResult DenoiserComputeIntensity(
+            IntPtr denoiser,
+            IntPtr stream,
+            OptixImage2D inputImage,
+            IntPtr outputIntensity,
+            IntPtr scratch,
+            ulong scratchSizeInBytes)
+        {
+            var func = Marshal.GetDelegateForFunctionPointer<DenoiserComputeIntensity>(functionTable.OptixDenoiserComputeIntensity);
+            using var inputImagePtr = SafeHGlobal.AllocFrom(inputImage);
+            return func(denoiser, stream, inputImagePtr, outputIntensity, scratch, scratchSizeInBytes);
+        }
+
+        /// <summary>
+        /// Computes the average log color of an input image, for use as
+        /// OptixDenoiserParams.HdrAverageColor.
+        /// </summary>
+        /// <param name="denoiser">The OptiX denoiser.</param>
+        /// <param name="stream">The CUDA stream.</param>
+        /// <param name="inputImage">The input image.</param>
+        /// <param name="outputAverageColor">The output device buffer (three floats).</param>
+        /// <param name="scratch">The denoiser scratch buffer.</param>
+        /// <param name="scratchSizeInBytes">The denoiser scratch buffer size.</param>
+        /// <returns>The OptiX result.</returns>
+        [CLSCompliant(false)]
+        public OptixResult DenoiserComputeAverageColor(
+            IntPtr denoiser,
+            IntPtr stream,
+            OptixImage2D inputImage,
+            IntPtr outputAverageColor,
+            IntPtr scratch,
+            ulong scratchSizeInBytes)
+        {
+            var func = Marshal.GetDelegateForFunctionPointer<DenoiserComputeAverageColor>(functionTable.OptixDenoiserComputeAverageColor);
+            using var inputImagePtr = SafeHGlobal.AllocFrom(inputImage);
+            return func(denoiser, stream, inputImagePtr, outputAverageColor, scratch, scratchSizeInBytes);
+        }
+
         #endregion
 
         #region IDisposable

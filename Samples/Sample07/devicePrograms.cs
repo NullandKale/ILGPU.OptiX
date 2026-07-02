@@ -61,9 +61,11 @@ namespace Sample07
 
         public unsafe static void __closest__radiance(LaunchParams launchParams)
         {
-            // Single merged GAS build input for the whole model (see Model.cs/
-            // LaunchParams.cs), so the hit triangle's material comes from a flat
-            // per-triangle lookup rather than per-mesh SBT data or a mesh index.
+            // One merged GAS build input for the whole model geometry (see Model.cs),
+            // but the hit triangle's material comes from the current hitgroup record's
+            // custom data - OptiX picks the record per triangle via the build input's
+            // SbtIndexOffsetBuffer (Model's TriangleMaterialIds), same as the C++
+            // reference's per-mesh SBT records.
             uint primId = OptixGetPrimitiveIndex.Value;
 
             Vec3i tri = launchParams.Indices[primId];
@@ -75,8 +77,8 @@ namespace Sample07
             var (dx, dy, dz) = OptixGetWorldRayDirection.Value;
             Vec3 rayDir = new Vec3(dx, dy, dz);
 
-            uint materialId = launchParams.MaterialIds[primId];
-            Vec3 color = launchParams.MaterialColors[materialId];
+            MaterialSbtData* sbtData = (MaterialSbtData*)OptixGetSbtDataPointer.Value;
+            Vec3 color = sbtData->Color;
 
             float cosDN = 0.2f + (0.8f * XMath.Abs(Vec3.dot(rayDir, geometricNormal)));
             SetPRD(cosDN * color);

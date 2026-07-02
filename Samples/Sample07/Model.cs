@@ -9,6 +9,8 @@
 // Source License. See LICENSE.txt for details.
 // ---------------------------------------------------------------------------------------
 
+#nullable enable
+
 using System;
 using System.Collections.Generic;
 using System.Globalization;
@@ -29,18 +31,14 @@ namespace Sample07
     // course's C++ reference uses tinyobjloader, but the format itself is simple enough
     // that hand-rolling it here avoids pulling in a new NuGet dependency for one sample).
     //
-    // Unlike the C++ reference (which keeps one Mesh per material and gives each its own
-    // GAS build input + SBT record via optixGetSbtDataPointer), everything here is
-    // flattened into ONE merged vertex/index buffer for the whole model, with a
-    // per-triangle material-ID buffer selecting into a small Materials array. Two
-    // binding-specific constraints drive that: ILGPU.OptiX doesn't wrap
-    // optixGetSbtDataPointer (see Sample06's devicePrograms.cs), and ILGPU's
-    // TypeInformationManager infinite-recurses on pointer-to-pointer *fields* (see
-    // Sample06's LaunchParams.cs) - which rules out both "one SBT record per mesh" and
-    // "one pointer-to-buffers-array indexed by mesh ID" for a model with ~25 materials.
-    // A flat per-triangle material-ID array sidesteps both: every device-side pointer
-    // in LaunchParams stays single-level, and there's exactly one GAS build input/one
-    // hitgroup record for the whole model.
+    // Unlike the C++ reference (one Mesh/GAS-build-input/SBT-record per material), this
+    // still uses ONE merged vertex/index buffer for the whole model (simpler, no
+    // per-mesh vertex duplication) - but per-material data (diffuse color, texture) is
+    // looked up via optixGetSbtDataPointer against ONE hitgroup record per material,
+    // same as the reference, using TriangleMaterialIds as the GAS build input's
+    // SbtIndexOffsetBuffer (see SampleRenderer.cs's buildAccel/buildSbt). No flat
+    // per-triangle-material-ID-into-a-color-array indirection needed in LaunchParams -
+    // OptiX resolves the material per triangle natively.
     public class OBJModel
     {
         public Vec3[] Vertices = Array.Empty<Vec3>();

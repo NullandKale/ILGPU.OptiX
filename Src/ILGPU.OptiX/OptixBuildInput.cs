@@ -229,6 +229,11 @@ namespace ILGPU.OptiX
     {
         public IntPtr Instances;
         public uint NumInstances;
+
+        /// <summary>
+        /// Stride between instances. Zero means tightly packed (stride = sizeof(OptixInstance)).
+        /// </summary>
+        public uint InstanceStride;
     }
 }
 

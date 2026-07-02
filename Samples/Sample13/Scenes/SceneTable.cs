@@ -25,6 +25,7 @@ namespace Sample13
             MeshScenes.BuildTeapotScene,
             MeshScenes.BuildCowScene,
             MeshScenes.BuildDragonScene,
+            MeshScenes.BuildSponzaScene,
             MuseumScene.BuildMuseumScene,
             RadialMuseumScene.BuildRadialMuseumScene,
         };

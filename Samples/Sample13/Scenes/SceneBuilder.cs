@@ -220,6 +220,32 @@ namespace Sample13
             meshRanges.Add(new MeshRange { IndexStart = indexStart, IndexCount = indices.Count - indexStart });
         }
 
+        // Adds pre-loaded mesh data with per-triangle material assignments (for complex
+        // models like Sponza where different materials are used). materialIdMap should
+        // have length equal to mesh.Materials.Length with pre-allocated SceneBuilder
+        // material IDs.
+        public void AddMeshWithPerTriangleMaterials(OBJModel mesh, uint[] materialIdMap)
+        {
+            int indexStart = indices.Count;
+            int baseIndex = vertices.Count;
+
+            vertices.AddRange(mesh.Vertices);
+            normals.AddRange(mesh.Normals);
+            texCoords.AddRange(mesh.TexCoords);
+
+            for (int triIdx = 0; triIdx < mesh.Indices.Length; triIdx++)
+            {
+                Vec3i tri = mesh.Indices[triIdx];
+                indices.Add(new Vec3i(tri.x + baseIndex, tri.y + baseIndex, tri.z + baseIndex));
+
+                uint objMaterialId = mesh.TriangleMaterialIds[triIdx];
+                uint materialId = materialIdMap[objMaterialId];
+                triangleMaterialIds.Add(materialId);
+            }
+
+            meshRanges.Add(new MeshRange { IndexStart = indexStart, IndexCount = indices.Count - indexStart });
+        }
+
         // The museum placement variant: raw uniform scale (no normalization), dropped
         // so the lowest vertex sits at targetPos.y; silently skips a missing OBJ file
         // so museum scenes degrade gracefully instead of crashing the scene switch.

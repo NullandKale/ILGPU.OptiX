@@ -123,5 +123,75 @@ namespace Sample13
 
             return b.Build();
         }
+
+        public static SceneData BuildSponzaScene()
+        {
+            string objPath = Path.Combine(AppContext.BaseDirectory, "models", "sponza.obj");
+            var mesh = OBJModel.Load(objPath);
+
+            SceneBuilder.ComputeBounds(mesh.Vertices, out Vec3 min, out Vec3 max);
+            Vec3 center = (min + max) / 2f;
+            float radius = (max - min).length() * 0.5f;
+
+            var b = new SceneBuilder
+            {
+                Name = "Sponza",
+                AmbientColor = new Vec3(0.35f, 0.35f, 0.4f),
+                AmbientIntensity = 0.08f,
+                BackgroundTop = new Vec3(0.15f, 0.15f, 0.2f),
+                BackgroundBottom = new Vec3(0.05f, 0.05f, 0.08f),
+                CameraOrigin = new Vec3(center.x, center.y + radius * 0.4f, center.z - radius * 1.5f),
+                CameraLookAt = center + new Vec3(0f, radius * 0.3f, 0f),
+                CameraUp = new Vec3(0f, 1f, 0f),
+                CameraFovDeg = 50f,
+                CameraWorldScale = radius,
+            };
+
+            // Add materials from the OBJ file, using their textures
+            var materialIdMap = new uint[mesh.Materials.Length];
+            string modelDir = Path.GetDirectoryName(objPath) ?? ".";
+            string baseDir = AppContext.BaseDirectory;
+
+            for (int i = 0; i < mesh.Materials.Length; i++)
+            {
+                var objMat = mesh.Materials[i];
+                string relativePath = null;
+
+                // If material has a texture, compute relative path for TextureCache.GetOrLoad()
+                if (objMat.DiffuseTexturePath != null)
+                {
+                    string fullTexturePath = Path.Combine(modelDir, objMat.DiffuseTexturePath);
+                    if (File.Exists(fullTexturePath))
+                    {
+                        // TextureCache expects paths relative to AppContext.BaseDirectory
+                        // Manually compute relative path for .NET Framework compatibility
+                        fullTexturePath = Path.GetFullPath(fullTexturePath);
+                        baseDir = Path.GetFullPath(baseDir);
+                        if (fullTexturePath.StartsWith(baseDir, StringComparison.OrdinalIgnoreCase))
+                        {
+                            relativePath = fullTexturePath.Substring(baseDir.Length).TrimStart(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+                        }
+                    }
+                }
+
+                materialIdMap[i] = (uint)b.AddMaterial(
+                    new MaterialSbtData
+                    {
+                        Albedo = objMat.Diffuse,
+                        MaterialKind = MaterialSbtData.Solid,
+                        TextureWeight = relativePath != null ? 1f : 0f,
+                        UVScale = 1f,
+                    },
+                    relativePath);
+            }
+
+            // Add the mesh with per-triangle material assignments
+            b.AddMeshWithPerTriangleMaterials(mesh, materialIdMap);
+
+            b.AddLight(new Vec3(center.x, center.y + radius * 1.2f, center.z), new Vec3(1f, 0.95f, 0.88f), radius * radius * 1.5f);
+            b.AddLight(new Vec3(center.x - radius * 0.8f, center.y + radius * 0.5f, center.z + radius * 0.8f), new Vec3(0.85f, 0.90f, 1.0f), radius * radius * 1f);
+
+            return b.Build();
+        }
     }
 }

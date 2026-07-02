@@ -16,12 +16,13 @@ namespace Sample13
         internal const uint RAY_TYPE_COUNT = 2;
 
         // Continuation flags returned via Payload3 by __closest__radiance - matches the
-        // reference's MaxMirrorBounces/MaxRefractions caps (both 2), tracked as separate
-        // counters in raygen's own loop (closesthit doesn't need to know the running
-        // counts - it only reports which kind of surface was hit).
+        // reference's MaxMirrorBounces/MaxRefractions/MaxDiffuseBounces caps (all 2),
+        // tracked as separate counters in raygen's own loop (closesthit doesn't need to
+        // know the running counts - it only reports which kind of surface was hit).
         internal const uint BOUNCE_TERMINAL = 0;
         internal const uint BOUNCE_CONTINUE_MIRROR = 1;
         internal const uint BOUNCE_CONTINUE_DIELECTRIC = 2;
+        internal const uint BOUNCE_CONTINUE_DIFFUSE = 3;
 
         // normal/albedo (payloads 13-18) are only ever read back by raygen from the
         // bounce==0 Trace() call (see __raygen__renderFrame) - matching Sample11/12's

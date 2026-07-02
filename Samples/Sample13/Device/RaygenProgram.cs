@@ -10,12 +10,10 @@ namespace Sample13
     /// </summary>
     public static class RaygenProgram
     {
-        private const int MaxMirrorBounces = 2;
-        private const int MaxRefractionBounces = 2;
         // Hard safety cap on total Trace() calls per sample - the per-kind counters
-        // above already bound the path length to at most MaxMirrorBounces +
-        // MaxRefractionBounces continuations, so this is never the limiting factor in
-        // practice.
+        // from LaunchParams already bound the path length to at most
+        // MaxMirrorBounces + MaxRefractionBounces + MaxDiffuseBounces continuations,
+        // so this is never the limiting factor in practice.
         private const int MaxTotalBounces = 8;
 
         public unsafe static void __raygen__renderFrame(LaunchParams launchParams)
@@ -45,6 +43,7 @@ namespace Sample13
                 Vec3 sampleAlbedo = new Vec3(0f, 0f, 0f);
                 int mirrorBounces = 0;
                 int refractionBounces = 0;
+                int diffuseBounces = 0;
 
                 for (int bounce = 0; bounce < MaxTotalBounces; bounce++)
                 {
@@ -84,13 +83,19 @@ namespace Sample13
                     if (flag == Payloads.BOUNCE_CONTINUE_MIRROR)
                     {
                         mirrorBounces++;
-                        if (mirrorBounces > MaxMirrorBounces)
+                        if (mirrorBounces > launchParams.MaxMirrorBounces)
                             break;
                     }
-                    else
+                    else if (flag == Payloads.BOUNCE_CONTINUE_DIELECTRIC)
                     {
                         refractionBounces++;
-                        if (refractionBounces > MaxRefractionBounces)
+                        if (refractionBounces > launchParams.MaxRefractionBounces)
+                            break;
+                    }
+                    else if (flag == Payloads.BOUNCE_CONTINUE_DIFFUSE)
+                    {
+                        diffuseBounces++;
+                        if (diffuseBounces > launchParams.MaxDiffuseBounces)
                             break;
                     }
 

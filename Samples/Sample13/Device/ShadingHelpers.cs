@@ -18,7 +18,9 @@ namespace Sample13
         // Oren-Nayar + ambient + multi-light shading, shared between the ordinary
         // diffuse dispatch branch in __closest__radiance and the volume grid's
         // per-voxel material lookup (ShadeVolumeGrid) - identical lighting math, only
-        // how the material/albedo was obtained differs between the two callers.
+        // how the material/albedo was obtained differs between the two callers. Direct
+        // lighting is accumulated, then an indirect diffuse ray is sampled and traced
+        // in the next bounce.
         internal unsafe static void ShadeDiffuse(LaunchParams launchParams, Vec3 albedo, Vec3 emission, Vec3 surfPos, Vec3 shadingNormal, Vec3 outwardNormal, Vec3 rayDir)
         {
             Vec3 pixelColor = emission + (launchParams.AmbientColor * launchParams.AmbientIntensity * albedo);
@@ -45,7 +47,14 @@ namespace Sample13
                 pixelColor += (atten * NdotL) * bsdf * light.Color * transmittance;
             }
 
-            Payloads.SetTerminalPayload(pixelColor, shadingNormal, albedo);
+            var ix = OptixGetLaunchIndex.X;
+            var iy = OptixGetLaunchIndex.Y;
+            uint primId = OptixGetPrimitiveIndex.Value;
+            LCG rng = new LCG((uint)(ix + (1000003 * iy)), (uint)((launchParams.FrameID * 7919) + primId));
+
+            Vec3 diffuseDir = SampleCosineHemisphere(shadingNormal, rng);
+            Vec3 newOrigin = surfPos + (1e-3f * outwardNormal);
+            Payloads.SetContinuePayload(pixelColor, Payloads.BOUNCE_CONTINUE_DIFFUSE, newOrigin, diffuseDir, albedo, shadingNormal, albedo);
         }
 
         // The volume grid is a single GAS primitive whose per-voxel material can't be
@@ -201,6 +210,26 @@ namespace Sample13
                 ref t0, ref t1, ref t2, ref hitCount);
 
             return new Vec3(Interop.IntAsFloat(t0), Interop.IntAsFloat(t1), Interop.IntAsFloat(t2));
+        }
+
+        // Cosine-weighted hemisphere sampling: generate a random direction in the
+        // hemisphere around the normal, biased toward the normal itself. Uses the
+        // standard approach: uniform sample on disk, then lift to hemisphere.
+        private static Vec3 SampleCosineHemisphere(Vec3 normal, LCG rng)
+        {
+            float r1 = rng.Next();
+            float r2 = rng.Next();
+
+            float theta = XMath.Acos(XMath.Sqrt(1f - r1));
+            float phi = 2f * XMath.PI * r2;
+
+            Vec3 up = XMath.Abs(normal.y) < 0.999f ? new Vec3(0f, 1f, 0f) : new Vec3(1f, 0f, 0f);
+            Vec3 right = Vec3.unitVector(Vec3.cross(up, normal));
+            Vec3 forward = Vec3.cross(normal, right);
+
+            float sinTheta = XMath.Sin(theta);
+            Vec3 localDir = (right * (sinTheta * XMath.Cos(phi))) + (normal * XMath.Cos(theta)) + (forward * (sinTheta * XMath.Sin(phi)));
+            return Vec3.unitVector(localDir);
         }
 
         // Direct port of the reference's OrenNayarBRDF (RayTracing/RaytraceRenderer.cs) -

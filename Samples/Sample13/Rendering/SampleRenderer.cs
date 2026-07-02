@@ -52,6 +52,9 @@ namespace Sample13
         public bool DenoiserOn { get; set; } = true;
         public int NumPixelSamples { get; set; } = 1;
         public bool Accumulate { get; set; } = true;
+        public int MaxMirrorBounces { get; set; } = 2;
+        public int MaxRefractionBounces { get; set; } = 3;
+        public int MaxDiffuseBounces { get; set; } = 1;
 
         // Defaults to the original single-merged-build-input triangles GAS (fast) -
         // splitting into one build input per mesh (see SbtLayout.GetTriangleMeshRanges)
@@ -312,6 +315,9 @@ namespace Sample13
             presentQueue = new PresentQueue(frameOutput.DisplayBytes);
 
             launchParams.NumPixelSamples = NumPixelSamples;
+            launchParams.MaxMirrorBounces = MaxMirrorBounces;
+            launchParams.MaxRefractionBounces = MaxRefractionBounces;
+            launchParams.MaxDiffuseBounces = MaxDiffuseBounces;
             launchParams.ColorBuffer = (Vec4*)frameOutput.HdrColorBuffer.NativePtr;
             launchParams.AlbedoBuffer = (Vec4*)frameOutput.AlbedoBuffer.NativePtr;
             launchParams.NormalBuffer = (Vec4*)frameOutput.NormalBuffer.NativePtr;
@@ -358,6 +364,9 @@ namespace Sample13
                 if (!Accumulate || sceneIsAnimated)
                     launchParams.FrameID = 0;
                 launchParams.NumPixelSamples = NumPixelSamples;
+                launchParams.MaxMirrorBounces = MaxMirrorBounces;
+                launchParams.MaxRefractionBounces = MaxRefractionBounces;
+                launchParams.MaxDiffuseBounces = MaxDiffuseBounces;
 
                 stepStopwatch.Restart();
                 gpu.Accelerator.OptixLaunch(

@@ -47,9 +47,15 @@ namespace Sample13
         private double smoothedPresentMs = 16.0;
         private double displayFps;
 
-        // Mouse-drag camera controls: left = orbit, right = dolly, middle = pan.
-        private Point? dragLastPos;
-        private MouseButton? dragButton;
+        // FPS-style camera controls: WASD for movement, mouse for look
+        private bool keyW, keyA, keyS, keyD;
+        private Point lastMousePos;
+        private float cameraYaw = 0f;
+        private float cameraPitch = 0f;
+        private float mouseDeltaX = 0f;
+        private float mouseDeltaY = 0f;
+        private const float MouseSensitivity = 0.1f;
+        private const float MoveSpeed = 0.1f;
 
         // Scene-cycling debounce, matching the reference's RaytraceEntity 1-second
         // cooldown on its I/U scene-switch keys.
@@ -70,9 +76,9 @@ namespace Sample13
             Frame.MouseDown += Frame_MouseDown;
             Frame.MouseMove += Frame_MouseMove;
             Frame.MouseUp += Frame_MouseUp;
-            Frame.LostMouseCapture += (s, e) => { dragButton = null; };
 
             KeyDown += MainWindow_KeyDown;
+            KeyUp += MainWindow_KeyUp;
 
             // CompositionTarget.Rendering fires once per WPF-composed frame (UI thread
             // only, roughly vsync-paced) and tries to pull the next frame the render
@@ -93,6 +99,23 @@ namespace Sample13
 
         private void OnCompositionRendering(object sender, EventArgs e)
         {
+            // Apply accumulated mouse delta
+            if (mouseDeltaX != 0 || mouseDeltaY != 0)
+            {
+                cameraYaw += mouseDeltaX;
+                cameraPitch += mouseDeltaY;
+                cameraPitch = System.Math.Max(-89f, System.Math.Min(89f, cameraPitch));
+                mouseDeltaX = 0;
+                mouseDeltaY = 0;
+                UpdateFPSCamera();
+            }
+
+            // Handle FPS movement input
+            if (keyW || keyA || keyS || keyD)
+            {
+                UpdateFPSMovement();
+            }
+
             if (sampleRenderer.TryPresentFrame(ref presentIndex, out byte[] data))
             {
                 long now = Stopwatch.GetTimestamp();
@@ -120,93 +143,90 @@ namespace Sample13
         // forces a scene rebuild either way, since it changes the GAS/SBT shape.
         private void MainWindow_KeyDown(object sender, KeyEventArgs e)
         {
+            // Track WASD for FPS movement
             switch (e.Key)
             {
-                case Key.I:
-                case Key.U:
-                    var now = DateTime.UtcNow;
-                    if (now - lastSceneSwitch < SceneSwitchCooldown)
-                        return;
-                    lastSceneSwitch = now;
-
-                    if (e.Key == Key.I)
-                        sampleRenderer.NextScene();
-                    else
-                        sampleRenderer.PreviousScene();
-                    break;
-
-                case Key.D:
-                case Key.Space:
-                    sampleRenderer.DenoiserOn = !sampleRenderer.DenoiserOn;
-                    break;
-
-                case Key.A:
-                    sampleRenderer.Accumulate = !sampleRenderer.Accumulate;
-                    break;
+                case Key.W: keyW = true; e.Handled = true; return;
+                case Key.A: keyA = true; e.Handled = true; return;
+                case Key.S: keyS = true; e.Handled = true; return;
+                case Key.D: keyD = true; e.Handled = true; return;
 
                 case Key.M:
                     sampleRenderer.UseMergedTrianglesGas = !sampleRenderer.UseMergedTrianglesGas;
                     sampleRenderer.RebuildCurrentScene();
-                    break;
+                    return;
 
                 case Key.F1:
-                    OverlayPanel.Visibility = OverlayPanel.Visibility == Visibility.Visible
-                        ? Visibility.Collapsed
-                        : Visibility.Visible;
+                    var controlPanel = this.FindName("ControlPanel") as Border;
+                    if (controlPanel != null)
+                    {
+                        controlPanel.Visibility = controlPanel.Visibility == Visibility.Visible
+                            ? Visibility.Collapsed
+                            : Visibility.Visible;
+                    }
                     return;
 
                 default:
                     return;
             }
-
-            Title = $"ILGPU.Optix Sample13 - {sampleRenderer.CurrentSceneName} - " +
-                $"Denoiser {(sampleRenderer.DenoiserOn ? "ON" : "OFF")}, Accumulate {(sampleRenderer.Accumulate ? "ON" : "OFF")}, " +
-                $"TrianglesGAS {(sampleRenderer.UseMergedTrianglesGas ? "merged" : "per-mesh")}";
         }
+
+        private void MainWindow_KeyUp(object sender, KeyEventArgs e)
+        {
+            switch (e.Key)
+            {
+                case Key.W: keyW = false; e.Handled = true; break;
+                case Key.A: keyA = false; e.Handled = true; break;
+                case Key.S: keyS = false; e.Handled = true; break;
+                case Key.D: keyD = false; e.Handled = true; break;
+            }
+        }
+
+        private bool isMouseCaptured = false;
 
         private void Frame_MouseDown(object sender, MouseButtonEventArgs e)
         {
-            if (e.ChangedButton != MouseButton.Left &&
-                e.ChangedButton != MouseButton.Right &&
-                e.ChangedButton != MouseButton.Middle)
+            if (e.ChangedButton != MouseButton.Left)
             {
                 return;
             }
 
-            dragButton = e.ChangedButton;
-            dragLastPos = e.GetPosition(Frame);
-            Frame.CaptureMouse();
+            // Initialize camera angles from current look direction
+            Camera current = sampleRenderer.camera;
+            Vec3 forward = Vec3.unitVector(current.lookAt - current.origin);
+
+            cameraYaw = (float)System.Math.Atan2(forward.x, forward.z) * 180f / (float)System.Math.PI;
+            float verticalAngle = (float)System.Math.Asin(System.Math.Max(-1, System.Math.Min(1, forward.y)));
+            cameraPitch = verticalAngle * 180f / (float)System.Math.PI;
+
+            // Capture mouse for FPS camera control
+            isMouseCaptured = true;
+            lastMousePos = e.GetPosition(this);
+            Frame.Focus();
+            Mouse.Capture(Frame);
+            e.Handled = true;
         }
 
         private void Frame_MouseMove(object sender, MouseEventArgs e)
         {
-            if (dragButton == null || dragLastPos == null)
+            // Only process mouse movement if mouse is captured (left button held)
+            if (!isMouseCaptured)
             {
                 return;
             }
 
-            Point pos = e.GetPosition(Frame);
-            float dx = (float)((pos.X - dragLastPos.Value.X) / Frame.ActualWidth);
-            float dy = (float)((pos.Y - dragLastPos.Value.Y) / Frame.ActualHeight);
-            dragLastPos = pos;
-
-            Camera current = sampleRenderer.camera;
-            Camera updated = dragButton switch
-            {
-                MouseButton.Left => CameraMotion.Orbit(current, dx, dy),
-                MouseButton.Right => CameraMotion.Dolly(current, dy),
-                MouseButton.Middle => CameraMotion.Pan(current, dx, dy),
-                _ => current
-            };
-            sampleRenderer.setCamera(updated);
+            Point pos = e.GetPosition(this);
+            mouseDeltaX += (float)(pos.X - lastMousePos.X) * MouseSensitivity;
+            mouseDeltaY -= (float)(pos.Y - lastMousePos.Y) * MouseSensitivity;
+            lastMousePos = pos;
         }
 
         private void Frame_MouseUp(object sender, MouseButtonEventArgs e)
         {
-            if (e.ChangedButton == dragButton)
+            if (e.ChangedButton == MouseButton.Left && isMouseCaptured)
             {
-                dragButton = null;
-                Frame.ReleaseMouseCapture();
+                isMouseCaptured = false;
+                Mouse.Capture(null);
             }
         }
 
@@ -250,35 +270,146 @@ namespace Sample13
         // it's hidden.
         public void updateOverlay()
         {
-            if (OverlayPanel.Visibility != Visibility.Visible)
-                return;
-
             var r = sampleRenderer;
             var stats = r.LastStats;
 
-            string primitiveCounts =
-                $"Sph {r.SphereCount}  Box {r.BoxCount}\n" +
-                $"CylY {r.CylinderYCount}  Disk {r.DiskCount}\n" +
-                $"XYRect {r.XYRectCount}  XZRect {r.XZRectCount}\n" +
-                $"YZRect {r.YZRectCount}" +
-                (r.HasVolumeGrid ? $"\nGrid {r.VolumeGridDims.x}x{r.VolumeGridDims.y}x{r.VolumeGridDims.z}" : "");
+            string statsText =
+                $"Scene: {r.CurrentSceneName}\n" +
+                $"Geometry: {r.TriangleCount} tris, {r.MaterialCount} mats\n" +
+                $"\n" +
+                $"Render: {stats.Fps:0.0} fps ({stats.TotalFrameMs:0.00} ms)\n" +
+                $"Display: {displayFps:0.0} fps\n" +
+                $"Samples: {stats.SamplesAccumulated}\n" +
+                $"\n" +
+                $"Trace:    {stats.TraceMs:0.00} ms\n" +
+                $"Denoise:  {stats.DenoiseMs:0.00} ms\n" +
+                $"Tonemap:  {stats.TonemapMs:0.00} ms\n" +
+                $"Readback: {stats.ReadbackMs:0.00} ms\n" +
+                $"Publish:  {stats.PublishMs:0.00} ms\n" +
+                $"\n" +
+                $"Denoiser: {(r.DenoiserOn ? "ON" : "OFF")}\n" +
+                $"Accumulate: {(r.Accumulate ? "ON" : "OFF")}";
 
-            OverlayText.Text =
-                $"{r.CurrentSceneName}\n" +
-                $"Tris {r.TriangleCount}  Mats {r.MaterialCount}\n" +
-                $"{primitiveCounts}\n" +
-                $"{r.AccelStructureSummary}\n" +
-                $"Render FPS {stats.Fps:0.0}\n" +
-                $"Display FPS {displayFps:0.0}\n" +
-                $"Frame {stats.TotalFrameMs:0.00} ms\n" +
-                $"Samples {stats.SamplesAccumulated}\n" +
-                $"Trace {stats.TraceMs:0.00} ms\n" +
-                $"Denoise {stats.DenoiseMs:0.00} ms\n" +
-                $"Tonemap {stats.TonemapMs:0.00} ms\n" +
-                $"Readback {stats.ReadbackMs:0.00} ms\n" +
-                $"Publish {stats.PublishMs:0.00} ms\n" +
-                $"Denoiser {(r.DenoiserOn ? "ON" : "OFF")}\n" +
-                $"Accumulate {(r.Accumulate ? "ON" : "OFF")}";
+            OverlayText.Text = statsText;
+            UpdateBounceCountDisplay();
+        }
+
+        private void UpdateBounceCountDisplay()
+        {
+            MirrorCountText.Text = sampleRenderer.MaxMirrorBounces.ToString();
+            RefractionCountText.Text = sampleRenderer.MaxRefractionBounces.ToString();
+            DiffuseCountText.Text = sampleRenderer.MaxDiffuseBounces.ToString();
+            SceneNameText.Text = sampleRenderer.CurrentSceneName;
+            DenoiserStatusText.Text = sampleRenderer.DenoiserOn ? "ON" : "OFF";
+            AccumulateStatusText.Text = sampleRenderer.Accumulate ? "ON" : "OFF";
+        }
+
+        private void PrevSceneBtn_Click(object sender, RoutedEventArgs e)
+        {
+            var now = DateTime.UtcNow;
+            if (now - lastSceneSwitch < SceneSwitchCooldown)
+                return;
+            lastSceneSwitch = now;
+            sampleRenderer.PreviousScene();
+            UpdateBounceCountDisplay();
+        }
+
+        private void NextSceneBtn_Click(object sender, RoutedEventArgs e)
+        {
+            var now = DateTime.UtcNow;
+            if (now - lastSceneSwitch < SceneSwitchCooldown)
+                return;
+            lastSceneSwitch = now;
+            sampleRenderer.NextScene();
+            UpdateBounceCountDisplay();
+        }
+
+        private void DenoiserBtn_Click(object sender, RoutedEventArgs e)
+        {
+            sampleRenderer.DenoiserOn = !sampleRenderer.DenoiserOn;
+            UpdateBounceCountDisplay();
+        }
+
+        private void AccumulateBtn_Click(object sender, RoutedEventArgs e)
+        {
+            sampleRenderer.Accumulate = !sampleRenderer.Accumulate;
+            UpdateBounceCountDisplay();
+        }
+
+        private void MirrorIncBtn_Click(object sender, RoutedEventArgs e)
+        {
+            sampleRenderer.MaxMirrorBounces = System.Math.Min(8, sampleRenderer.MaxMirrorBounces + 1);
+            sampleRenderer.setCamera(sampleRenderer.camera);
+            UpdateBounceCountDisplay();
+        }
+
+        private void MirrorDecBtn_Click(object sender, RoutedEventArgs e)
+        {
+            sampleRenderer.MaxMirrorBounces = System.Math.Max(0, sampleRenderer.MaxMirrorBounces - 1);
+            sampleRenderer.setCamera(sampleRenderer.camera);
+            UpdateBounceCountDisplay();
+        }
+
+        private void RefractionIncBtn_Click(object sender, RoutedEventArgs e)
+        {
+            sampleRenderer.MaxRefractionBounces = System.Math.Min(8, sampleRenderer.MaxRefractionBounces + 1);
+            sampleRenderer.setCamera(sampleRenderer.camera);
+            UpdateBounceCountDisplay();
+        }
+
+        private void RefractionDecBtn_Click(object sender, RoutedEventArgs e)
+        {
+            sampleRenderer.MaxRefractionBounces = System.Math.Max(0, sampleRenderer.MaxRefractionBounces - 1);
+            sampleRenderer.setCamera(sampleRenderer.camera);
+            UpdateBounceCountDisplay();
+        }
+
+        private void DiffuseIncBtn_Click(object sender, RoutedEventArgs e)
+        {
+            sampleRenderer.MaxDiffuseBounces = System.Math.Min(8, sampleRenderer.MaxDiffuseBounces + 1);
+            sampleRenderer.setCamera(sampleRenderer.camera);
+            UpdateBounceCountDisplay();
+        }
+
+        private void DiffuseDecBtn_Click(object sender, RoutedEventArgs e)
+        {
+            sampleRenderer.MaxDiffuseBounces = System.Math.Max(0, sampleRenderer.MaxDiffuseBounces - 1);
+            sampleRenderer.setCamera(sampleRenderer.camera);
+            UpdateBounceCountDisplay();
+        }
+
+        private void UpdateFPSMovement()
+        {
+            Camera current = sampleRenderer.camera;
+            Vec3 forward = Vec3.unitVector(current.lookAt - current.origin);
+            Vec3 right = Vec3.unitVector(Vec3.cross(forward, current.up));
+            Vec3 worldUp = Vec3.unitVector(current.up);
+
+            Vec3 movement = new Vec3(0, 0, 0);
+            if (keyW) movement += forward * MoveSpeed;
+            if (keyS) movement -= forward * MoveSpeed;
+            if (keyD) movement += right * MoveSpeed;
+            if (keyA) movement -= right * MoveSpeed;
+
+            Vec3 newOrigin = current.origin + movement;
+            Camera updated = new Camera(newOrigin, current.lookAt + movement, current.up, width, height, current.noHitColor, current.verticalFov, current.worldScale);
+            sampleRenderer.setCamera(updated);
+        }
+
+        private void UpdateFPSCamera()
+        {
+            Camera current = sampleRenderer.camera;
+            float yawRad = cameraYaw * (float)System.Math.PI / 180f;
+            float pitchRad = cameraPitch * (float)System.Math.PI / 180f;
+
+            float forwardX = (float)System.Math.Sin(yawRad) * (float)System.Math.Cos(pitchRad);
+            float forwardY = (float)System.Math.Sin(pitchRad);
+            float forwardZ = (float)System.Math.Cos(yawRad) * (float)System.Math.Cos(pitchRad);
+            Vec3 forward = Vec3.unitVector(new Vec3(forwardX, forwardY, forwardZ));
+
+            Vec3 lookAt = current.origin + forward * 1.0f;
+            Camera updated = new Camera(current.origin, lookAt, new Vec3(0, 1, 0), width, height, current.noHitColor, current.verticalFov, current.worldScale);
+            sampleRenderer.setCamera(updated);
         }
     }
 }

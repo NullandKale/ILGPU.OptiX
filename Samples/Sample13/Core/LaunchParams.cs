@@ -24,6 +24,9 @@ namespace Sample13
     {
         public int NumPixelSamples;
         public int FrameID;
+        public int MaxMirrorBounces;
+        public int MaxRefractionBounces;
+        public int MaxDiffuseBounces;
         public Vec4* ColorBuffer;
         // AOV guide buffers for the denoiser (see SampleRenderer.cs's OptixDenoiser
         // wiring) - overwritten fresh every frame from the primary ray's own hit, not

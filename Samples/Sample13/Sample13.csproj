@@ -38,6 +38,19 @@
       <Link>models\meshes\%(RecursiveDir)%(Filename)%(Extension)</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
+    <!-- Sponza model and textures -->
+    <None Include="..\Models\sponza\sponza.obj">
+      <Link>models\sponza.obj</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Include="..\Models\sponza\sponza.mtl">
+      <Link>models\sponza.mtl</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Include="..\Models\sponza\textures\**\*.*">
+      <Link>models\sponza\textures\%(RecursiveDir)%(Filename)%(Extension)</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
   </ItemGroup>
 
   <ItemGroup>

@@ -47,18 +47,7 @@ namespace Sample13
         public unsafe void Refresh()
         {
             IntPtr framePtr = reader.GetCurrentFramePtr();
-            byte* src = (byte*)framePtr;
-            fixed (byte* dst = rgbaScratch)
-            {
-                for (int i = 0; i < pixelCount; i++)
-                {
-                    int o = i * 4;
-                    dst[o + 0] = src[o + 2]; // R <- B
-                    dst[o + 1] = src[o + 1]; // G
-                    dst[o + 2] = src[o + 0]; // B <- R
-                    dst[o + 3] = src[o + 3]; // A
-                }
-            }
+            TextureLoader.BgraToRgba((byte*)framePtr, rgbaScratch, pixelCount);
             textureObject.Update(rgbaScratch);
         }
 

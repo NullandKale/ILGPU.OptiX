@@ -37,14 +37,30 @@ namespace Sample13
             converted.CopyPixels(bgra, stride, 0);
 
             var rgba = new byte[bgra.Length];
-            for (int i = 0; i < bgra.Length; i += 4)
+            unsafe
             {
-                rgba[i + 0] = bgra[i + 2];
-                rgba[i + 1] = bgra[i + 1];
-                rgba[i + 2] = bgra[i + 0];
-                rgba[i + 3] = bgra[i + 3];
+                fixed (byte* src = bgra)
+                    BgraToRgba(src, rgba, width * height);
             }
             return rgba;
+        }
+
+        // Swaps BGRA byte order into the tightly-packed RGBA8 layout CudaTextureObject
+        // expects - shared by the static-image path above and VideoTexture's per-frame
+        // refresh (whose source is an unmanaged ffmpeg frame buffer, hence the pointer).
+        public static unsafe void BgraToRgba(byte* bgra, byte[] rgba, int pixelCount)
+        {
+            fixed (byte* dst = rgba)
+            {
+                for (int i = 0; i < pixelCount; i++)
+                {
+                    int o = i * 4;
+                    dst[o + 0] = bgra[o + 2]; // R <- B
+                    dst[o + 1] = bgra[o + 1]; // G
+                    dst[o + 2] = bgra[o + 0]; // B <- R
+                    dst[o + 3] = bgra[o + 3]; // A
+                }
+            }
         }
     }
 }

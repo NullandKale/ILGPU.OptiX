@@ -251,4 +251,8 @@ Src/ILGPU.Optix/OptixPayload.cs
 Src/ILGPU.Optix/OptixTrace.cs
 .claude
 example
+
+# Exception: Include Sponza model files in git (needed for samples)
+!Samples/Models/sponza/
+!Samples/Models/sponza/**
 docs

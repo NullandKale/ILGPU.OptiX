@@ -40,11 +40,11 @@
     </None>
     <!-- Sponza model and textures -->
     <None Include="..\Models\sponza\sponza.obj">
-      <Link>models\sponza.obj</Link>
+      <Link>models\sponza\sponza.obj</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
     <None Include="..\Models\sponza\sponza.mtl">
-      <Link>models\sponza.mtl</Link>
+      <Link>models\sponza\sponza.mtl</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
     <None Include="..\Models\sponza\textures\**\*.*">

@@ -55,7 +55,12 @@ namespace Sample13
         private float mouseDeltaX = 0f;
         private float mouseDeltaY = 0f;
         private const float MouseSensitivity = 0.1f;
-        private const float MoveSpeed = 0.1f;
+        // Fraction of the scene's CameraWorldScale moved per frame while a WASD key is
+        // held - an absolute constant here would be imperceptible in a large scene
+        // (e.g. Sponza's worldScale is in the thousands) and far too fast in a small
+        // one. 0.01 matches the old fixed 0.1f constant's feel for a worldScale of 10,
+        // the typical small-scene value.
+        private const float MoveSpeedFraction = 0.01f;
 
         // Scene-cycling debounce, matching the reference's RaytraceEntity 1-second
         // cooldown on its I/U scene-switch keys.
@@ -382,14 +387,20 @@ namespace Sample13
         {
             Camera current = sampleRenderer.camera;
             Vec3 forward = Vec3.unitVector(current.lookAt - current.origin);
-            Vec3 right = Vec3.unitVector(Vec3.cross(forward, current.up));
+            // Must match Camera.axis.x's own convention (OrthoNormalBasis.fromZY:
+            // cross(up, forward), not cross(forward, up)) - axis.x is what actually
+            // determines which world direction appears on the right side of the
+            // rendered image, so using the opposite cross-product order here silently
+            // swaps A/D.
+            Vec3 right = Vec3.unitVector(Vec3.cross(current.up, forward));
             Vec3 worldUp = Vec3.unitVector(current.up);
 
+            float moveSpeed = current.worldScale * MoveSpeedFraction;
             Vec3 movement = new Vec3(0, 0, 0);
-            if (keyW) movement += forward * MoveSpeed;
-            if (keyS) movement -= forward * MoveSpeed;
-            if (keyD) movement += right * MoveSpeed;
-            if (keyA) movement -= right * MoveSpeed;
+            if (keyW) movement += forward * moveSpeed;
+            if (keyS) movement -= forward * moveSpeed;
+            if (keyD) movement += right * moveSpeed;
+            if (keyA) movement -= right * moveSpeed;
 
             Vec3 newOrigin = current.origin + movement;
             Camera updated = new Camera(newOrigin, current.lookAt + movement, current.up, width, height, current.noHitColor, current.verticalFov, current.worldScale);

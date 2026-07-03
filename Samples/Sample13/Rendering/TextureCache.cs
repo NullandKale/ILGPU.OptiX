@@ -46,11 +46,31 @@ namespace Sample13
             }
 
             var pixels = TextureLoader.LoadRgba8(fullPath, out var texWidth, out var texHeight);
+            LogAlphaStats(relativePath, pixels, texWidth, texHeight);
             var textureObject = new CudaTextureObject(pixels, texWidth, texHeight);
             textureObjects.Add(textureObject);
             var handle = textureObject.TextureObject;
             textureCache[relativePath] = handle;
             return handle;
+        }
+
+        // Diagnostic for alpha-cutout materials (e.g. Sponza's leaf texture) - reports
+        // whether the loaded pixel data actually has varying alpha at all (a fully-255
+        // texture means whatever alpha-cutout look a material expects can't come from
+        // this file, regardless of how the shading code samples it).
+        static void LogAlphaStats(string relativePath, byte[] rgba, int width, int height)
+        {
+            byte minA = 255, maxA = 0;
+            long transparentCount = 0;
+            for (int i = 3; i < rgba.Length; i += 4)
+            {
+                byte a = rgba[i];
+                if (a < minA) minA = a;
+                if (a > maxA) maxA = a;
+                if (a < 128) transparentCount++;
+            }
+            long pixelCount = (long)width * height;
+            Console.WriteLine($"[TextureCache] {relativePath}: {width}x{height} alpha[min={minA} max={maxA}] {transparentCount}/{pixelCount} pixels <128 alpha ({(100.0 * transparentCount / pixelCount):F1}%)");
         }
 
         // Refreshes every active video texture with its latest decoded frame - called

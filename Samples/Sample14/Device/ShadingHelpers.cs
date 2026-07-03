@@ -2,7 +2,7 @@ using ILGPU;
 using ILGPU.Algorithms;
 using ILGPU.OptiX;
 
-namespace Sample13
+namespace Sample14
 {
     /// <summary>
     /// Material shading branches (diffuse/mirror/dielectric/volume-grid) plus the BRDF,

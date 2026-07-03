@@ -9,7 +9,7 @@
 // Source License. See LICENSE.txt for details.
 // ---------------------------------------------------------------------------------------
 
-namespace Sample13
+namespace Sample14
 {
     // Device-side view of a hitgroup record's custom data (the bytes after the header) -
     // what OptixGetSbtDataPointer.Value points at inside __closest__radiance. Field layout

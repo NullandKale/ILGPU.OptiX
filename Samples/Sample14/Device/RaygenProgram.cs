@@ -1,7 +1,7 @@
 using ILGPU;
 using ILGPU.OptiX;
 
-namespace Sample13
+namespace Sample14
 {
     /// <summary>
     /// The ray-generation program: camera ray setup, the iterative bounce loop, and

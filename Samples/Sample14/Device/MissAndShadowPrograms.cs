@@ -1,7 +1,7 @@
 using ILGPU;
 using ILGPU.OptiX;
 
-namespace Sample13
+namespace Sample14
 {
     /// <summary>
     /// The radiance miss program (sky gradient) and the shadow-ray program set

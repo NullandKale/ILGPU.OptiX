@@ -6,7 +6,7 @@ using ILGPU.Runtime.Cuda;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
 
-namespace Sample13
+namespace Sample14
 {
     // The three SBT record layouts plus everything that computes with the hitgroup
     // record ordering live together in this file on purpose: HitgroupRecord's field

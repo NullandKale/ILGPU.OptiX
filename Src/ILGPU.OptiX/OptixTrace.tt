@@ -54,7 +54,23 @@ namespace ILGPU.OptiX
     // 9 ray-parameter floats, then 5 trailing uints.
     const int NonPayloadArgCount = 1 + 1 + 1 + 1 + 9 + 5;
 
-    for (int paramIdx = 0; paramIdx <= 19; paramIdx++) {
+    // The real ceiling here is not OptiX's own 32-payload hardware limit
+    // (MaxPayloadValues above) - it's ILGPU's own CudaAsm.EmitRef, whose generated
+    // overloads only go up to 44 ref arguments (see numEmitRefArguments in
+    // example/ILGPU/Src/ILGPU/Runtime/Cuda/CudaAsm.Generated.tt). Every Trace() call
+    // spends NonPayloadArgCount (18) of those 44 on fixed arguments regardless of
+    // paramIdx, leaving 44 - 18 = 26 as the actual highest payload count an overload
+    // can support. Generating every count up to this true ceiling up front (rather
+    // than only as high as whatever a given sample happens to need today) means no
+    // sample should ever need to touch this loop bound again - see
+    // docs/SAMPLE15_PLAN.md Milestone M3 for the last time a sample-specific bump
+    // here caused a silent mismatch against RendererPipeline.cs's own
+    // NumPayloadValues (a separate, unrelated number samples must still set
+    // themselves to match how many of these generated slots they actually use).
+    const int MaxEmitRefArguments = 44;
+    const int MaxAchievablePayloadValues = MaxEmitRefArguments - NonPayloadArgCount;
+
+    for (int paramIdx = 0; paramIdx <= MaxAchievablePayloadValues; paramIdx++) {
         int padArg = paramIdx;
         int typeArg = paramIdx + 1;
         int countArg = paramIdx + 2;

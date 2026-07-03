@@ -1,0 +1,5 @@
+venice_sunset_1k.hdr
+Source: https://polyhaven.com/a/venice_sunset
+License: CC0 1.0 Universal (public domain) - https://polyhaven.com/license
+Downloaded: https://dl.polyhaven.org/file/ph-assets/HDRIs/hdr/1k/venice_sunset_1k.hdr
+MD5: a5ec4d30fc3421c214a17b208fb66d5f

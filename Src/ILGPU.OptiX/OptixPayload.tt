@@ -35,7 +35,14 @@ namespace ILGPU.OptiX
     [CLSCompliant(false)]
     public static class OptixPayload
     {
-<# for (int payloadIdx = 0; payloadIdx <= 18; payloadIdx++) { #>
+<#
+    // Matches OptixTrace.tt's own MaxAchievablePayloadValues (26, bounded by
+    // CudaAsm.EmitRef's 44-ref-argument ceiling, not OptiX's 32-payload hardware
+    // limit) - a Trace() call can never actually populate more than 26 payload
+    // registers, so generating Payload26+ getters/setters here would be dead code
+    // that can never be legitimately reached.
+    const int MaxAchievablePayloadValues = 26;
+    for (int payloadIdx = 0; payloadIdx < MaxAchievablePayloadValues; payloadIdx++) { #>
         public static uint Payload<#= payloadIdx #>
         {
             get

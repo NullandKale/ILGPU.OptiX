@@ -1,0 +1,166 @@
+using ILGPU;
+using ILGPU.Algorithms;
+using ILGPU.OptiX;
+
+namespace Sample15
+{
+    /// <summary>
+    /// The ray-generation program: camera ray setup, the iterative bounce loop, and
+    /// progressive frame accumulation into the HDR color buffer plus the denoiser's
+    /// AOV guide buffers.
+    /// </summary>
+    public static class RaygenProgram
+    {
+        // Hard safety cap on total Trace() calls per sample (docs/SAMPLE15_PLAN.md
+        // Milestone M3) - launchParams.MaxBounces and Russian roulette termination are
+        // what actually bound path length in practice; this is only a runaway
+        // safety net (e.g. a pathological RR draw sequence) and is set well above any
+        // reasonable MaxBounces the UI allows.
+        private const int MaxTotalBounces = 32;
+
+        // Bounce index (0-based) at which Russian roulette termination starts
+        // considering killing the path - below this, every path continues
+        // unconditionally, matching the reference path tracers' convention of not
+        // rouletting very short paths (where the variance/cost tradeoff isn't worth it).
+        private const int RussianRouletteStartBounce = 3;
+
+        // Clamped survival-probability range - the lower bound keeps a path with
+        // near-zero throughput (e.g. deep inside a dark diffuse cavity) from being kept
+        // alive by an unbounded 1/p throughput correction; the upper bound guarantees
+        // roulette can still terminate even a fully-white-throughput path.
+        private const float MinSurvivalProbability = 0.05f;
+        private const float MaxSurvivalProbability = 0.95f;
+
+        public unsafe static void __raygen__renderFrame(LaunchParams launchParams)
+        {
+            var ix = OptixGetLaunchIndex.X;
+            var iy = OptixGetLaunchIndex.Y;
+            var camera = launchParams.camera;
+
+            LCG rng = new LCG((uint)(ix + (camera.width * iy)), (uint)launchParams.FrameID);
+
+            int numPixelSamples = launchParams.NumPixelSamples;
+            Vec3 pixelColor = new Vec3(0f, 0f, 0f);
+            Vec3 pixelNormal = new Vec3(0f, 0f, 0f);
+            Vec3 pixelAlbedo = new Vec3(0f, 0f, 0f);
+            for (int sampleID = 0; sampleID < numPixelSamples; sampleID++)
+            {
+                float screenX = (2f * ((ix + rng.Next()) * camera.reciprocalWidth)) - 1f;
+                float screenY = (2f * ((iy + rng.Next()) * camera.reciprocalHeight)) - 1f;
+
+                Vec3 rayOrigin = camera.origin;
+                Vec3 rayDir = Vec3.unitVector(camera.axis.transform(
+                    new Vec3(screenX * camera.aspectRatio, screenY, camera.cameraPlaneDist)));
+
+                Vec3 throughput = new Vec3(1f, 1f, 1f);
+                Vec3 sampleRadiance = new Vec3(0f, 0f, 0f);
+                Vec3 sampleNormal = new Vec3(0f, 0f, 0f);
+                Vec3 sampleAlbedo = new Vec3(0f, 0f, 0f);
+
+                // Sentinel until the first Trace() call returns a real value - the
+                // primary/camera ray has no previous bounce to MIS against
+                // (docs/SAMPLE15_PLAN.md Milestone M4, Payloads.DeltaOrPrimarySentinel).
+                float bsdfPdf = Payloads.DeltaOrPrimarySentinel;
+
+                for (int bounce = 0; bounce < MaxTotalBounces; bounce++)
+                {
+                    uint p0 = 0, p1 = 0, p2 = 0, p3 = 0, p4 = 0, p5 = 0, p6 = 0, p7 = 0, p8 = 0, p9 = 0, p10 = 0, p11 = 0, p12 = 0;
+                    uint p13 = 0, p14 = 0, p15 = 0, p16 = 0, p17 = 0, p18 = 0, p19 = rng.State, p20 = Interop.FloatAsInt(bsdfPdf);
+                    OptixTrace.Trace(
+                        launchParams.traversable,
+                        (rayOrigin.x, rayOrigin.y, rayOrigin.z),
+                        (rayDir.x, rayDir.y, rayDir.z),
+                        1e-3f,
+                        1e20f,
+                        0.0f,
+                        0xff,
+                        // Any-hit must run on radiance rays now that alpha-cutout
+                        // materials exist (Sponza's leaf geometry) - __anyhit__radiance
+                        // is what actually ignores the intersection for a
+                        // below-threshold-alpha sample. DISABLE_ANYHIT (the old value
+                        // here, from before alpha-cutout existed) would silently skip
+                        // that test and shade the nearest triangle regardless of alpha.
+                        OptixRayFlags.OPTIX_RAY_FLAG_NONE,
+                        Payloads.RADIANCE_RAY_TYPE,
+                        Payloads.RAY_TYPE_COUNT,
+                        Payloads.RADIANCE_RAY_TYPE,
+                        ref p0, ref p1, ref p2, ref p3, ref p4, ref p5, ref p6, ref p7, ref p8, ref p9, ref p10, ref p11, ref p12,
+                        ref p13, ref p14, ref p15, ref p16, ref p17, ref p18, ref p19, ref p20);
+
+                    sampleRadiance += throughput * new Vec3(Interop.IntAsFloat(p0), Interop.IntAsFloat(p1), Interop.IntAsFloat(p2));
+
+                    // AOV guide buffers only ever reflect the primary ray's own hit
+                    // (bounce 0), matching Sample11/12's convention - a mirror/glass
+                    // primary hit still contributes its own normal/tint here, which is
+                    // exactly what the denoiser needs to recognize that surface.
+                    if (bounce == 0)
+                    {
+                        sampleNormal = new Vec3(Interop.IntAsFloat(p13), Interop.IntAsFloat(p14), Interop.IntAsFloat(p15));
+                        sampleAlbedo = new Vec3(Interop.IntAsFloat(p16), Interop.IntAsFloat(p17), Interop.IntAsFloat(p18));
+                    }
+
+                    uint flag = p3;
+                    if (flag == Payloads.BOUNCE_TERMINAL)
+                        break;
+
+                    // Resume the RNG stream from wherever the closest-hit program's
+                    // sampling left it (docs/SAMPLE15_PLAN.md Milestone M3) - a single
+                    // continuous stream shared between raygen's own draws (pixel
+                    // jitter, Russian roulette below) and every shading call.
+                    rng.State = p19;
+                    bsdfPdf = Interop.IntAsFloat(p20);
+
+                    throughput *= new Vec3(Interop.IntAsFloat(p10), Interop.IntAsFloat(p11), Interop.IntAsFloat(p12));
+                    rayOrigin = new Vec3(Interop.IntAsFloat(p4), Interop.IntAsFloat(p5), Interop.IntAsFloat(p6));
+                    rayDir = new Vec3(Interop.IntAsFloat(p7), Interop.IntAsFloat(p8), Interop.IntAsFloat(p9));
+
+                    if (bounce + 1 >= launchParams.MaxBounces)
+                        break;
+
+                    // Russian roulette termination (docs/SAMPLE15_PLAN.md Design
+                    // Decision 7) - replaces the old per-material-kind bounce budgets
+                    // and the lengthSquared < 1e-6 throughput cutoff with a single
+                    // unbiased stochastic rule: survival probability tracks the path's
+                    // remaining energy, and a surviving path's throughput is corrected
+                    // by 1/p so the estimator stays unbiased.
+                    if (bounce >= RussianRouletteStartBounce)
+                    {
+                        float survival = XMath.Clamp(
+                            XMath.Max(throughput.x, XMath.Max(throughput.y, throughput.z)),
+                            MinSurvivalProbability, MaxSurvivalProbability);
+                        if (rng.Next() > survival)
+                            break;
+                        throughput /= survival;
+                    }
+                }
+
+                pixelColor += sampleRadiance;
+                pixelNormal += sampleNormal;
+                pixelAlbedo += sampleAlbedo;
+            }
+            pixelColor /= (float)numPixelSamples;
+            pixelNormal /= (float)numPixelSamples;
+            pixelAlbedo /= (float)numPixelSamples;
+
+            long fbIndex = ix + (iy * camera.width);
+            if (launchParams.FrameID > 0)
+            {
+                Vec4 previous = launchParams.ColorBuffer[fbIndex];
+                float weight = launchParams.FrameID;
+                pixelColor = new Vec3(
+                    ((weight * previous.x) + pixelColor.x) / (weight + 1f),
+                    ((weight * previous.y) + pixelColor.y) / (weight + 1f),
+                    ((weight * previous.z) + pixelColor.z) / (weight + 1f));
+            }
+
+            launchParams.ColorBuffer[fbIndex] = new Vec4(pixelColor.x, pixelColor.y, pixelColor.z, 1f);
+
+            // Unlike ColorBuffer, AlbedoBuffer/NormalBuffer are NOT blended across
+            // frames - each frame overwrites them fresh, matching Sample12's
+            // devicePrograms.cs (these are the denoiser's AOV guide inputs, not part of
+            // the progressively-accumulated image).
+            launchParams.NormalBuffer[fbIndex] = new Vec4(pixelNormal.x, pixelNormal.y, pixelNormal.z, 1f);
+            launchParams.AlbedoBuffer[fbIndex] = new Vec4(pixelAlbedo.x, pixelAlbedo.y, pixelAlbedo.z, 1f);
+        }
+    }
+}

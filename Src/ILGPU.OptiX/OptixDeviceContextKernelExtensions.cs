@@ -24,6 +24,17 @@ namespace ILGPU.OptiX
     /// </summary>
     public static class OptixDeviceContextKernelExtensions
     {
+        // WORKAROUND: the same Action<TLaunchParams> delegate/method (e.g. a shadow
+        // closest-hit program shared across many hitgroups with different intersection
+        // programs) is frequently compiled into more than one OptiX module. Every
+        // module contributes an OptiX global symbol named "{prefix}{method.Name}", so
+        // reusing the same delegate across modules produces duplicate-symbol link
+        // errors ("Symbol '...' was defined multiple times") once all modules are
+        // linked into one pipeline. Appending a process-wide unique suffix keeps each
+        // compiled module's entry point name distinct while still starting with the
+        // OptiX-recognized program-type prefix.
+        static int moduleCounter;
+
         /// <summary>
         /// Creates a PTX for the supplied kernel.
         /// </summary>
@@ -56,7 +67,8 @@ namespace ILGPU.OptiX
             // WORKAROUND: ILGPU uses a standard name for the kernel entry point.
             // This causes issues with duplicate name conflicts in OptiX, so rename
             // the ILGPU entry point.
-            entryFunctionName = $"{kernelPrefix}{kernel.Method.Name}";
+            var uniqueId = System.Threading.Interlocked.Increment(ref moduleCounter);
+            entryFunctionName = $"{kernelPrefix}{kernel.Method.Name}_{uniqueId}";
             var altKernelName = $"_{entryFunctionName}";
 
             var entryPointKernel = GenerateEntryKernel<TLaunchParams>(

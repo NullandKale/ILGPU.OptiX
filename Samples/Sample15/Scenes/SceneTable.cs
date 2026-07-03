@@ -27,6 +27,7 @@ namespace Sample15
             MeshScenes.BuildCowScene,
             MeshScenes.BuildDragonScene,
             MeshScenes.BuildSponzaScene,
+            PbrShowcaseScene.BuildPbrShowcaseScene,
             // MuseumScene/RadialMuseumScene are video-textured and deferred to a later
             // milestone (see docs/SAMPLE14_PLAN.md) - they need Media/VideoReader.cs +
             // VideoTexture.cs + OpenCvSharp + ffmpeg.exe, none of which are ported yet.

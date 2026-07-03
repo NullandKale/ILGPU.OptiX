@@ -1,0 +1,10 @@
+rusty_metal_02 (diffuse.png, normal.png, arm.png)
+Source: https://polyhaven.com/a/rusty_metal_02
+License: CC0 1.0 Universal (public domain) - https://polyhaven.com/license
+Downloaded (1k PNG):
+  https://dl.polyhaven.org/file/ph-assets/Textures/png/1k/rusty_metal_02/rusty_metal_02_diff_1k.png (MD5 5c89183e094ca67b5ebf3488bd0cf3fc)
+  https://dl.polyhaven.org/file/ph-assets/Textures/png/1k/rusty_metal_02/rusty_metal_02_nor_gl_1k.png (MD5 7f53ebc2a335631f8168a28867d0aa8e)
+  https://dl.polyhaven.org/file/ph-assets/Textures/png/1k/rusty_metal_02/rusty_metal_02_arm_1k.png (MD5 5faa5f98015e56cd2b7ef7f2f7aff750)
+arm.png channels: R=ambient occlusion, G=roughness, B=metallic - already matches
+this sample's MaterialSbtData.OrmTexture convention exactly, no repacking needed.
+normal.png is the OpenGL-convention (Y+ up) tangent-space normal map variant.

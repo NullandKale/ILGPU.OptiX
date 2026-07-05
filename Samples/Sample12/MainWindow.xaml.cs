@@ -40,6 +40,10 @@ namespace Sample12
         {
             InitializeComponent();
 
+            Console.WriteLine("Controls: Left-drag orbit, Right-drag dolly (zoom), Middle-drag pan.");
+            Console.WriteLine("D/Space: toggle denoiser, A: toggle accumulate, ,/.: samples-per-pixel -/+");
+            Console.WriteLine("(the window title updates with the current Denoiser/Accumulate/samples state).");
+
             wBitmap = new WriteableBitmap(width, height, 96, 96, PixelFormats.Bgra32, null);
             rect = new Int32Rect(0, 0, width, height);
             Frame.Source = wBitmap;

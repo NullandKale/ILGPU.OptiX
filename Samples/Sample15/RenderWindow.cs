@@ -77,8 +77,8 @@ namespace Sample15
         static void PrintControls()
         {
             Console.WriteLine("[Controls] W/A/S/D move, hold Left Mouse to look, [/] prev/next scene,");
-            Console.WriteLine("[Controls] M toggle merged-GAS, Space denoiser, Tab accumulate,");
-            Console.WriteLine("[Controls] 1/2 mirror bounces -/+, 3/4 refraction -/+, 5/6 diffuse -/+, Esc quit");
+            Console.WriteLine("[Controls] M toggle merged-GAS, Space denoiser, Tab accumulate, V TAA,");
+            Console.WriteLine("[Controls] R auto render-scale, 1/2 bounces -/+, T tonemap operator, Esc quit");
         }
 
         protected override void OnUpdateFrame(FrameEventArgs args)
@@ -218,20 +218,24 @@ namespace Sample15
                 sampleRenderer.Accumulate = !sampleRenderer.Accumulate;
                 Console.WriteLine($"[Accumulate] {sampleRenderer.Accumulate}");
             }
+            if (IsKeyPressed(Keys.V))
+            {
+                sampleRenderer.TemporalDenoiseEnabled = !sampleRenderer.TemporalDenoiseEnabled;
+                Console.WriteLine($"[TAA] {sampleRenderer.TemporalDenoiseEnabled}");
+            }
+            if (IsKeyPressed(Keys.R))
+            {
+                sampleRenderer.AutoScaleEnabled = !sampleRenderer.AutoScaleEnabled;
+                Console.WriteLine($"[AutoScale] {sampleRenderer.AutoScaleEnabled}");
+            }
 
             if (IsKeyPressed(Keys.D1)) AdjustMaxBounces(-1);
             if (IsKeyPressed(Keys.D2)) AdjustMaxBounces(1);
 
-            // Tonemap/NEE controls (docs/SAMPLE15_PLAN.md Milestone M8) - Exposure/
-            // env rotation/env intensity are continuous slider values with no natural
+            // Tonemap controls (docs/SAMPLE15_PLAN.md Milestone M8) - Exposure/env
+            // rotation/env intensity are continuous slider values with no natural
             // keyboard equivalent (unlike the discrete toggles here), so they stay
             // UI-panel-only.
-            if (IsKeyPressed(Keys.N))
-            {
-                sampleRenderer.NeeEnabled = !sampleRenderer.NeeEnabled;
-                sampleRenderer.setCamera(sampleRenderer.camera);
-                Console.WriteLine($"[NEE/MIS] {sampleRenderer.NeeEnabled}");
-            }
             if (IsKeyPressed(Keys.T))
             {
                 sampleRenderer.TonemapOperator = sampleRenderer.TonemapOperator == TonemapKernel.OperatorReinhard
@@ -294,9 +298,17 @@ namespace Sample15
         protected override void OnResize(ResizeEventArgs e)
         {
             base.OnResize(e);
+            // GL viewport always matches the actual window/backbuffer size - the
+            // fullscreen quad's textured draw (FullscreenQuad.Draw) already stretches
+            // whatever resolution the render texture is (linear-filtered) to fill
+            // whatever viewport is set, so a lower-than-window render resolution
+            // (SampleRenderer.RenderScale) just softens the image, it never
+            // letterboxes or distorts it.
             GL.Viewport(0, 0, e.Width, e.Height);
-            // Fixed-size window for now (matches Sample13's fixed 1200x800) - resizing
-            // the interop buffer/texture live is future work.
+
+            // OpenTK can fire an initial resize before OnLoad() has constructed
+            // sampleRenderer yet.
+            sampleRenderer?.OnWindowResized(e.Width, e.Height);
         }
 
         protected override void OnUnload()

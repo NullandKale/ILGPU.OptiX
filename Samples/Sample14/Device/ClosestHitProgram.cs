@@ -1,5 +1,7 @@
+using ILGPU;
 using ILGPU.Algorithms;
 using ILGPU.OptiX;
+using System.Numerics;
 
 namespace Sample14
 {
@@ -43,18 +45,29 @@ namespace Sample14
             {
                 uint primId = OptixGetPrimitiveIndex.Value;
                 Vec3i tri = launchParams.Indices[primId];
-                var (bu, bv) = OptixGetTriangleBarycentrics.Value;
-                float bw = 1f - bu - bv;
+                var (bw, bu, bv) = OptixHitProgramHelpers.GetTriangleBarycentrics();
 
                 Vec3 a = launchParams.Vertices[tri.x];
                 Vec3 b = launchParams.Vertices[tri.y];
                 Vec3 c = launchParams.Vertices[tri.z];
-                rawGeometricNormal = Vec3.unitVector(Vec3.cross(b - a, c - a));
+                var rawGeometricNormalV3 = OptixHitProgramHelpers.GetGeometricNormal(
+                    new Vector3(a.x, a.y, a.z),
+                    new Vector3(b.x, b.y, b.z),
+                    new Vector3(c.x, c.y, c.z));
+                rawGeometricNormal = new Vec3(rawGeometricNormalV3.X, rawGeometricNormalV3.Y, rawGeometricNormalV3.Z);
 
                 Vec3 n0 = launchParams.Normals[tri.x];
                 Vec3 n1 = launchParams.Normals[tri.y];
                 Vec3 n2 = launchParams.Normals[tri.z];
-                shadingNormal = Vec3.unitVector((bw * n0) + (bu * n1) + (bv * n2));
+                var shadingNormalV3 = OptixHitProgramHelpers.InterpolateAttribute(
+                    new Vector3(n0.x, n0.y, n0.z),
+                    new Vector3(n1.x, n1.y, n1.z),
+                    new Vector3(n2.x, n2.y, n2.z),
+                    bw, bu, bv);
+                shadingNormal = new Vec3(
+                    Vector3.Normalize(shadingNormalV3).X,
+                    Vector3.Normalize(shadingNormalV3).Y,
+                    Vector3.Normalize(shadingNormalV3).Z);
 
                 surfPos = (bw * a) + (bu * b) + (bv * c);
 

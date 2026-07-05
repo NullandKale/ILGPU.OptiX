@@ -89,7 +89,7 @@ namespace Sample15
                     Roughness = roughness,
                     MaterialKind = MaterialSbtData.Solid,
                 });
-                b.AddSphere(new Vec3(x, 0.8f, 2f), 0.8f, dielectric);
+                b.AddSphereMesh(new Vec3(x, 0.8f, 2f), 0.8f, dielectric);
 
                 uint conductor = (uint)b.AddMaterial(new MaterialSbtData
                 {
@@ -98,7 +98,7 @@ namespace Sample15
                     Roughness = roughness,
                     MaterialKind = MaterialSbtData.Solid,
                 });
-                b.AddSphere(new Vec3(x, 0.8f, -1f), 0.8f, conductor);
+                b.AddSphereMesh(new Vec3(x, 0.8f, -1f), 0.8f, conductor);
             }
 
             // Rough-glass object (docs/SAMPLE15_PLAN.md Milestone M7) - front and
@@ -113,7 +113,7 @@ namespace Sample15
                 TransmissionColor = new Vec3(0.95f, 0.97f, 1f),
                 MaterialKind = MaterialSbtData.Solid,
             });
-            b.AddSphere(new Vec3(0f, 1f, 4.2f), 1f, roughGlass);
+            b.AddSphereMesh(new Vec3(0f, 1f, 4.2f), 1f, roughGlass);
 
             return b.Build();
         }

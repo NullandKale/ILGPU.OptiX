@@ -1,14 +1,16 @@
 using ILGPU;
 using ILGPU.Algorithms;
 using ILGPU.OptiX;
+using ILGPU.OptiX.Device;
+using System.Numerics;
 
 namespace Sample09
 {
     public static class devicePrograms
     {
-        private const uint RADIANCE_RAY_TYPE = 0;
-        private const uint SHADOW_RAY_TYPE = 1;
-        private const uint RAY_TYPE_COUNT = 2;
+        private const uint RADIANCE_RAY_TYPE = OptixPayloadDefaults.RADIANCE_RAY_TYPE;
+        private const uint SHADOW_RAY_TYPE = OptixPayloadDefaults.SHADOW_RAY_TYPE;
+        private const uint RAY_TYPE_COUNT = OptixPayloadDefaults.RAY_TYPE_COUNT;
 
         // Matches example09_shadowRays/devicePrograms.cu exactly - a single hardcoded
         // point light (no area-light sampling/RNG, unlike Sample10), valid for the
@@ -70,25 +72,32 @@ namespace Sample09
         {
             uint primId = OptixGetPrimitiveIndex.Value;
             Vec3i tri = launchParams.Indices[primId];
-            var (bu, bv) = OptixGetTriangleBarycentrics.Value;
-            float bw = 1f - bu - bv;
+            var (bw, bu, bv) = OptixHitProgramHelpers.GetTriangleBarycentrics();
 
             Vec3 a = launchParams.Vertices[tri.x];
             Vec3 b = launchParams.Vertices[tri.y];
             Vec3 c = launchParams.Vertices[tri.z];
-            Vec3 geometricNormal = Vec3.cross(b - a, c - a);
+            var geometricNormalV3 = OptixHitProgramHelpers.GetGeometricNormal(
+                new Vector3(a.x, a.y, a.z),
+                new Vector3(b.x, b.y, b.z),
+                new Vector3(c.x, c.y, c.z));
+            Vec3 geometricNormal = new Vec3(geometricNormalV3.X, geometricNormalV3.Y, geometricNormalV3.Z);
 
             Vec3 n0 = launchParams.Normals[tri.x];
             Vec3 n1 = launchParams.Normals[tri.y];
             Vec3 n2 = launchParams.Normals[tri.z];
-            Vec3 shadingNormal = (bw * n0) + (bu * n1) + (bv * n2);
+            var shadingNormalV3 = OptixHitProgramHelpers.InterpolateAttribute(
+                new Vector3(n0.x, n0.y, n0.z),
+                new Vector3(n1.x, n1.y, n1.z),
+                new Vector3(n2.x, n2.y, n2.z),
+                bw, bu, bv);
+            Vec3 shadingNormal = new Vec3(shadingNormalV3.X, shadingNormalV3.Y, shadingNormalV3.Z);
 
             var (dx, dy, dz) = OptixGetWorldRayDirection.Value;
             Vec3 rayDir = new Vec3(dx, dy, dz);
 
-            if (Vec3.dot(rayDir, geometricNormal) > 0f)
-                geometricNormal = -geometricNormal;
-            geometricNormal = Vec3.unitVector(geometricNormal);
+            var orientedGeomNormalV3 = OptixHitProgramHelpers.OrientGeometricNormal(geometricNormalV3, rayDir);
+            geometricNormal = new Vec3(orientedGeomNormalV3.X, orientedGeomNormalV3.Y, orientedGeomNormalV3.Z);
 
             if (Vec3.dot(geometricNormal, shadingNormal) < 0f)
                 shadingNormal -= 2f * Vec3.dot(geometricNormal, shadingNormal) * geometricNormal;
@@ -149,14 +158,14 @@ namespace Sample09
 
         public static void __miss__shadow(LaunchParams launchParams)
         {
-            OptixPayload.Payload0 = Interop.FloatAsInt(1f);
+            OptixPayloadInterop.SetFloat(0, 1f);
         }
 
         private static void SetPRD(Vec3 color)
         {
-            OptixPayload.Payload0 = Interop.FloatAsInt(color.x);
-            OptixPayload.Payload1 = Interop.FloatAsInt(color.y);
-            OptixPayload.Payload2 = Interop.FloatAsInt(color.z);
+            OptixPayloadInterop.SetFloat(0, color.x);
+            OptixPayloadInterop.SetFloat(1, color.y);
+            OptixPayloadInterop.SetFloat(2, color.z);
         }
 
         public static void flipBitmap(Index1D index, int width, int height, ArrayView<byte> source, ArrayView<byte> dest)

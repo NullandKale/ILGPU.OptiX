@@ -39,12 +39,12 @@
     </ItemGroup>
 
     <ItemGroup>
-      <Compile Update="OptixPayload.cs">
+      <Compile Update="DeviceApi\OptixPayload.cs">
         <DesignTime>True</DesignTime>
         <AutoGen>True</AutoGen>
         <DependentUpon>OptixPayload.tt</DependentUpon>
       </Compile>
-      <Compile Update="OptixTrace.cs">
+      <Compile Update="DeviceApi\OptixTrace.cs">
         <DesignTime>True</DesignTime>
         <AutoGen>True</AutoGen>
         <DependentUpon>OptixTrace.tt</DependentUpon>
@@ -64,11 +64,11 @@
     </ItemGroup>
 
     <ItemGroup>
-      <None Update="OptixPayload.tt">
+      <None Update="DeviceApi\OptixPayload.tt">
         <Generator>TextTemplatingFileGenerator</Generator>
         <LastGenOutput>OptixPayload.cs</LastGenOutput>
       </None>
-      <None Update="OptixTrace.tt">
+      <None Update="DeviceApi\OptixTrace.tt">
         <Generator>TextTemplatingFileGenerator</Generator>
         <LastGenOutput>OptixTrace.cs</LastGenOutput>
       </None>

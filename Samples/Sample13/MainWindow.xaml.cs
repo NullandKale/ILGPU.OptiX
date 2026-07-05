@@ -159,6 +159,9 @@ namespace Sample13
                 case Key.M:
                     sampleRenderer.UseMergedTrianglesGas = !sampleRenderer.UseMergedTrianglesGas;
                     sampleRenderer.RebuildCurrentScene();
+                    Console.WriteLine(sampleRenderer.UseMergedTrianglesGas
+                        ? "[GAS Mode] Merged: all meshes in one acceleration-structure build input (faster build, the default)."
+                        : "[GAS Mode] Per-mesh: one acceleration-structure build input per mesh (slower build). Rendered image is identical either way - this only demonstrates the build-time/perf tradeoff.");
                     return;
 
                 case Key.F1:

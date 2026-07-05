@@ -11,7 +11,7 @@ namespace Sample15
             {
                 Name = "Debug: Materials + multi-light",
                 AmbientColor = new Vec3(0.5f, 0.6f, 0.8f),
-                AmbientIntensity = 0.15f,
+                AmbientIntensity = 0.1f,
                 BackgroundTop = new Vec3(0.4f, 0.55f, 0.8f),
                 BackgroundBottom = new Vec3(0.05f, 0.05f, 0.08f),
                 CameraOrigin = new Vec3(0f, 3f, 9f),
@@ -92,21 +92,23 @@ namespace Sample15
             uint teal = (uint)b.AddMaterial(MaterialPresets.Solid(new Vec3(0.1f, 0.55f, 0.45f)));   // 11: YZRect
 
             // Three spheres near the floor, between the mirror/glass panels - exercises
-            // the M3 custom-primitive pipeline against materials already proven on
-            // triangles (mirror, glass, diffuse).
-            b.AddSphere(new Vec3(-1.2f, 0.8f, 1f), 0.8f, mirror);
-            b.AddSphere(new Vec3(1.2f, 0.8f, 1f), 0.8f, glass);
-            b.AddSphere(new Vec3(2.9f, 0.6f, 1.4f), 0.6f, frostedGlass);
-            b.AddSphere(new Vec3(0f, 0.6f, 2.5f), 0.6f, blue);
+            // the material set against the mesh-sphere geometry (mirror, glass, diffuse).
+            b.AddSphereMesh(new Vec3(-1.2f, 0.8f, 1f), 0.8f, mirror);
+            b.AddSphereMesh(new Vec3(1.2f, 0.8f, 1f), 0.8f, glass);
+            b.AddSphereMesh(new Vec3(2.9f, 0.6f, 1.4f), 0.6f, frostedGlass);
+            b.AddSphereMesh(new Vec3(0f, 0.6f, 2.5f), 0.6f, blue);
 
-            // M4 primitives - one of each new custom-primitive kind, scattered near the
-            // existing geometry for visual verification.
-            b.AddBox(new Vec3(-5.5f, 0f, 2.5f), new Vec3(-4.5f, 1f, 3.5f), orange);
-            b.AddCylinderY(new Vec3(5f, 0f, 3f), 0.5f, 0f, 1.5f, yellow);
-            b.AddDisk(new Vec3(0f, 0.02f, 6f), new Vec3(0f, 1f, 0f), 1f, purple);
-            b.AddXYRect(-6f, -4f, 1f, 2f, -3f, cyan);
-            b.AddXZRect(4f, 6f, 1f, 3f, 2.5f, magenta);
-            b.AddYZRect(0f, 1f, 3f, 5f, 6.5f, teal);
+            // One of each mesh-primitive kind, scattered near the existing geometry for
+            // visual verification.
+            b.AddBoxMesh(new Vec3(-5.5f, 0f, 2.5f), new Vec3(-4.5f, 1f, 3.5f), orange);
+            b.AddCylinderMesh(new Vec3(5f, 0f, 3f), 0.5f, 0f, 1.5f, yellow);
+            b.AddDiskMesh(new Vec3(0f, 0.02f, 6f), new Vec3(0f, 1f, 0f), 1f, purple);
+            // XYRect(-6,-4, 1,2, c=-3): X in [-6,-4], Y in [1,2], Z = -3, facing +Z.
+            b.AddQuad(new Vec3(-6f, 1f, -3f), new Vec3(-4f, 1f, -3f), new Vec3(-4f, 2f, -3f), new Vec3(-6f, 2f, -3f), new Vec3(0f, 0f, 1f), cyan);
+            // XZRect(4,6, 1,3, c=2.5): X in [4,6], Z in [1,3], Y = 2.5, facing +Y.
+            b.AddQuad(new Vec3(4f, 2.5f, 3f), new Vec3(6f, 2.5f, 3f), new Vec3(6f, 2.5f, 1f), new Vec3(4f, 2.5f, 1f), new Vec3(0f, 1f, 0f), magenta);
+            // YZRect(0,1, 3,5, c=6.5): Y in [0,1], Z in [3,5], X = 6.5, facing +X.
+            b.AddQuad(new Vec3(6.5f, 0f, 3f), new Vec3(6.5f, 1f, 3f), new Vec3(6.5f, 1f, 5f), new Vec3(6.5f, 0f, 5f), new Vec3(1f, 0f, 0f), teal);
 
             // Floor: X in [-8, 8], Z in [-8, 8], Y = 0, facing up.
             b.AddQuad(
@@ -147,14 +149,14 @@ namespace Sample15
 
         // Direct port of the reference's Scenes.BuildTestScene() - four spheres (three
         // diffuse, one mirror) over a near-black background, lit by two point lights and
-        // almost no ambient. The simplest possible smoke test for the sphere primitive.
+        // a low fill ambient. The simplest possible smoke test for the sphere primitive.
         public static SceneData BuildSimpleTestScene()
         {
             var b = new SceneBuilder
             {
                 Name = "Simple test (4 spheres)",
                 AmbientColor = new Vec3(1f, 1f, 1f),
-                AmbientIntensity = 0.01f,
+                AmbientIntensity = 0.1f,
                 BackgroundTop = new Vec3(0.05f, 0.05f, 0.05f),
                 BackgroundBottom = new Vec3(0.05f, 0.05f, 0.05f),
                 CameraOrigin = new Vec3(0f, 1f, 0f),
@@ -169,10 +171,10 @@ namespace Sample15
             uint blue = (uint)b.AddMaterial(MaterialPresets.Solid(new Vec3(0f, 0f, 1f)));
             uint mirror = (uint)b.AddMaterial(MaterialPresets.Mirror(0.9f));
 
-            b.AddSphere(new Vec3(-1.2f, 0.9f, -2.2f), 0.9f, red);
-            b.AddSphere(new Vec3(1.2f, 0.9f, -2.2f), 0.9f, green);
-            b.AddSphere(new Vec3(-1.2f, 0.9f, -3.6f), 0.9f, blue);
-            b.AddSphere(new Vec3(1.2f, 0.9f, -3.6f), 0.9f, mirror);
+            b.AddSphereMesh(new Vec3(-1.2f, 0.9f, -2.2f), 0.9f, red);
+            b.AddSphereMesh(new Vec3(1.2f, 0.9f, -2.2f), 0.9f, green);
+            b.AddSphereMesh(new Vec3(-1.2f, 0.9f, -3.6f), 0.9f, blue);
+            b.AddSphereMesh(new Vec3(1.2f, 0.9f, -3.6f), 0.9f, mirror);
 
             b.AddLight(new Vec3(0f, 3.2f, -2.9f), new Vec3(1f, 1f, 1f), 140f);
             b.AddLight(new Vec3(-2.2f, 2.0f, -2.4f), new Vec3(1f, 1f, 1f), 60f);
@@ -232,7 +234,7 @@ namespace Sample15
             {
                 Name = "Debug: GGX roughness x metallic sweep",
                 AmbientColor = new Vec3(1f, 1f, 1f),
-                AmbientIntensity = 0.05f,
+                AmbientIntensity = 0.1f,
                 BackgroundTop = new Vec3(0.1f, 0.1f, 0.12f),
                 BackgroundBottom = new Vec3(0.02f, 0.02f, 0.03f),
                 // Widened/pulled back from the original two-row framing (docs/
@@ -247,7 +249,8 @@ namespace Sample15
             };
 
             uint floor = (uint)b.AddMaterial(MaterialPresets.Checker(new Vec3(0.5f, 0.5f, 0.5f), new Vec3(0.08f, 0.08f, 0.08f), 0.8f));
-            b.AddXZRect(-10f, 10f, -10f, 6f, 0f, floor);
+            // XZRect(-10,10, -10,6, c=0): X in [-10,10], Z in [-10,6], Y = 0, facing +Y.
+            b.AddQuad(new Vec3(-10f, 0f, 6f), new Vec3(10f, 0f, 6f), new Vec3(10f, 0f, -10f), new Vec3(-10f, 0f, -10f), new Vec3(0f, 1f, 0f), floor);
 
             const int columns = 7;
             const int rows = 2;
@@ -276,7 +279,7 @@ namespace Sample15
                         Roughness = roughness,
                         MaterialKind = MaterialSbtData.Solid,
                     });
-                    b.AddSphere(new Vec3(x, sphereY, 0f), 0.9f, mat);
+                    b.AddSphereMesh(new Vec3(x, sphereY, 0f), 0.9f, mat);
                     b.AddMesh("stanford-bunny.obj", new Vec3(x, 0f, meshZ), mat, targetSize: 1.8f);
                 }
             }
@@ -303,12 +306,55 @@ namespace Sample15
                     TransmissionColor = new Vec3(0.9f, 0.95f, 1f),
                     MaterialKind = MaterialSbtData.Solid,
                 });
-                b.AddSphere(new Vec3(x, sphereY, 0f), 0.9f, mat);
+                b.AddSphereMesh(new Vec3(x, sphereY, 0f), 0.9f, mat);
                 b.AddMesh("stanford-bunny.obj", new Vec3(x, 0f, meshZ), mat, targetSize: 1.8f);
             }
 
             b.AddLight(new Vec3(-4f, 6f, 6f), new Vec3(1f, 0.97f, 0.92f), 220f);
             b.AddLight(new Vec3(5f, 4f, 4f), new Vec3(0.9f, 0.94f, 1f), 140f);
+
+            return b.Build();
+        }
+
+        // Pure point-light demo - AmbientIntensity=0, no env map, near-black background,
+        // so ShadeSurface's flat unshadowed ambient term (see ShadingHelpers.cs's own
+        // comment on it being a pre-GGX hack with no occlusion) can't wash out the NEE
+        // shadowing/falloff this scene exists to show off cleanly.
+        public static SceneData BuildNoAmbientLightDemoScene()
+        {
+            var b = new SceneBuilder
+            {
+                Name = "Debug: Point lights only (no ambient)",
+                AmbientColor = new Vec3(0f, 0f, 0f),
+                AmbientIntensity = 0f,
+                BackgroundTop = new Vec3(0f, 0f, 0f),
+                BackgroundBottom = new Vec3(0f, 0f, 0f),
+                CameraOrigin = new Vec3(0f, 2.5f, 8f),
+                CameraLookAt = new Vec3(0f, 1f, 0f),
+                CameraUp = new Vec3(0f, 1f, 0f),
+                CameraFovDeg = 50f,
+                CameraWorldScale = 8f,
+            };
+
+            uint floor = (uint)b.AddMaterial(MaterialPresets.Checker(new Vec3(0.6f, 0.6f, 0.6f), new Vec3(0.05f, 0.05f, 0.05f), 1f));
+            b.AddQuad(
+                new Vec3(-8f, 0f, 6f), new Vec3(8f, 0f, 6f),
+                new Vec3(8f, 0f, -6f), new Vec3(-8f, 0f, -6f),
+                new Vec3(0f, 1f, 0f), floor);
+
+            uint white = (uint)b.AddMaterial(MaterialPresets.Solid(new Vec3(0.85f, 0.85f, 0.85f)));
+            uint red = (uint)b.AddMaterial(MaterialPresets.Solid(new Vec3(0.85f, 0.15f, 0.15f)));
+            uint gold = (uint)b.AddMaterial(new MaterialSbtData { BaseColor = new Vec3(1f, 0.85f, 0.55f), Metallic = 1f, Roughness = 0.2f, MaterialKind = MaterialSbtData.Solid });
+
+            b.AddSphereMesh(new Vec3(-2.2f, 1f, 0f), 1f, white);
+            b.AddSphereMesh(new Vec3(0.2f, 0.8f, -1.5f), 0.8f, red);
+            b.AddBoxMesh(new Vec3(1.6f, 0f, -0.5f), new Vec3(3.2f, 1.6f, 1.1f), gold);
+
+            // Three colored point lights, no ambient/env-map competitor - each object's
+            // shadow and falloff should read entirely from these.
+            b.AddLight(new Vec3(-4f, 4f, 3f), new Vec3(1f, 0.4f, 0.3f), 60f);
+            b.AddLight(new Vec3(3f, 5f, -2f), new Vec3(0.3f, 0.5f, 1f), 70f);
+            b.AddLight(new Vec3(0f, 3f, 5f), new Vec3(0.4f, 1f, 0.5f), 45f);
 
             return b.Build();
         }

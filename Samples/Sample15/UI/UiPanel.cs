@@ -55,6 +55,11 @@ namespace Sample15.UI
                 renderer.NextScene();
                 System.Console.WriteLine($"[Scene] {renderer.CurrentSceneName}");
             }
+
+            ImGui.Text($"Triangles: {renderer.TriangleCount}   Materials: {renderer.MaterialCount}");
+            ImGui.Text($"Lights: {renderer.PointLightCount} point, {renderer.EmissiveTriangleLightCount} emissive tri" +
+                (renderer.HasEnvMapLight ? ", 1 env map" : ""));
+            ImGui.TextWrapped(renderer.AccelStructureSummary);
         }
 
         static void DrawRenderSettingsSection(SampleRenderer renderer)
@@ -69,6 +74,63 @@ namespace Sample15.UI
                 renderer.RebuildCurrentScene();
                 System.Console.WriteLine($"[MergedGAS] {renderer.UseMergedTrianglesGas}");
             }
+
+            ImGui.Spacing();
+            DrawResolutionControls(renderer);
+        }
+
+        // Render resolution vs. window resolution (SampleRenderer.RenderScale/
+        // AutoScaleEnabled/TargetFrameRate) - the manual slider and the auto-scaler
+        // write to the same underlying RenderScale, so the slider always shows
+        // whatever's actually in effect even while auto is driving it; it's just
+        // non-interactive (BeginDisabled) while auto owns it, matching "auto off by
+        // default, manual otherwise". Rays/sec is shown as a read-only measurement
+        // only - it's not itself a target (see MeasuredRaysPerSecond's own comment on
+        // why raw throughput doesn't make sense as one); the auto-scaler targets FPS.
+        // "(?)" hover-tooltip marker - ImGui's standard convention for an inline help
+        // hint that doesn't take up permanent panel space.
+        static void HelpMarker(string text)
+        {
+            ImGui.SameLine();
+            ImGui.TextDisabled("(?)");
+            if (ImGui.IsItemHovered())
+            {
+                ImGui.BeginTooltip();
+                ImGui.PushTextWrapPos(ImGui.GetFontSize() * 25f);
+                ImGui.TextUnformatted(text);
+                ImGui.PopTextWrapPos();
+                ImGui.EndTooltip();
+            }
+        }
+
+        static void DrawResolutionControls(SampleRenderer renderer)
+        {
+            ImGui.Text($"Render res: {renderer.RenderWidth}x{renderer.RenderHeight}" +
+                $" ({renderer.RenderScale * 100f:0}% of {renderer.WindowWidth}x{renderer.WindowHeight})");
+            ImGui.Text($"Rays/sec: {renderer.MeasuredRaysPerSecond / 1_000_000.0:0.0}M");
+            HelpMarker("Measured primary-ray throughput (render width x height x samples-per-pixel, divided by trace time) - a diagnostic readout only, not something you set or target directly.");
+
+            bool autoScale = renderer.AutoScaleEnabled;
+            if (ImGui.Checkbox("Auto (target FPS)", ref autoScale))
+            {
+                renderer.AutoScaleEnabled = autoScale;
+                System.Console.WriteLine($"[AutoScale] {renderer.AutoScaleEnabled}");
+            }
+            HelpMarker("When on, automatically raises/lowers the render scale below to try to hit the Target FPS slider, checking every ~45 frames. When off, Render scale % is set manually instead.");
+
+            ImGui.BeginDisabled(renderer.AutoScaleEnabled);
+            float renderScalePercent = renderer.RenderScale * 100f;
+            if (ImGui.SliderFloat("Render scale %", ref renderScalePercent, SampleRenderer.MinRenderScale * 100f, 100f, "%.0f%%"))
+                renderer.RenderScale = renderScalePercent / 100f;
+            ImGui.EndDisabled();
+            HelpMarker("The traced/denoised image's own resolution as a percentage of the window's actual pixel size - lower values trade a softer (upscaled) image for a faster render. Independent of window size, so resizing the window doesn't change this percentage.");
+
+            ImGui.BeginDisabled(!renderer.AutoScaleEnabled);
+            float targetFrameRate = renderer.TargetFrameRate;
+            if (ImGui.SliderFloat("Target FPS", ref targetFrameRate, 15f, 144f, "%.0f"))
+                renderer.TargetFrameRate = targetFrameRate;
+            ImGui.EndDisabled();
+            HelpMarker("Only used when Auto is checked above - the frame rate the auto-scaler tries to sustain by adjusting Render scale %.");
         }
 
         // A getter/setter delegate pair, kept from when this drew three near-identical
@@ -114,15 +176,11 @@ namespace Sample15.UI
                 System.Console.WriteLine($"[Accumulate] {renderer.Accumulate}");
             }
 
-            // NEE/MIS on/off toggle (docs/SAMPLE15_PLAN.md Milestone M8) - for A/B
-            // variance comparison against indirect-only lighting, per the plan's own
-            // M4/M5 verification bar.
-            bool neeEnabled = renderer.NeeEnabled;
-            if (ImGui.Checkbox("NEE/MIS", ref neeEnabled))
+            bool taaOn = renderer.TemporalDenoiseEnabled;
+            if (ImGui.Checkbox("TAA (temporal denoise)", ref taaOn))
             {
-                renderer.NeeEnabled = neeEnabled;
-                renderer.setCamera(renderer.camera);
-                System.Console.WriteLine($"[NEE/MIS] {renderer.NeeEnabled}");
+                renderer.TemporalDenoiseEnabled = taaOn;
+                System.Console.WriteLine($"[TAA] {renderer.TemporalDenoiseEnabled}");
             }
         }
 
@@ -159,7 +217,10 @@ namespace Sample15.UI
             var stats = renderer.LastStats;
             ImGui.TextColored(new Vector4(0.7f, 0.85f, 1f, 1f), "STATS");
             ImGui.Text($"{stats.Fps:0.0} fps ({stats.TotalFrameMs:0.00} ms)");
-            ImGui.Text($"Samples accumulated: {stats.SamplesAccumulated}");
+            // Frames rendered since the current scene loaded - not a convergence
+            // measure by itself anymore, since accumulation history is now tracked
+            // per-pixel (LaunchParams.AccumCountBuffer) rather than as one global count.
+            ImGui.Text($"Frames rendered: {stats.SamplesAccumulated}");
             ImGui.Text($"Trace: {stats.TraceMs:0.00}ms  Denoise: {stats.DenoiseMs:0.00}ms  Tonemap: {stats.TonemapMs:0.00}ms");
         }
 
@@ -168,8 +229,8 @@ namespace Sample15.UI
             ImGui.TextColored(new Vector4(0.7f, 0.85f, 1f, 1f), "CONTROLS");
             ImGui.TextUnformatted("WASD move, hold Left Mouse to look");
             ImGui.TextUnformatted("[ / ] prev/next scene, M merged-GAS");
-            ImGui.TextUnformatted("1/2 bounces -/+, Space denoiser, Tab accumulate");
-            ImGui.TextUnformatted("N toggle NEE/MIS, T toggle tonemap operator");
+            ImGui.TextUnformatted("1/2 bounces -/+, Space denoiser, Tab accumulate, V TAA");
+            ImGui.TextUnformatted("R auto render-scale, T toggle tonemap operator");
             ImGui.TextUnformatted("Esc quit");
         }
     }

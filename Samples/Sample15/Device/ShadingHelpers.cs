@@ -5,19 +5,18 @@ using ILGPU.OptiX;
 namespace Sample15
 {
     /// <summary>
-    /// Material shading branches (unified GGX metallic-roughness surface/dielectric/
-    /// volume-grid - see Bsdf.cs for the GGX math itself) plus the texture sampling and
-    /// shadow-ray helpers they share. All methods are static and get inlined by ILGPU
-    /// into whichever OptiX program calls them.
+    /// Material shading branches (unified GGX metallic-roughness surface/dielectric -
+    /// see Bsdf.cs for the GGX math itself) plus the texture sampling and shadow-ray
+    /// helpers they share. All methods are static and get inlined by ILGPU into
+    /// whichever OptiX program calls them.
     /// </summary>
     public static class ShadingHelpers
     {
         // Unified metallic-roughness GGX BSDF shading (docs/SAMPLE15_PLAN.md Milestones
         // M2/M4) - replaces Sample14/M1's separate Oren-Nayar-diffuse/perfect-mirror
-        // branches with one continuous function, shared between the ordinary dispatch
-        // branch in __closest__radiance and the volume grid's per-voxel material lookup
-        // (ShadeVolumeGrid). Direct lighting is next-event estimation against the
-        // unified light list (NextEventEstimation.cs); indirect lighting stochastically
+        // branches with one continuous function. Direct lighting is next-event
+        // estimation against the unified light list (NextEventEstimation.cs); indirect
+        // lighting stochastically
         // picks one lobe to extend the path with, weighted by both lobes' combined pdf
         // at the sampled direction (see Bsdf.cs and docs/SAMPLE15_PLAN.md Design
         // Decision 1/3). bsdfPdfIn/lightPickAreaPdf implement the MIS side of a
@@ -63,7 +62,7 @@ namespace Sample15
                 // delta lobe/was the primary ray (bsdfPdfIn's sentinel), since neither
                 // case has a valid competing NEE pdf to combine against.
                 float emissionWeight = 1f;
-                if (launchParams.NeeEnabled != 0 && lightPickAreaPdf > 0f && bsdfPdfIn > 0f)
+                if (lightPickAreaPdf > 0f && bsdfPdfIn > 0f)
                 {
                     float hitDist = OptixGetRayTmax.Value;
                     float cosAtLight = Vec3.dot(outwardNormal, -rayDir);
@@ -76,7 +75,7 @@ namespace Sample15
 
             LCG rng = new LCG(rngStateIn);
 
-            if (!isDelta && launchParams.NeeEnabled != 0)
+            if (!isDelta)
                 pixelColor += NextEventEstimation.SampleDirectLighting(launchParams, surfPos, shadingNormal, outwardNormal, viewDir, baseColor, metallic, roughness, f0, ref rng);
             // else: a delta specular lobe's BRDF is 0 everywhere except the exact mirror
             // direction, which NEE (which only ever samples finite-solid-angle/point
@@ -88,7 +87,7 @@ namespace Sample15
             if (isDelta)
             {
                 Vec3 reflectDir = Vec3.reflect(shadingNormal, rayDir);
-                Payloads.SetContinuePayload(pixelColor, Payloads.BOUNCE_CONTINUE_MIRROR, newOrigin, reflectDir, f0, shadingNormal, baseColor, rng.State, Payloads.DeltaOrPrimarySentinel);
+                Payloads.SetContinuePayload(pixelColor, Payloads.BOUNCE_CONTINUE_MIRROR, newOrigin, reflectDir, f0, shadingNormal, baseColor, rng.State, Payloads.DeltaOrPrimarySentinel, surfPos);
                 return;
             }
 
@@ -107,7 +106,7 @@ namespace Sample15
             float NdotSampled = Vec3.dot(shadingNormal, sampledDir);
             if (NdotSampled <= 0f)
             {
-                Payloads.SetTerminalPayload(pixelColor, shadingNormal, baseColor);
+                Payloads.SetTerminalPayload(pixelColor, shadingNormal, baseColor, surfPos);
                 return;
             }
 
@@ -116,62 +115,13 @@ namespace Sample15
             float combinedPdf = Bsdf.CombinedPdf(shadingNormal, viewDir, sampledDir, roughness, f0);
             if (combinedPdf <= 1e-6f)
             {
-                Payloads.SetTerminalPayload(pixelColor, shadingNormal, baseColor);
+                Payloads.SetTerminalPayload(pixelColor, shadingNormal, baseColor, surfPos);
                 return;
             }
 
             Vec3 tint = ((diffuseF + specularF) * NdotSampled) / combinedPdf;
             uint bounceFlag = chooseSpecular ? Payloads.BOUNCE_CONTINUE_MIRROR : Payloads.BOUNCE_CONTINUE_DIFFUSE;
-            Payloads.SetContinuePayload(pixelColor, bounceFlag, newOrigin, sampledDir, tint, shadingNormal, baseColor, rng.State, combinedPdf);
-        }
-
-        // The volume grid is a single GAS primitive whose per-voxel material can't be
-        // expressed via OptiX's per-primitive SbtIndexOffsetBuffer (that's keyed by
-        // primitive index, not by data read during intersection) - so material lookup
-        // goes directly through LaunchParams.Materials/VoxelMaterialIds instead of
-        // OptixGetSbtDataPointer, a deliberate deviation from every other primitive kind
-        // in this sample (see docs/SAMPLE13_PLAN.md's note on this and the comment on
-        // LaunchParams.Materials).
-        internal unsafe static void ShadeVolumeGrid(LaunchParams launchParams, Vec3 rayDir, uint faceCode, uint rngStateIn)
-        {
-            var (ox, oy, oz) = OptixGetWorldRayOrigin.Value;
-            Vec3 rayOrigin = new Vec3(ox, oy, oz);
-            float hitT = OptixGetRayTmax.Value;
-            Vec3 surfPos = rayOrigin + (hitT * rayDir);
-
-            Vec3 rawGeometricNormal = VolumeGridFaceNormal(faceCode);
-            bool frontFace = Vec3.dot(rayDir, rawGeometricNormal) < 0f;
-            Vec3 outwardNormal = frontFace ? rawGeometricNormal : -rawGeometricNormal;
-
-            Vec3i dims = launchParams.VolumeDims;
-            Vec3 local = surfPos - launchParams.VolumeGridMin;
-            int ix = XMath.Clamp((int)XMath.Floor(local.x / launchParams.VolumeVoxelSize.x), 0, dims.x - 1);
-            int iy = XMath.Clamp((int)XMath.Floor(local.y / launchParams.VolumeVoxelSize.y), 0, dims.y - 1);
-            int iz = XMath.Clamp((int)XMath.Floor(local.z / launchParams.VolumeVoxelSize.z), 0, dims.z - 1);
-            uint voxel = launchParams.VoxelMaterialIds[(ix * dims.y * dims.z) + (iy * dims.z) + iz];
-            // voxel == 0 (empty) never reaches here - the intersection program's DDA
-            // only reports a hit on a non-empty voxel.
-            MaterialSbtData mat = launchParams.Materials[(int)voxel - 1];
-
-            Vec3 baseColor = mat.MaterialKind == MaterialSbtData.Checker ? SampleChecker(mat, surfPos) : mat.BaseColor;
-            // lightPickAreaPdf is always 0 here - volume-grid voxels are never
-            // registered in the NEE light list (LightList.cs only walks triangles), so
-            // ShadeSurface's own MIS-emission branch never triggers regardless of
-            // bsdfPdfIn's value.
-            ShadeSurface(launchParams, mat, baseColor, surfPos, outwardNormal, outwardNormal, rayDir, rngStateIn, Payloads.DeltaOrPrimarySentinel, 0f, new Vec2(0f, 0f));
-        }
-
-        private static Vec3 VolumeGridFaceNormal(uint faceCode)
-        {
-            switch (faceCode)
-            {
-                case 0: return new Vec3(1f, 0f, 0f);
-                case 1: return new Vec3(-1f, 0f, 0f);
-                case 2: return new Vec3(0f, 1f, 0f);
-                case 3: return new Vec3(0f, -1f, 0f);
-                case 4: return new Vec3(0f, 0f, 1f);
-                default: return new Vec3(0f, 0f, -1f);
-            }
+            Payloads.SetContinuePayload(pixelColor, bounceFlag, newOrigin, sampledDir, tint, shadingNormal, baseColor, rng.State, combinedPdf, surfPos);
         }
 
         // Fresnel-weighted stochastic reflect-XOR-refract pick (not the reference's
@@ -255,7 +205,7 @@ namespace Sample15
             }
 
             Vec3 newOrigin = surfPos + (1e-3f * offsetNormal);
-            Payloads.SetContinuePayload(sbtData->Emission, Payloads.BOUNCE_CONTINUE_DIELECTRIC, newOrigin, newDir, tint, outwardNormal, tint, rng.State, Payloads.DeltaOrPrimarySentinel);
+            Payloads.SetContinuePayload(sbtData->Emission, Payloads.BOUNCE_CONTINUE_DIELECTRIC, newOrigin, newDir, tint, outwardNormal, tint, rng.State, Payloads.DeltaOrPrimarySentinel, surfPos);
         }
 
         // v = incident ray direction (pointing into the surface), n = outward normal
@@ -296,7 +246,13 @@ namespace Sample15
                 lightDist * (1f - 1e-3f),
                 0.0f,
                 0xff,
-                OptixRayFlags.OPTIX_RAY_FLAG_NONE,
+                // __closesthit__shadow (MissAndShadowPrograms.cs) is an intentional
+                // no-op - all of this ray's real work happens in __anyhit__shadow
+                // (transmittance accumulation) and __miss__shadow. Disabling
+                // closest-hit for shadow rays skips that no-op invocation entirely
+                // (attribute setup + SBT lookup + empty call) on every hit that
+                // terminates the ray, at zero behavioral cost.
+                OptixRayFlags.OPTIX_RAY_FLAG_DISABLE_CLOSESTHIT,
                 Payloads.SHADOW_RAY_TYPE,
                 Payloads.RAY_TYPE_COUNT,
                 Payloads.SHADOW_RAY_TYPE,

@@ -28,16 +28,16 @@ namespace Sample15
                 // convention (Payloads.DeltaOrPrimarySentinel).
                 float bsdfPdfIn = Payloads.GetCarriedBsdfPdf();
                 float weight = 1f;
-                if (launchParams.NeeEnabled != 0 && launchParams.EnvMapLightPdf > 0f && bsdfPdfIn > 0f && pdfSolidAngle > 0f)
+                if (launchParams.EnvMapLightPdf > 0f && bsdfPdfIn > 0f && pdfSolidAngle > 0f)
                     weight = NextEventEstimation.PowerHeuristic(bsdfPdfIn, launchParams.EnvMapLightPdf * pdfSolidAngle);
 
-                Payloads.SetTerminalPayload(envRadiance * weight, new Vec3(0f, 0f, 0f), new Vec3(0f, 0f, 0f));
+                Payloads.SetTerminalPayload(envRadiance * weight, new Vec3(0f, 0f, 0f), new Vec3(0f, 0f, 0f), new Vec3(0f, 0f, 0f));
                 return;
             }
 
             float t = 0.5f * (dy + 1f);
             Vec3 sky = launchParams.BackgroundBottom + (t * (launchParams.BackgroundTop - launchParams.BackgroundBottom));
-            Payloads.SetTerminalPayload(sky, new Vec3(0f, 0f, 0f), new Vec3(0f, 0f, 0f));
+            Payloads.SetTerminalPayload(sky, new Vec3(0f, 0f, 0f), new Vec3(0f, 0f, 0f), new Vec3(0f, 0f, 0f));
         }
 
         // Alpha-cutout test (Sponza's leaf geometry): a triangle whose sampled texture

@@ -164,7 +164,7 @@ namespace ILGPU.OptiX
     public unsafe struct OptixBuildInputTriangleArray
     {
         public IntPtr VertexBuffers;
-        public uint NumVerticies;
+        public uint NumVertices;
         public OptixVertexFormat VertexFormat;
         public uint VertexStrideInBytes;
 
@@ -193,7 +193,7 @@ namespace ILGPU.OptiX
         public uint NumPrimitives;
 
         public IntPtr VertexBuffers;
-        public uint NumVerticies;
+        public uint NumVertices;
         public uint VertexStrideInBytes;
 
         public IntPtr WidthBuffers;

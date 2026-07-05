@@ -26,6 +26,14 @@ namespace ILGPU.OptiX
     public static class OptixDeviceContextExtensions
     {
         /// <summary>
+        /// When set, every kernel module compiled via <see cref="CreateModule"/> has
+        /// its generated PTX written to a file in <see cref="System.IO.Path.GetTempPath"/>
+        /// named "ilgpu-optix-debug-{kernelPrefix}-{entryFunctionName}.ptx". Off by
+        /// default - intended for diagnosing PTX generation issues, not for routine use.
+        /// </summary>
+        public static bool DumpGeneratedPtx { get; set; }
+
+        /// <summary>
         /// Creates a new OptiX raygen kernel.
         /// </summary>
         /// <param name="deviceContext">The OptiX device context.</param>
@@ -187,6 +195,87 @@ namespace ILGPU.OptiX
         }
 
         /// <summary>
+        /// Creates a new OptiX raygen kernel using compile options stored in the device context.
+        /// </summary>
+        /// <param name="deviceContext">The OptiX device context.</param>
+        /// <param name="raygenKernel">The raygen kernel.</param>
+        /// <returns>The raygen kernel.</returns>
+        [CLSCompliant(false)]
+        public static OptixKernel CreateRaygenKernel<TLaunchParams>(
+            this OptixDeviceContext deviceContext,
+            Action<TLaunchParams> raygenKernel)
+            where TLaunchParams : unmanaged
+        {
+            if (deviceContext == null)
+                throw new ArgumentNullException(nameof(deviceContext));
+            if (deviceContext.ModuleCompileOptions == null)
+                throw new InvalidOperationException("Module compile options not configured in device context. Call WithModuleCompileOptions() first.");
+            if (deviceContext.PipelineCompileOptions == null)
+                throw new InvalidOperationException("Pipeline compile options not configured in device context. Call WithPipelineCompileOptions() first.");
+
+            return deviceContext.CreateRaygenKernel(
+                raygenKernel,
+                deviceContext.ModuleCompileOptions.Value,
+                deviceContext.PipelineCompileOptions.Value);
+        }
+
+        /// <summary>
+        /// Creates a new OptiX miss kernel using compile options stored in the device context.
+        /// </summary>
+        /// <param name="deviceContext">The OptiX device context.</param>
+        /// <param name="missKernel">The miss kernel.</param>
+        /// <returns>The miss kernel.</returns>
+        [CLSCompliant(false)]
+        public static OptixKernel CreateMissKernel<TLaunchParams>(
+            this OptixDeviceContext deviceContext,
+            Action<TLaunchParams> missKernel)
+            where TLaunchParams : unmanaged
+        {
+            if (deviceContext == null)
+                throw new ArgumentNullException(nameof(deviceContext));
+            if (deviceContext.ModuleCompileOptions == null)
+                throw new InvalidOperationException("Module compile options not configured in device context. Call WithModuleCompileOptions() first.");
+            if (deviceContext.PipelineCompileOptions == null)
+                throw new InvalidOperationException("Pipeline compile options not configured in device context. Call WithPipelineCompileOptions() first.");
+
+            return deviceContext.CreateMissKernel(
+                missKernel,
+                deviceContext.ModuleCompileOptions.Value,
+                deviceContext.PipelineCompileOptions.Value);
+        }
+
+        /// <summary>
+        /// Creates a new OptiX hitgroup kernel using compile options stored in the device context.
+        /// </summary>
+        /// <param name="deviceContext">The OptiX device context.</param>
+        /// <param name="closestHitKernel">The closest hit kernel.</param>
+        /// <param name="anyHitKernel">The any hit kernel.</param>
+        /// <param name="intersectionKernel">The intersection kernel.</param>
+        /// <returns>The hitgroup kernel.</returns>
+        [CLSCompliant(false)]
+        public static OptixKernel CreateHitgroupKernel<TLaunchParams>(
+            this OptixDeviceContext deviceContext,
+            Action<TLaunchParams> closestHitKernel,
+            Action<TLaunchParams> anyHitKernel,
+            Action<TLaunchParams> intersectionKernel)
+            where TLaunchParams : unmanaged
+        {
+            if (deviceContext == null)
+                throw new ArgumentNullException(nameof(deviceContext));
+            if (deviceContext.ModuleCompileOptions == null)
+                throw new InvalidOperationException("Module compile options not configured in device context. Call WithModuleCompileOptions() first.");
+            if (deviceContext.PipelineCompileOptions == null)
+                throw new InvalidOperationException("Pipeline compile options not configured in device context. Call WithPipelineCompileOptions() first.");
+
+            return deviceContext.CreateHitgroupKernel(
+                closestHitKernel,
+                anyHitKernel,
+                intersectionKernel,
+                deviceContext.ModuleCompileOptions.Value,
+                deviceContext.PipelineCompileOptions.Value);
+        }
+
+        /// <summary>
         /// Creates a new OptiX module.
         /// </summary>
         /// <param name="deviceContext">The OptiX device context.</param>
@@ -221,11 +310,14 @@ namespace ILGPU.OptiX
                     kernelPrefix,
                     out entryFunctionName);
 
-            System.IO.File.WriteAllText(
-                System.IO.Path.Combine(
-                    System.IO.Path.GetTempPath(),
-                    $"ilgpu-optix-debug-{kernelPrefix}.ptx"),
-                ptxAssembly);
+            if (DumpGeneratedPtx)
+            {
+                System.IO.File.WriteAllText(
+                    System.IO.Path.Combine(
+                        System.IO.Path.GetTempPath(),
+                        $"ilgpu-optix-debug-{kernelPrefix}-{entryFunctionName}.ptx"),
+                    ptxAssembly);
+            }
 
             return deviceContext.CreateModule(
                 moduleCompileOptions,
@@ -432,6 +524,46 @@ namespace ILGPU.OptiX
                     new IntPtr(asHandle),
                     emittedPropertiesPtr,
                     (uint)emittedProperties.Length));
+            return asHandle[0];
+        }
+
+        /// <summary>
+        /// Compacts a previously built acceleration structure into a smaller output
+        /// buffer, returning the new (compacted) traversable handle. The input handle
+        /// must come from an AccelBuild call whose accelOptions included
+        /// OPTIX_BUILD_FLAG_ALLOW_COMPACTION and whose emittedProperties included an
+        /// OPTIX_PROPERTY_TYPE_COMPACTED_SIZE entry - outputBuffer must be at least
+        /// that emitted size (read back from device memory by the caller after the
+        /// original build's stream has been synchronized).
+        /// </summary>
+        /// <param name="deviceContext">The OptiX device context.</param>
+        /// <param name="stream">The current cuda stream.</param>
+        /// <param name="inputHandle">The uncompacted traversable handle from AccelBuild.</param>
+        /// <param name="outputBuffer">The compacted output buffer.</param>
+        /// <returns>The new (compacted) traversable handle.</returns>
+        [CLSCompliant(false)]
+        public unsafe static IntPtr AccelCompact(
+            this OptixDeviceContext deviceContext,
+            AcceleratorStream stream,
+            IntPtr inputHandle,
+            ArrayView1D<byte, Stride1D.Dense> outputBuffer)
+        {
+            if (deviceContext == null)
+                throw new ArgumentNullException(nameof(deviceContext));
+            if (stream == null)
+                throw new ArgumentNullException(nameof(stream));
+            if (stream is not CudaStream cudaStream)
+                throw new ArgumentOutOfRangeException(nameof(stream));
+
+            var asHandle = stackalloc IntPtr[1];
+            OptixException.ThrowIfFailed(
+                OptixAPI.Current.AccelCompact(
+                    deviceContext.DeviceContextPtr,
+                    cudaStream.StreamPtr,
+                    unchecked((ulong)inputHandle.ToInt64()),
+                    outputBuffer.BaseView.LoadEffectiveAddressAsPtr(),
+                    (ulong)outputBuffer.LengthInBytes,
+                    new IntPtr(asHandle)));
             return asHandle[0];
         }
 

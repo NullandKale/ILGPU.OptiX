@@ -69,7 +69,20 @@ namespace ILGPU.OptiX
     // themselves to match how many of these generated slots they actually use).
     const int MaxEmitRefArguments = 44;
     const int MaxAchievablePayloadValues = MaxEmitRefArguments - NonPayloadArgCount;
+#>
+        /// <summary>
+        /// The highest number of payload registers any Trace(...) overload here can
+        /// carry (there is one overload per count from 0 to this value, inclusive -
+        /// see <see cref="OptixPayload.MaxCount"/>, which is the same number). This is
+        /// <em>not</em> OptiX's own 32-payload hardware limit - every Trace() call
+        /// spends 18 of ILGPU's own CudaAsm.EmitRef's 44-ref-argument ceiling on fixed
+        /// ray arguments regardless of payload count, leaving 44 - 18 = 26. If you need
+        /// more payload registers than this, they don't fit through Trace() at all -
+        /// not a case of "there should be a bigger overload."
+        /// </summary>
+        public const int MaxPayloadCount = <#= MaxAchievablePayloadValues #>;
 
+<#
     for (int paramIdx = 0; paramIdx <= MaxAchievablePayloadValues; paramIdx++) {
         int padArg = paramIdx;
         int typeArg = paramIdx + 1;
@@ -96,7 +109,18 @@ namespace ILGPU.OptiX
         callInstruction += "), _optix_trace_typed_32, (";
         callInstruction += string.Join(", ", bodyArgs);
         callInstruction += ");";
+
+        string payloadRegisterSummary = paramIdx == 0
+            ? "carrying no payload registers"
+            : paramIdx == 1
+                ? "carrying 1 payload register (p0)"
+                : $"carrying {paramIdx} payload registers (p0..p{paramIdx - 1})";
 #>
+        /// <summary>
+        /// Traces a ray, <#= payloadRegisterSummary #> - see <see cref="OptixPayload"/>
+        /// to read/write them from within the hit/miss programs this ray invokes.
+        /// <#= paramIdx #> of <see cref="MaxPayloadCount"/> max.
+        /// </summary>
         public static void Trace(
             ulong traversableHandle
             , (float X, float Y, float Z) rayOrigin
@@ -106,9 +130,9 @@ namespace ILGPU.OptiX
             , float rayTime
             , uint visibilityMask
             , OptixRayFlags rayFlags
-            , uint SBToffset
-            , uint SBTstride
-            , uint missSBTIndex
+            , uint SbtOffset
+            , uint SbtStride
+            , uint missSbtIndex
 <#      for (int i = 0; i < paramIdx; i++) { #>
             , ref uint p<#= i #>
 <#      } #>
@@ -132,9 +156,9 @@ namespace ILGPU.OptiX
             Input<float> _rayTime = rayTime;
             Input<uint> _visibilityMask = visibilityMask;
             Input<OptixRayFlags> _rayFlags = rayFlags;
-            Input<uint> _SBToffset = SBToffset;
-            Input<uint> _SBTstride = SBTstride;
-            Input<uint> _missSBTIndex = missSBTIndex;
+            Input<uint> _SbtOffset = SbtOffset;
+            Input<uint> _SbtStride = SbtStride;
+            Input<uint> _missSbtIndex = missSbtIndex;
 
             CudaAsm.EmitRef(
                 "<#= callInstruction #>"
@@ -156,9 +180,9 @@ namespace ILGPU.OptiX
                 , ref _rayTime
                 , ref _visibilityMask
                 , ref _rayFlags
-                , ref _SBToffset
-                , ref _SBTstride
-                , ref _missSBTIndex
+                , ref _SbtOffset
+                , ref _SbtStride
+                , ref _missSbtIndex
                 );
 
 <#      for (int i = 0; i < paramIdx; i++) { #>

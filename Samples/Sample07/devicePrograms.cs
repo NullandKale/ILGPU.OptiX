@@ -1,6 +1,7 @@
 using ILGPU;
 using ILGPU.Algorithms;
 using ILGPU.OptiX;
+using System.Numerics;
 
 namespace Sample07
 {
@@ -72,7 +73,11 @@ namespace Sample07
             Vec3 a = launchParams.Vertices[tri.x];
             Vec3 b = launchParams.Vertices[tri.y];
             Vec3 c = launchParams.Vertices[tri.z];
-            Vec3 geometricNormal = Vec3.unitVector(Vec3.cross(b - a, c - a));
+            var geometricNormalV3 = OptixHitProgramHelpers.GetGeometricNormal(
+                new Vector3(a.x, a.y, a.z),
+                new Vector3(b.x, b.y, b.z),
+                new Vector3(c.x, c.y, c.z));
+            Vec3 geometricNormal = new Vec3(geometricNormalV3.X, geometricNormalV3.Y, geometricNormalV3.Z);
 
             var (dx, dy, dz) = OptixGetWorldRayDirection.Value;
             Vec3 rayDir = new Vec3(dx, dy, dz);
@@ -89,9 +94,9 @@ namespace Sample07
 
         private static void SetPRD(Vec3 color)
         {
-            OptixPayload.Payload0 = Interop.FloatAsInt(color.x);
-            OptixPayload.Payload1 = Interop.FloatAsInt(color.y);
-            OptixPayload.Payload2 = Interop.FloatAsInt(color.z);
+            OptixPayloadInterop.SetFloat(0, color.x);
+            OptixPayloadInterop.SetFloat(1, color.y);
+            OptixPayloadInterop.SetFloat(2, color.z);
         }
 
         public static void flipBitmap(Index1D index, int width, int height, ArrayView<byte> source, ArrayView<byte> dest)

@@ -28,7 +28,12 @@ namespace Sample15
 
         public GpuContext()
         {
-            Context = Context.Create(b => b.Cuda().InitOptiX().EnableAlgorithms());
+            // O2 + fast math + aggressive inlining - every transcendental call in this
+            // sample's kernels (GGX sampling, sRGB decode, equirect env-map mapping)
+            // only needs the precision fast-math trades away, not the exactness, and
+            // the visual result is unchanged at this sample's tolerances.
+            Context = Context.Create(b => b.Cuda().InitOptiX().EnableAlgorithms()
+                                           .Optimize(OptimizationLevel.O2).Math(MathMode.Default).Inlining(InliningMode.Aggressive));
             Accelerator = Context.CreateCudaAccelerator(0);
 
             // Validation mode ALL + a log callback surfaces OptiX's own descriptive

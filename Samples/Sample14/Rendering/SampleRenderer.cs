@@ -1,6 +1,7 @@
 using ILGPU;
 using ILGPU.OptiX;
 using ILGPU.OptiX.Interop;
+using MeshRange = ILGPU.OptiX.Pipeline.OptixMeshRange;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -164,6 +165,17 @@ namespace Sample14
                 sbt = sbtBuilder.Build(scene, triangleMeshRanges);
                 traversable = accel.Build(scene, triangleMeshRanges);
 
+                // Cross-checks that the accel structure's NumSbtRecords values (per
+                // AddTriangleMesh()/AddCustomPrimitives() call) still agree with the
+                // SBT's own actual hitgroup record count - see Sample13's identical
+                // assert for the bug class this guards against.
+                Debug.Assert(
+                    sbt.HitgroupRecordCount == accel.TotalHitgroupRecordsUsed,
+                    $"SBT hitgroup record count ({sbt.HitgroupRecordCount}) doesn't match " +
+                    $"what the accel structure's NumSbtRecords values imply " +
+                    $"({accel.TotalHitgroupRecordsUsed}) - AccelStructureBuilder and SbtBuilder " +
+                    "have drifted out of sync.");
+
                 camera = new Camera(
                     scene.CameraOrigin,
                     scene.CameraLookAt,
@@ -242,18 +254,33 @@ namespace Sample14
             if (width == 0 || height == 0)
                 return;
 
-            this.width = width;
-            this.height = height;
+            lock (gpuLock)
+            {
+                this.width = width;
+                this.height = height;
 
-            frameOutput.Resize(width, height);
+                frameOutput.Resize(width, height);
 
-            launchParams.NumPixelSamples = NumPixelSamples;
-            launchParams.MaxMirrorBounces = MaxMirrorBounces;
-            launchParams.MaxRefractionBounces = MaxRefractionBounces;
-            launchParams.MaxDiffuseBounces = MaxDiffuseBounces;
-            launchParams.ColorBuffer = (Vec4*)frameOutput.HdrColorBuffer.NativePtr;
-            launchParams.AlbedoBuffer = (Vec4*)frameOutput.AlbedoBuffer.NativePtr;
-            launchParams.NormalBuffer = (Vec4*)frameOutput.NormalBuffer.NativePtr;
+                launchParams.NumPixelSamples = NumPixelSamples;
+                launchParams.MaxMirrorBounces = MaxMirrorBounces;
+                launchParams.MaxRefractionBounces = MaxRefractionBounces;
+                launchParams.MaxDiffuseBounces = MaxDiffuseBounces;
+                launchParams.ColorBuffer = (Vec4*)frameOutput.HdrColorBuffer.NativePtr;
+                launchParams.AlbedoBuffer = (Vec4*)frameOutput.AlbedoBuffer.NativePtr;
+                launchParams.NormalBuffer = (Vec4*)frameOutput.NormalBuffer.NativePtr;
+
+                // Refresh the camera's own width/height (and therefore aspectRatio) to
+                // the new resolution - without this, a resize alone (no subsequent
+                // camera move) left the image stretched/squashed until the next WASD/
+                // mouse-look frame happened to call setCamera. Guarded on
+                // currentScene != null since the constructor's own initial resize()
+                // call runs before SwitchToScene(0) has set up a real camera to refresh.
+                if (currentScene != null)
+                {
+                    camera = new Camera(camera, width, height);
+                    launchParams.camera = camera;
+                }
+            }
         }
 
         public void setCamera(Camera camera)

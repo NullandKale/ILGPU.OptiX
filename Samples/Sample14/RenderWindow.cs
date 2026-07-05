@@ -290,9 +290,15 @@ namespace Sample14
         protected override void OnResize(ResizeEventArgs e)
         {
             base.OnResize(e);
+            // GL viewport always matches the actual window/backbuffer size - the
+            // fullscreen quad's textured draw (FullscreenQuad.Draw) already stretches
+            // whatever resolution the render texture is (linear-filtered) to fill
+            // whatever viewport is set, so this just resizes the whole render.
             GL.Viewport(0, 0, e.Width, e.Height);
-            // Fixed-size window for now (matches Sample13's fixed 1200x800) - resizing
-            // the interop buffer/texture live is future work.
+
+            // OpenTK can fire an initial resize before OnLoad() has constructed
+            // sampleRenderer yet.
+            sampleRenderer?.resize(e.Width, e.Height);
         }
 
         protected override void OnUnload()

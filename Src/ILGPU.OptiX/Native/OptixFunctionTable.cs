@@ -180,6 +180,14 @@ namespace ILGPU.OptiX
         IntPtr emittedProperties,
         uint numEmittedProperties);
 
+    internal delegate OptixResult AccelCompact(
+        IntPtr context,
+        IntPtr stream,
+        ulong inputHandle,
+        IntPtr outputBuffer,
+        ulong outputBufferSizeInBytes,
+        IntPtr outputHandle);
+
     internal delegate OptixResult DenoiserCreate(
         IntPtr context,
         OptixDenoiserModelKind modelKind,

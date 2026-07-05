@@ -52,7 +52,7 @@ namespace Sample15
                 Materials = new[] { material },
                 Lights = lights,
                 AmbientColor = new Vec3(0.5f, 0.55f, 0.65f),
-                AmbientIntensity = 0.15f,
+                AmbientIntensity = 0.1f,
                 BackgroundTop = new Vec3(0.35f, 0.45f, 0.6f),
                 BackgroundBottom = new Vec3(0.05f, 0.05f, 0.08f),
                 CameraOrigin = center + new Vec3(radius * 1.4f, radius * 0.9f, radius * 1.8f),
@@ -102,7 +102,7 @@ namespace Sample15
             {
                 Name = "All meshes (cow/bunny/teapot/dragon)",
                 AmbientColor = new Vec3(1f, 1f, 1f),
-                AmbientIntensity = 0.15f,
+                AmbientIntensity = 0.1f,
                 BackgroundTop = new Vec3(0f, 0f, 0f),
                 BackgroundBottom = new Vec3(0f, 0f, 0f),
                 CameraOrigin = new Vec3(0f, 1.5f, 2f),
@@ -123,7 +123,8 @@ namespace Sample15
             b.AddMesh("teapot.obj", new Vec3(1.6f, 0f, -3.2f), teapot);
             b.AddMesh("xyzrgb_dragon.obj", new Vec3(3.2f, 0f, -4.6f), dragon);
 
-            b.AddXZRect(-10f, 10f, -10f, 4f, 0f, floor);
+            // XZRect(-10,10, -10,4, c=0): X in [-10,10], Z in [-10,4], Y = 0, facing +Y.
+            b.AddQuad(new Vec3(-10f, 0f, 4f), new Vec3(10f, 0f, 4f), new Vec3(10f, 0f, -10f), new Vec3(-10f, 0f, -10f), new Vec3(0f, 1f, 0f), floor);
 
             b.AddLight(new Vec3(0f, 6f, 0f), new Vec3(1f, 0.95f, 0.88f), 65f);
             b.AddLight(new Vec3(-3f, 3f, 2f), new Vec3(0.85f, 0.90f, 1.0f), 35f);

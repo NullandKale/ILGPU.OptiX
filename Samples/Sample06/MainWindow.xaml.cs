@@ -40,6 +40,12 @@ namespace Sample06
         {
             InitializeComponent();
 
+            Console.WriteLine("Sample06: two separate triangle meshes (floor + cube) built as two acceleration-");
+            Console.WriteLine("structure build inputs, both routed through one shared shader-binding-table record");
+            Console.WriteLine("(compare against Sample05's single mesh) - the rendered image looks identical to");
+            Console.WriteLine("Sample05 on purpose, since this sample is about the multi-mesh plumbing, not a new visual.");
+            Console.WriteLine("Controls: Left-drag orbit, Right-drag dolly (zoom), Middle-drag pan.");
+
             wBitmap = new WriteableBitmap(width, height, 96, 96, PixelFormats.Bgra32, null);
             rect = new Int32Rect(0, 0, width, height);
             Frame.Source = wBitmap;

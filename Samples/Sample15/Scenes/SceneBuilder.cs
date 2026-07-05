@@ -1,3 +1,4 @@
+using MeshRange = ILGPU.OptiX.Pipeline.OptixMeshRange;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -16,7 +17,7 @@ namespace Sample15
         // scene only needs to set what it cares about.
         public string Name = "";
         public Vec3 AmbientColor = new Vec3(1f, 1f, 1f);
-        public float AmbientIntensity = 0.05f;
+        public float AmbientIntensity = 0.1f;
         public Vec3 BackgroundTop = new Vec3(0.4f, 0.55f, 0.8f);
         public Vec3 BackgroundBottom = new Vec3(0.05f, 0.05f, 0.08f);
         public string EnvMapPath;
@@ -40,34 +41,14 @@ namespace Sample15
         readonly List<string> materialNormalTexturePaths = new List<string>();
         readonly List<string> materialOrmTexturePaths = new List<string>();
 
-        readonly List<SphereData> spheres = new List<SphereData>();
-        readonly List<uint> sphereMaterialIds = new List<uint>();
-        readonly List<BoxData> boxes = new List<BoxData>();
-        readonly List<uint> boxMaterialIds = new List<uint>();
-        readonly List<CylinderYData> cylindersY = new List<CylinderYData>();
-        readonly List<uint> cylinderYMaterialIds = new List<uint>();
-        readonly List<DiskData> disks = new List<DiskData>();
-        readonly List<uint> diskMaterialIds = new List<uint>();
-        readonly List<RectData> xyRects = new List<RectData>();
-        readonly List<uint> xyRectMaterialIds = new List<uint>();
-        readonly List<RectData> xzRects = new List<RectData>();
-        readonly List<uint> xzRectMaterialIds = new List<uint>();
-        readonly List<RectData> yzRects = new List<RectData>();
-        readonly List<uint> yzRectMaterialIds = new List<uint>();
-
         readonly List<PointLightGpu> lights = new List<PointLightGpu>();
         readonly List<OrbitingLightAnim> orbitingLights = new List<OrbitingLightAnim>();
         readonly List<PulsingLightAnim> pulsingLights = new List<PulsingLightAnim>();
-        readonly List<BobbingSphereAnim> bobbingSpheres = new List<BobbingSphereAnim>();
 
-        uint[] voxelMaterialIds = Array.Empty<uint>();
-        Vec3 volumeGridMin;
-        Vec3 volumeVoxelSize = new Vec3(1f, 1f, 1f);
-        Vec3i volumeDims;
-
-        // Read access for scenes that need to inspect what they've placed so far
-        // (BuildDemoScene's sphere overlap rejection sampling).
-        public IReadOnlyList<SphereData> Spheres => spheres;
+        // Placed sphere-mesh centers/radii, tracked purely for overlap rejection
+        // sampling (BuildDemoScene) - not a GAS-facing type, just bookkeeping.
+        readonly List<(Vec3 Center, float Radius)> sphereMeshes = new List<(Vec3, float)>();
+        public IReadOnlyList<(Vec3 Center, float Radius)> Spheres => sphereMeshes;
 
         public int AddMaterial(MaterialSbtData material, string texturePath = null, string normalTexturePath = null, string ormTexturePath = null)
         {
@@ -78,16 +59,27 @@ namespace Sample15
             return materials.Count - 1;
         }
 
+        // V is flipped relative to the geometric a/b vs. c/d edges (a/b get V=1, c/d
+        // get V=0) to match every other UV source in this sample: CudaTextureObject/
+        // TextureLoader upload pixel row 0 (the image's top row) first, and CUDA's
+        // tex2D samples V=0 from that same first row - so V=0 must mean "top of the
+        // image", exactly the reason Model.cs's own OBJ loader flips "vt" lines (see
+        // its "vt" case comment). Left as the old (0,0)/(1,0)/(1,1)/(0,1) assignment,
+        // every AddQuad-built vertical surface painted the image's top row at its own
+        // bottom edge and vice versa - found on PbrShowcaseScene's textured wall
+        // panel, the first surface in this sample with a real, non-symmetric image
+        // texture on a procedural quad (previous AddQuad callers were all untextured
+        // solid-color materials, which don't care which way V points).
         public void AddQuad(Vec3 a, Vec3 b, Vec3 c, Vec3 d, Vec3 normal, uint materialId)
         {
             int baseIndex = vertices.Count;
             vertices.Add(a); vertices.Add(b); vertices.Add(c); vertices.Add(d);
             normals.Add(normal); normals.Add(normal); normals.Add(normal); normals.Add(normal);
-            texCoords.Add(new Vec2(0, 0)); texCoords.Add(new Vec2(1, 0));
-            texCoords.Add(new Vec2(1, 1)); texCoords.Add(new Vec2(0, 1));
+            Vec2 uvA = new Vec2(0f, 1f), uvB = new Vec2(1f, 1f), uvC = new Vec2(1f, 0f), uvD = new Vec2(0f, 0f);
+            texCoords.Add(uvA); texCoords.Add(uvB); texCoords.Add(uvC); texCoords.Add(uvD);
             // A planar quad has one constant tangent across all 4 corners - computed
             // from the same (a,b,c) triangle used for its first half.
-            Vec3 tangent = TangentFromTriangle(a, b, c, new Vec2(0, 0), new Vec2(1, 0), new Vec2(1, 1), normal);
+            Vec3 tangent = TangentFromTriangle(a, b, c, uvA, uvB, uvC, normal);
             tangents.Add(tangent); tangents.Add(tangent); tangents.Add(tangent); tangents.Add(tangent);
 
             indices.Add(new Vec3i(baseIndex, baseIndex + 1, baseIndex + 2));
@@ -96,13 +88,15 @@ namespace Sample15
             triangleMaterialIds.Add(materialId);
         }
 
+        // Same V-flip as AddQuad, for the same reason.
         public void AddTriangle(Vec3 a, Vec3 b, Vec3 c, Vec3 normal, uint materialId)
         {
             int baseIndex = vertices.Count;
             vertices.Add(a); vertices.Add(b); vertices.Add(c);
             normals.Add(normal); normals.Add(normal); normals.Add(normal);
-            texCoords.Add(new Vec2(0f, 0f)); texCoords.Add(new Vec2(1f, 0f)); texCoords.Add(new Vec2(0f, 1f));
-            Vec3 tangent = TangentFromTriangle(a, b, c, new Vec2(0f, 0f), new Vec2(1f, 0f), new Vec2(0f, 1f), normal);
+            Vec2 uvA = new Vec2(0f, 1f), uvB = new Vec2(1f, 1f), uvC = new Vec2(0f, 0f);
+            texCoords.Add(uvA); texCoords.Add(uvB); texCoords.Add(uvC);
+            Vec3 tangent = TangentFromTriangle(a, b, c, uvA, uvB, uvC, normal);
             tangents.Add(tangent); tangents.Add(tangent); tangents.Add(tangent);
 
             indices.Add(new Vec3i(baseIndex, baseIndex + 1, baseIndex + 2));
@@ -132,47 +126,167 @@ namespace Sample15
         public void AddTriangle(Vec3 a, Vec3 b, Vec3 c, uint materialId) =>
             AddTriangle(a, b, c, Vec3.unitVector(Vec3.cross(b - a, c - a)), materialId);
 
-        public int AddSphere(Vec3 center, float radius, uint materialId)
+        // Procedural mesh generators - replace the old analytic custom-primitive GAS
+        // path (spheres/boxes/cylinders/disks/rects) with real triangle geometry, so
+        // every scene renders through the single triangles GAS (faster: no second GAS,
+        // no IAS indirection, no per-ray hitKind dispatch in the closest-hit hot path).
+
+        // UV sphere - one seam-duplicated vertex column at j==segments so each ring's
+        // last quad still gets correct UVs, matching the classic songho.ca layout.
+        // Winding is verified to face outward under this file's cross(b-a,c-a)
+        // convention (see AddTriangle's face-normal comment).
+        // Default 128x128 (~32.5k triangles) is intentionally high - a deliberate,
+        // previous choice for visual quality on hero/showcase spheres (mirror/glass
+        // silhouettes are a true geometric edge, not smoothed by per-vertex normals,
+        // so a low-poly sphere shows a visibly faceted outline up close). Pass a much
+        // lower rings/segments explicitly for small/distant/background-clutter spheres
+        // where that fidelity buys nothing (see ShowcaseScenes.BuildDemoScene's
+        // 100-sphere loop) rather than lowering this default globally.
+        public void AddSphereMesh(Vec3 center, float radius, uint materialId, int rings = 128, int segments = 128)
         {
-            spheres.Add(new SphereData { Center = center, Radius = radius });
-            sphereMaterialIds.Add(materialId);
-            return spheres.Count - 1;
+            sphereMeshes.Add((center, radius));
+
+            int indexStart = indices.Count;
+            int baseIndex = vertices.Count;
+
+            for (int i = 0; i <= rings; i++)
+            {
+                float theta = i / (float)rings * (float)Math.PI;
+                float sinTheta = (float)Math.Sin(theta);
+                float cosTheta = (float)Math.Cos(theta);
+                for (int j = 0; j <= segments; j++)
+                {
+                    float phi = j / (float)segments * 2f * (float)Math.PI;
+                    float sinPhi = (float)Math.Sin(phi);
+                    float cosPhi = (float)Math.Cos(phi);
+
+                    Vec3 dir = new Vec3(sinTheta * cosPhi, cosTheta, sinTheta * sinPhi);
+                    vertices.Add(center + (radius * dir));
+                    normals.Add(dir);
+                    texCoords.Add(new Vec2(j / (float)segments, i / (float)rings));
+                    Vec3 tangent = sinTheta > 1e-6f
+                        ? new Vec3(-sinPhi, 0f, cosPhi)
+                        : Vec3.unitVector(Vec3.cross(new Vec3(0f, 1f, 0f), dir));
+                    tangents.Add(tangent);
+                }
+            }
+
+            for (int i = 0; i < rings; i++)
+            {
+                for (int j = 0; j < segments; j++)
+                {
+                    int k1 = baseIndex + (i * (segments + 1)) + j;
+                    int k2 = k1 + segments + 1;
+
+                    if (i != 0)
+                    {
+                        indices.Add(new Vec3i(k1, k2, k1 + 1));
+                        triangleMaterialIds.Add(materialId);
+                    }
+                    if (i != rings - 1)
+                    {
+                        indices.Add(new Vec3i(k1 + 1, k2, k2 + 1));
+                        triangleMaterialIds.Add(materialId);
+                    }
+                }
+            }
+
+            meshRanges.Add(new MeshRange { IndexStart = indexStart, IndexCount = indices.Count - indexStart });
         }
 
-        public void AddBox(Vec3 min, Vec3 max, uint materialId)
+        // Axis-aligned box - 6 flat-shaded quads, one per face.
+        public void AddBoxMesh(Vec3 min, Vec3 max, uint materialId)
         {
-            boxes.Add(new BoxData { Min = min, Max = max });
-            boxMaterialIds.Add(materialId);
+            Vec3 p000 = new Vec3(min.x, min.y, min.z), p100 = new Vec3(max.x, min.y, min.z);
+            Vec3 p010 = new Vec3(min.x, max.y, min.z), p110 = new Vec3(max.x, max.y, min.z);
+            Vec3 p001 = new Vec3(min.x, min.y, max.z), p101 = new Vec3(max.x, min.y, max.z);
+            Vec3 p011 = new Vec3(min.x, max.y, max.z), p111 = new Vec3(max.x, max.y, max.z);
+
+            AddQuad(p100, p110, p111, p101, new Vec3(1f, 0f, 0f), materialId);  // +X
+            AddQuad(p000, p001, p011, p010, new Vec3(-1f, 0f, 0f), materialId); // -X
+            AddQuad(p010, p011, p111, p110, new Vec3(0f, 1f, 0f), materialId);  // +Y
+            AddQuad(p000, p100, p101, p001, new Vec3(0f, -1f, 0f), materialId); // -Y
+            AddQuad(p001, p101, p111, p011, new Vec3(0f, 0f, 1f), materialId);  // +Z
+            AddQuad(p000, p010, p110, p100, new Vec3(0f, 0f, -1f), materialId); // -Z
         }
 
-        public void AddCylinderY(Vec3 center, float radius, float yMin, float yMax, uint materialId, bool capped = true)
+        // Y-axis cylinder - smooth-shaded side (per-vertex radial normals, like the old
+        // analytic cylinder) plus optional flat end caps.
+        public void AddCylinderMesh(Vec3 center, float radius, float yMin, float yMax, uint materialId, bool capped = true, int segments = 20)
         {
-            cylindersY.Add(new CylinderYData { Center = center, Radius = radius, YMin = yMin, YMax = yMax, Capped = capped ? 1 : 0 });
-            cylinderYMaterialIds.Add(materialId);
+            int indexStart = indices.Count;
+            int baseIndex = vertices.Count;
+
+            for (int i = 0; i <= 1; i++)
+            {
+                float y = i == 0 ? yMin : yMax;
+                for (int j = 0; j <= segments; j++)
+                {
+                    float phi = j / (float)segments * 2f * (float)Math.PI;
+                    Vec3 radial = new Vec3((float)Math.Cos(phi), 0f, (float)Math.Sin(phi));
+                    vertices.Add(center + new Vec3(radial.x * radius, y - center.y, radial.z * radius));
+                    normals.Add(radial);
+                    // V=0 at yMax (top), V=1 at yMin (bottom) - same V-flip reasoning
+                    // as AddQuad's own comment (matches this sample's "V=0 means top
+                    // of the image" convention); no scene currently textures a
+                    // cylinder, fixed here anyway so the next one that does doesn't
+                    // hit the same bug.
+                    texCoords.Add(new Vec2(j / (float)segments, 1f - i));
+                    tangents.Add(new Vec3(-radial.z, 0f, radial.x));
+                }
+            }
+
+            for (int j = 0; j < segments; j++)
+            {
+                int k1 = baseIndex + j;
+                int k2 = baseIndex + segments + 1 + j;
+                indices.Add(new Vec3i(k1, k2, k1 + 1));
+                triangleMaterialIds.Add(materialId);
+                indices.Add(new Vec3i(k1 + 1, k2, k2 + 1));
+                triangleMaterialIds.Add(materialId);
+            }
+
+            meshRanges.Add(new MeshRange { IndexStart = indexStart, IndexCount = indices.Count - indexStart });
+
+            if (capped)
+            {
+                AddDiskMesh(new Vec3(center.x, yMin, center.z), new Vec3(0f, -1f, 0f), radius, materialId, segments);
+                AddDiskMesh(new Vec3(center.x, yMax, center.z), new Vec3(0f, 1f, 0f), radius, materialId, segments);
+            }
         }
 
-        public void AddDisk(Vec3 center, Vec3 normal, float radius, uint materialId)
+        // Flat disk (triangle fan) with an arbitrary facing normal.
+        public void AddDiskMesh(Vec3 center, Vec3 normal, float radius, uint materialId, int segments = 24)
         {
-            disks.Add(new DiskData { Center = center, Normal = normal, Radius = radius });
-            diskMaterialIds.Add(materialId);
-        }
+            int indexStart = indices.Count;
+            int baseIndex = vertices.Count;
 
-        public void AddXYRect(float a0, float a1, float b0, float b1, float c, uint materialId)
-        {
-            xyRects.Add(new RectData { A0 = a0, A1 = a1, B0 = b0, B1 = b1, C = c });
-            xyRectMaterialIds.Add(materialId);
-        }
+            Vec3 helper = Math.Abs(normal.y) < 0.999f ? new Vec3(0f, 1f, 0f) : new Vec3(1f, 0f, 0f);
+            Vec3 u = Vec3.unitVector(Vec3.cross(helper, normal));
+            Vec3 v = Vec3.cross(normal, u);
 
-        public void AddXZRect(float a0, float a1, float b0, float b1, float c, uint materialId)
-        {
-            xzRects.Add(new RectData { A0 = a0, A1 = a1, B0 = b0, B1 = b1, C = c });
-            xzRectMaterialIds.Add(materialId);
-        }
+            vertices.Add(center);
+            normals.Add(normal);
+            texCoords.Add(new Vec2(0.5f, 0.5f));
+            tangents.Add(u);
 
-        public void AddYZRect(float a0, float a1, float b0, float b1, float c, uint materialId)
-        {
-            yzRects.Add(new RectData { A0 = a0, A1 = a1, B0 = b0, B1 = b1, C = c });
-            yzRectMaterialIds.Add(materialId);
+            for (int j = 0; j <= segments; j++)
+            {
+                float angle = j / (float)segments * 2f * (float)Math.PI;
+                float cos = (float)Math.Cos(angle), sin = (float)Math.Sin(angle);
+                vertices.Add(center + (radius * ((cos * u) + (sin * v))));
+                normals.Add(normal);
+                texCoords.Add(new Vec2(0.5f + (0.5f * cos), 0.5f + (0.5f * sin)));
+                tangents.Add(u);
+            }
+
+            for (int j = 0; j < segments; j++)
+            {
+                indices.Add(new Vec3i(baseIndex, baseIndex + 1 + j, baseIndex + 2 + j));
+                triangleMaterialIds.Add(materialId);
+            }
+
+            meshRanges.Add(new MeshRange { IndexStart = indexStart, IndexCount = indices.Count - indexStart });
         }
 
         public int AddLight(Vec3 position, Vec3 color, float intensity)
@@ -186,17 +300,6 @@ namespace Sample15
 
         public void AddPulsingLight(int lightIndex, float ampFraction, float speed) =>
             pulsingLights.Add(new PulsingLightAnim { LightIndex = lightIndex, BaseIntensity = lights[lightIndex].Intensity, MinMult = Math.Max(0f, 1f - ampFraction), MaxMult = 1f + ampFraction, Speed = speed });
-
-        public void AddBobbingSphere(int sphereIndex, float amplitude, float speed, float phase) =>
-            bobbingSpheres.Add(new BobbingSphereAnim { SphereIndex = sphereIndex, BaseY = spheres[sphereIndex].Center.y, Amplitude = amplitude, Speed = speed, Phase = phase });
-
-        public void SetVolumeGrid(uint[] voxelIds, Vec3 gridMin, Vec3 voxelSize, Vec3i dims)
-        {
-            voxelMaterialIds = voxelIds;
-            volumeGridMin = gridMin;
-            volumeVoxelSize = voxelSize;
-            volumeDims = dims;
-        }
 
         public static void ComputeBounds(Vec3[] meshVertices, out Vec3 min, out Vec3 max)
         {
@@ -354,28 +457,9 @@ namespace Sample15
             MaterialTexturePaths = materialTexturePaths.ToArray(),
             MaterialNormalTexturePaths = materialNormalTexturePaths.ToArray(),
             MaterialOrmTexturePaths = materialOrmTexturePaths.ToArray(),
-            Spheres = spheres.ToArray(),
-            SphereMaterialIds = sphereMaterialIds.ToArray(),
-            Boxes = boxes.ToArray(),
-            BoxMaterialIds = boxMaterialIds.ToArray(),
-            CylindersY = cylindersY.ToArray(),
-            CylinderYMaterialIds = cylinderYMaterialIds.ToArray(),
-            Disks = disks.ToArray(),
-            DiskMaterialIds = diskMaterialIds.ToArray(),
-            XYRects = xyRects.ToArray(),
-            XYRectMaterialIds = xyRectMaterialIds.ToArray(),
-            XZRects = xzRects.ToArray(),
-            XZRectMaterialIds = xzRectMaterialIds.ToArray(),
-            YZRects = yzRects.ToArray(),
-            YZRectMaterialIds = yzRectMaterialIds.ToArray(),
-            VoxelMaterialIds = voxelMaterialIds,
-            VolumeGridMin = volumeGridMin,
-            VolumeVoxelSize = volumeVoxelSize,
-            VolumeDims = volumeDims,
             Lights = lights.ToArray(),
             OrbitingLights = orbitingLights.ToArray(),
             PulsingLights = pulsingLights.ToArray(),
-            BobbingSpheres = bobbingSpheres.ToArray(),
             AmbientColor = AmbientColor,
             AmbientIntensity = AmbientIntensity,
             BackgroundTop = BackgroundTop,

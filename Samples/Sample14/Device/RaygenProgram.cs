@@ -1,5 +1,6 @@
 using ILGPU;
 using ILGPU.OptiX;
+using System.Numerics;
 
 namespace Sample14
 {
@@ -70,7 +71,16 @@ namespace Sample14
                         ref p0, ref p1, ref p2, ref p3, ref p4, ref p5, ref p6, ref p7, ref p8, ref p9, ref p10, ref p11, ref p12,
                         ref p13, ref p14, ref p15, ref p16, ref p17, ref p18);
 
-                    sampleRadiance += throughput * new Vec3(Interop.IntAsFloat(p0), Interop.IntAsFloat(p1), Interop.IntAsFloat(p2));
+                    // Payload results come back through the ref-parameters passed to
+                    // Trace() above, not through OptixPayloadInterop/GetVec3Registers -
+                    // those call the optixGetPayload device intrinsic, which is only
+                    // legal inside the hit/miss/anyhit programs that ran during this
+                    // trace, not here in raygen after Trace() has already returned.
+                    Vec3 radiance = new Vec3(
+                        ILGPU.Interop.IntAsFloat(p0),
+                        ILGPU.Interop.IntAsFloat(p1),
+                        ILGPU.Interop.IntAsFloat(p2));
+                    sampleRadiance += throughput * radiance;
 
                     // AOV guide buffers only ever reflect the primary ray's own hit
                     // (bounce 0), matching Sample11/12's convention - a mirror/glass
@@ -78,8 +88,14 @@ namespace Sample14
                     // exactly what the denoiser needs to recognize that surface.
                     if (bounce == 0)
                     {
-                        sampleNormal = new Vec3(Interop.IntAsFloat(p13), Interop.IntAsFloat(p14), Interop.IntAsFloat(p15));
-                        sampleAlbedo = new Vec3(Interop.IntAsFloat(p16), Interop.IntAsFloat(p17), Interop.IntAsFloat(p18));
+                        sampleNormal = new Vec3(
+                            ILGPU.Interop.IntAsFloat(p13),
+                            ILGPU.Interop.IntAsFloat(p14),
+                            ILGPU.Interop.IntAsFloat(p15));
+                        sampleAlbedo = new Vec3(
+                            ILGPU.Interop.IntAsFloat(p16),
+                            ILGPU.Interop.IntAsFloat(p17),
+                            ILGPU.Interop.IntAsFloat(p18));
                     }
 
                     uint flag = p3;
@@ -105,9 +121,18 @@ namespace Sample14
                             break;
                     }
 
-                    throughput *= new Vec3(Interop.IntAsFloat(p10), Interop.IntAsFloat(p11), Interop.IntAsFloat(p12));
-                    rayOrigin = new Vec3(Interop.IntAsFloat(p4), Interop.IntAsFloat(p5), Interop.IntAsFloat(p6));
-                    rayDir = new Vec3(Interop.IntAsFloat(p7), Interop.IntAsFloat(p8), Interop.IntAsFloat(p9));
+                    throughput *= new Vec3(
+                        ILGPU.Interop.IntAsFloat(p10),
+                        ILGPU.Interop.IntAsFloat(p11),
+                        ILGPU.Interop.IntAsFloat(p12));
+                    rayOrigin = new Vec3(
+                        ILGPU.Interop.IntAsFloat(p4),
+                        ILGPU.Interop.IntAsFloat(p5),
+                        ILGPU.Interop.IntAsFloat(p6));
+                    rayDir = new Vec3(
+                        ILGPU.Interop.IntAsFloat(p7),
+                        ILGPU.Interop.IntAsFloat(p8),
+                        ILGPU.Interop.IntAsFloat(p9));
 
                     if (throughput.lengthSquared() < 1e-6f)
                         break;

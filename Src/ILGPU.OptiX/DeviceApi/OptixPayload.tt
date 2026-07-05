@@ -1,0 +1,172 @@
+﻿// ---------------------------------------------------------------------------------------
+//                                     ILGPU OptiX
+//                           Copyright (c) 2022 ILGPU Project
+//                                    www.ilgpu.net
+//
+// File: OptixPayload.tt/OptixPayload.cs
+//
+// This file is part of ILGPU and is distributed under the University of Illinois Open
+// Source License. See LICENSE.txt for details.
+// ---------------------------------------------------------------------------------------
+
+<#@ template debug="false" hostspecific="false" language="C#" #>
+<#@ assembly name="System.Core" #>
+<#@ import namespace="System.Linq" #>
+<#@ import namespace="System.Text" #>
+<#@ import namespace="System.Collections.Generic" #>
+<#@ output extension=".cs" #>
+
+using ILGPU.Runtime.Cuda;
+using System;
+
+namespace ILGPU.OptiX
+{
+    /// <summary>
+    /// Provides the functionality of the optixGetPayload and optixSetPayload built-in
+    /// functions.
+    /// </summary>
+    /// <remarks>
+    /// The underlying OptiX driver uses a single shared "_optix_get_payload" /
+    /// "_optix_set_payload" pseudo-call for every payload index (see
+    /// optixGetPayload_N/optixSetPayload_N in optix_7_device_impl.h) - the payload
+    /// index is passed as a runtime register argument, it is not baked into the
+    /// pseudo-call name.
+    /// </remarks>
+    [CLSCompliant(false)]
+    public static class OptixPayload
+    {
+<#
+    // Matches OptixTrace.tt's own MaxAchievablePayloadValues (26, bounded by
+    // CudaAsm.EmitRef's 44-ref-argument ceiling, not OptiX's 32-payload hardware
+    // limit) - a Trace() call can never actually populate more than 26 payload
+    // registers, so generating Payload26+ getters/setters here would be dead code
+    // that can never be legitimately reached.
+    const int MaxAchievablePayloadValues = 26;
+#>
+        /// <summary>
+        /// The highest payload register index this binding can populate (exclusive
+        /// upper bound - valid indices are 0..MaxCount-1). This is <em>not</em>
+        /// OptiX's own 32-payload hardware limit - it's a narrower ceiling imposed by
+        /// ILGPU's own CudaAsm.EmitRef, which caps out at 44 ref arguments; every
+        /// OptixTrace.Trace(...) overload spends 18 of those on fixed ray arguments
+        /// regardless of how many payload registers it carries, leaving 44 - 18 = 26.
+        /// If you need more payload registers than this, they don't fit through
+        /// Trace() at all - not a case of "generate more Payload properties."
+        /// </summary>
+        public const int MaxCount = <#= MaxAchievablePayloadValues #>;
+
+        /// <summary>
+        /// Reads payload register <paramref name="index"/> (0..<see cref="MaxCount"/>-1).
+        /// Prefer the individually named Payload0/Payload1/... properties when the
+        /// index is a compile-time constant (identical generated code either way,
+        /// since the underlying _optix_get_payload pseudo-call already takes the
+        /// index as a runtime register regardless of whether the C# call site does) -
+        /// this overload exists for callers that need to address a payload by a
+        /// genuinely runtime-computed index, e.g. a loop copying several registers.
+        /// </summary>
+        /// <param name="index">The payload register index.</param>
+        /// <returns>The raw 32-bit payload value.</returns>
+        public static uint Get(int index)
+        {
+            Input<uint> _index = (uint)index;
+            Output<uint> _result = default;
+            CudaAsm.EmitRef(
+                "call (%0), _optix_get_payload, (%1);",
+                ref _result,
+                ref _index);
+            return _result.Value;
+        }
+
+        /// <summary>
+        /// Writes payload register <paramref name="index"/> (0..<see cref="MaxCount"/>-1).
+        /// See <see cref="Get(int)"/> for when to prefer this over the named
+        /// Payload0/Payload1/... properties.
+        /// </summary>
+        /// <param name="index">The payload register index.</param>
+        /// <param name="value">The raw 32-bit payload value.</param>
+        public static void Set(int index, uint value)
+        {
+            Input<uint> _index = (uint)index;
+            Input<uint> _value = value;
+            CudaAsm.EmitRef(
+                "call _optix_set_payload, (%0, %1);",
+                ref _index,
+                ref _value);
+        }
+
+        /// <summary>
+        /// Reads payload register <paramref name="index"/> and reinterprets its raw
+        /// bits as a float - the common case for carrying a float through a payload
+        /// register (radiance/throughput/normal/pdf components etc.), without every
+        /// call site needing its own <see cref="ILGPU.Interop.IntAsFloat(uint)"/>.
+        /// </summary>
+        /// <param name="index">The payload register index.</param>
+        /// <returns>The payload value, reinterpreted as a float.</returns>
+        public static float GetFloat(int index) => ILGPU.Interop.IntAsFloat(Get(index));
+
+        /// <summary>
+        /// Writes <paramref name="value"/>'s raw bits into payload register
+        /// <paramref name="index"/> - see <see cref="GetFloat(int)"/>.
+        /// </summary>
+        /// <param name="index">The payload register index.</param>
+        /// <param name="value">The float value to write (stored bit-for-bit, not converted).</param>
+        public static void SetFloat(int index, float value) => Set(index, ILGPU.Interop.FloatAsInt(value));
+
+        /// <summary>
+        /// Writes a span of payload values starting at <paramref name="startIndex"/>.
+        /// Used for bulk payload initialization when the register count is not a
+        /// compile-time constant (e.g., loop-based payload setup from arrays).
+        /// </summary>
+        /// <param name="startIndex">The starting payload register index.</param>
+        /// <param name="values">The values to write (length must not exceed MaxCount - startIndex).</param>
+        public static void SetRange(uint startIndex, ReadOnlySpan<uint> values)
+        {
+            for (uint i = 0; i < (uint)values.Length; i++)
+            {
+                Set((int)(startIndex + i), values[(int)i]);
+            }
+        }
+
+        /// <summary>
+        /// Reads a span of payload values starting at <paramref name="startIndex"/>.
+        /// Used for bulk payload extraction when the register count is not a
+        /// compile-time constant (e.g., loop-based payload reads).
+        /// </summary>
+        /// <param name="startIndex">The starting payload register index.</param>
+        /// <param name="values">The span to fill with payload values (length must not exceed MaxCount - startIndex).</param>
+        public static void GetRange(uint startIndex, Span<uint> values)
+        {
+            for (uint i = 0; i < (uint)values.Length; i++)
+            {
+                values[(int)i] = Get((int)(startIndex + i));
+            }
+        }
+
+<#
+    for (int payloadIdx = 0; payloadIdx < MaxAchievablePayloadValues; payloadIdx++) { #>
+        public static uint Payload<#= payloadIdx #>
+        {
+            get
+            {
+                Input<uint> _index = <#= payloadIdx #>u;
+                Output<uint> _result = default;
+                CudaAsm.EmitRef(
+                    "call (%0), _optix_get_payload, (%1);",
+                    ref _result,
+                    ref _index);
+                return _result.Value;
+            }
+            set
+            {
+                Input<uint> _index = <#= payloadIdx #>u;
+                Input<uint> _value = value;
+                CudaAsm.EmitRef(
+                    "call _optix_set_payload, (%0, %1);",
+                    ref _index,
+                    ref _value);
+            }
+        }
+
+<# } #>
+    }
+}

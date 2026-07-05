@@ -9,6 +9,7 @@
 // Source License. See LICENSE.txt for details.
 // ---------------------------------------------------------------------------------------
 
+using MeshRange = ILGPU.OptiX.Pipeline.OptixMeshRange;
 using ILGPU;
 using ILGPU.OptiX;
 using ILGPU.OptiX.Interop;
@@ -224,6 +225,19 @@ namespace Sample13
                 MeshRange[] triangleMeshRanges = SbtLayout.GetTriangleMeshRanges(scene, UseMergedTrianglesGas);
                 sbt = sbtBuilder.Build(scene, triangleMeshRanges);
                 traversable = accel.Build(scene, triangleMeshRanges);
+
+                // Cross-checks that the accel structure's NumSbtRecords values (per
+                // AddTriangleMesh()/AddCustomPrimitives() call) still agree with the
+                // SBT's own actual hitgroup record count. A silent mismatch here is
+                // exactly the bug class that made every triangle/primitive resolve to
+                // hitgroup record 0 regardless of its actual material, with no error or
+                // crash - see docs/API_BUILDER_PLAN.md's 2026-07-04 Sample13 fix notes.
+                Debug.Assert(
+                    sbt.HitgroupRecordCount == accel.TotalHitgroupRecordsUsed,
+                    $"SBT hitgroup record count ({sbt.HitgroupRecordCount}) doesn't match " +
+                    $"what the accel structure's NumSbtRecords values imply " +
+                    $"({accel.TotalHitgroupRecordsUsed}) - AccelStructureBuilder and SbtBuilder " +
+                    "have drifted out of sync.");
 
                 camera = new Camera(
                     scene.CameraOrigin,

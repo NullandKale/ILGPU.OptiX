@@ -9,6 +9,7 @@
 // Source License. See LICENSE.txt for details.
 // ---------------------------------------------------------------------------------------
 
+using MeshRange = ILGPU.OptiX.Pipeline.OptixMeshRange;
 using System;
 
 namespace Sample13
@@ -50,13 +51,6 @@ namespace Sample13
         public float Amplitude;
         public float Speed;
         public float Phase;
-    }
-
-    // See SceneData.MeshRanges.
-    public struct MeshRange
-    {
-        public int IndexStart;
-        public int IndexCount;
     }
 
     // Host-side POCO a Scenes.cs builder method returns; SampleRenderer.SwitchToScene

@@ -41,6 +41,7 @@ namespace Sample13
             string fullPath = Path.Combine(AppContext.BaseDirectory, relativePath);
             if (!File.Exists(fullPath))
             {
+                Console.WriteLine($"[Warning] Texture not found, material will use its flat diffuse color instead: {fullPath}");
                 textureCache[relativePath] = 0;
                 return 0;
             }
@@ -110,7 +111,10 @@ namespace Sample13
 
             string fullPath = Path.Combine(AppContext.BaseDirectory, relativePath);
             if (!File.Exists(fullPath))
+            {
+                Console.WriteLine($"[Warning] Video texture not found, material will use its flat diffuse color instead: {fullPath}");
                 return 0;
+            }
 
             VideoTexture videoTexture;
             try

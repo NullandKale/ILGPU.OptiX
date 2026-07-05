@@ -12,8 +12,10 @@
 using ILGPU;
 using ILGPU.OptiX;
 using ILGPU.OptiX.Interop;
+using ILGPU.OptiX.Pipeline;
 using ILGPU.Runtime;
 using ILGPU.Runtime.Cuda;
+using System;
 using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
@@ -51,61 +53,75 @@ namespace Sample02
 
         unsafe static void Main()
         {
+            try
+            {
+                Run();
+            }
+            catch (Exception ex)
+            {
+                PrintException(ex);
+                Environment.Exit(1);
+            }
+        }
+
+        static void PrintException(Exception ex)
+        {
+            Console.Error.WriteLine("Unhandled exception:");
+            for (var current = ex; current != null; current = current.InnerException)
+            {
+                Console.Error.WriteLine($"--- {current.GetType().FullName}: {current.Message}");
+                if (current is OptixException optixEx)
+                    Console.Error.WriteLine($"    OptixResult: {optixEx.OptixResult}");
+                Console.Error.WriteLine(current.StackTrace);
+            }
+        }
+
+        unsafe static void Run()
+        {
+            Console.WriteLine("Initializing CUDA + OptiX...");
             using var context = Context.Create(b => b.Cuda().InitOptiX());
             using var accelerator = context.CreateCudaAccelerator(0);
-            using var deviceContext = accelerator.CreateDeviceContext();
-
-            // Setup OptiX pipeline.
-            var moduleCompileOptions =
-                new OptixModuleCompileOptions()
+            using var deviceContext = accelerator.CreateDeviceContext()
+                .WithModuleCompileOptions(new OptixModuleCompileOptions()
                 {
                     MaxRegisterCount = 50,
                     OptimizationLevel = OptixCompileOptimizationLevel.OPTIX_COMPILE_OPTIMIZATION_DEFAULT,
                     DebugLevel = OptixCompileDebugLevel.OPTIX_COMPILE_DEBUG_LEVEL_NONE
-                };
-
-            var pipelineCompileOptions =
-                new OptixPipelineCompileOptions()
+                })
+                .WithPipelineCompileOptions(new OptixPipelineCompileOptions()
                 {
                     TraversableGraphFlags = OptixTraversableGraphFlags.OPTIX_TRAVERSABLE_GRAPH_FLAG_ALLOW_SINGLE_GAS,
                     NumPayloadValues = 2,
                     NumAttributeValues = 2,
                     ExceptionFlags = OptixExceptionFlags.OPTIX_EXCEPTION_FLAG_NONE,
                     PipelineLaunchParamsVariableName = OptixLaunchParams.VariableName
-                };
-
-            var pipelineLinkOptions =
-                new OptixPipelineLinkOptions()
+                })
+                .WithPipelineLinkOptions(new OptixPipelineLinkOptions()
                 {
                     MaxTraceDepth = 2
-                };
+                });
 
             using var raygenKernel = deviceContext.CreateRaygenKernel<LaunchParams>(
-                __raygen__renderFrame,
-                moduleCompileOptions,
-                pipelineCompileOptions);
+                __raygen__renderFrame);
 
             using var missKernel = deviceContext.CreateMissKernel<LaunchParams>(
-                __miss__radiance,
-                moduleCompileOptions,
-                pipelineCompileOptions);
+                __miss__radiance);
 
             using var hitgroupKernel = deviceContext.CreateHitgroupKernel<LaunchParams>(
                 __closest__radiance,
                 __anyhit__radiance,
-                null,
-                moduleCompileOptions,
-                pipelineCompileOptions);
+                null);
 
             var raygenKernels = new[] { raygenKernel };
             var missKernels = new[] { missKernel };
             var hitgroupKernels = new[] { hitgroupKernel };
-            var allKernels = raygenKernels.Concat(missKernels).Concat(hitgroupKernels);
 
-            using var pipeline = deviceContext.CreatePipeline(
-                pipelineCompileOptions,
-                pipelineLinkOptions,
-                allKernels.Select(x => x.ProgramGroup).ToArray());
+            // Build pipeline using builder
+            using var pipelineBuilder = new OptixPipelineBuilder();
+            pipelineBuilder.AddKernels(raygenKernels);
+            pipelineBuilder.AddKernels(missKernels);
+            pipelineBuilder.AddKernels(hitgroupKernels);
+            using var pipeline = pipelineBuilder.Build(deviceContext);
 
             pipeline.SetStackSize(
                 2 * 1024,
@@ -113,24 +129,18 @@ namespace Sample02
                 2 * 1024,
                 1);
 
-            // Setup SBT.
+            // Build SBT using builder
             var raygenRecordsArray = OptixSbt.PackRecords<RaygenRecord>(raygenKernels);
             var missRecordsArray = OptixSbt.PackRecords<MissRecord>(missKernels);
             var hitgroupRecordsArray = OptixSbt.PackRecords<HitgroupRecord>(hitgroupKernels);
-            using var raygenRecordsBuffer = accelerator.Allocate1D(raygenRecordsArray);
-            using var missRecordsBuffer = accelerator.Allocate1D(missRecordsArray);
-            using var hitgroupRecordsBuffer = accelerator.Allocate1D(hitgroupRecordsArray);
-            var sbt =
-                new OptixShaderBindingTable()
-                {
-                    RaygenRecord = raygenRecordsBuffer.NativePtr,
-                    MissRecordBase = missRecordsBuffer.NativePtr,
-                    MissRecordStrideInBytes = (uint)Marshal.SizeOf<MissRecord>(),
-                    MissRecordCount = (uint)missRecordsBuffer.Length,
-                    HitgroupRecordBase = hitgroupRecordsBuffer.NativePtr,
-                    HitgroupRecordStrideInBytes = (uint)Marshal.SizeOf<HitgroupRecord>(),
-                    HitgroupRecordCount = (uint)hitgroupRecordsBuffer.Length
-                };
+
+            using var sbtBuilder = new OptixSbtBuilder();
+            sbtBuilder.WithAccelerator(accelerator);
+            sbtBuilder.SetRaygenRecords(raygenRecordsArray);
+            sbtBuilder.SetMissRecords(missRecordsArray);
+            sbtBuilder.AddHitgroupRecords(hitgroupRecordsArray);
+            using var builtSbt = sbtBuilder.Build();
+            var sbt = builtSbt.Sbt;
 
             // Setup launch parameters.
             var sizeX = 1200;
@@ -147,6 +157,7 @@ namespace Sample02
                 };
 
             // Launch pipeline.
+            Console.WriteLine($"Rendering a {sizeX}x{sizeY} gradient...");
             accelerator.OptixLaunch(
                 accelerator.DefaultStream,
                 pipeline,
@@ -159,7 +170,8 @@ namespace Sample02
 
             // Write output.
             var outputArray = colorBuffer.GetAsArray1D();
-            using var pngStream = File.OpenWrite("sample02.png");
+            string outputPath = Path.GetFullPath("sample02.png");
+            using var pngStream = File.OpenWrite(outputPath);
             var writer = new StbImageWriteSharp.ImageWriter();
             writer.WritePng(
                 outputArray,
@@ -167,6 +179,7 @@ namespace Sample02
                 launchParams.FbSizeY,
                 StbImageWriteSharp.ColorComponents.RedGreenBlueAlpha,
                 pngStream);
+            Console.WriteLine($"Success: wrote {outputPath}");
         }
     }
 }

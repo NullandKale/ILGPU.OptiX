@@ -88,9 +88,9 @@ namespace Sample04
 
         private static void SetPRD(Vec3 color)
         {
-            OptixPayload.Payload0 = Interop.FloatAsInt(color.x);
-            OptixPayload.Payload1 = Interop.FloatAsInt(color.y);
-            OptixPayload.Payload2 = Interop.FloatAsInt(color.z);
+            OptixPayloadInterop.SetFloat(0, color.x);
+            OptixPayloadInterop.SetFloat(1, color.y);
+            OptixPayloadInterop.SetFloat(2, color.z);
         }
 
         public static void flipBitmap(Index1D index, int width, int height, ArrayView<byte> source, ArrayView<byte> dest)

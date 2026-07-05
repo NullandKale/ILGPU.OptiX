@@ -87,7 +87,7 @@ namespace ILGPU.OptiX
             {
                 if (ModulePtr != IntPtr.Zero)
                 {
-                    OptixAPI.Current.DeviceContextDestroy(ModulePtr);
+                    OptixAPI.Current.ModuleDestroy(ModulePtr);
                     ModulePtr = IntPtr.Zero;
                 }
             }

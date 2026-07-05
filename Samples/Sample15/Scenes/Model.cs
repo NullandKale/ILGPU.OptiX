@@ -138,16 +138,25 @@ namespace Sample15
                         break;
 
                     case "vt":
-                        // OBJ's vt convention is V=0 at the image's bottom row, but
-                        // TextureLoader.LoadRgba8 (and the CUDA array it uploads into)
-                        // store pixel data top-to-bottom, i.e. V=0 = the top row. Left
-                        // unflipped, every OBJ-sourced texture sample (diffuse color
-                        // and, critically, an alpha-cutout mask like Sponza's leaf
-                        // texture) reads the wrong row - flip here once at load time so
-                        // every consumer (SampleAlbedo/SampleAlpha) just works.
+                        // No V-flip: this bundled Sponza .obj's own "vt" v-values are
+                        // already authored against a top-left texture origin (matching
+                        // TextureLoader.LoadRgba8/CudaTextureObject's own row 0 = top
+                        // convention), not the raw OBJ-spec bottom-left origin the
+                        // "1f - v" flip previously here assumed in theory. That flip
+                        // was carried over unchanged from Sample07 through Sample14
+                        // (identical code, confirmed by diff) and never actually
+                        // visually verified for orientation until now - user-reported
+                        // "lion head and curtain textures in sponza are upside down
+                        // compared to the geometry" with the flip in place, and no
+                        // other place in the pipeline touches V (SampleAlbedo/
+                        // SampleAlpha/SampleOrm/ApplyNormalMap all use the interpolated
+                        // uv.y as-is - see ShadingHelpers.cs), so the flip itself was
+                        // the bug. If a *different* OBJ asset is ever added that
+                        // genuinely does follow the spec's bottom-left convention, it
+                        // will need its own per-asset flip instead of a global one here.
                         texcoords.Add(new Vec2(
                             ParseFloat(tokens[1]),
-                            1f - ParseFloat(tokens[2])));
+                            ParseFloat(tokens[2])));
                         break;
 
                     case "vn":

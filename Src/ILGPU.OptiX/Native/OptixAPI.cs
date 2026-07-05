@@ -13,6 +13,7 @@ using ILGPU.OptiX.Interop;
 using ILGPU.OptiX.Util;
 using ILGPU.Util;
 using System;
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Text;
 
@@ -54,6 +55,83 @@ namespace ILGPU.OptiX
 
         #endregion
 
+        #region Delegate cache
+
+        // Each native entry point below is resolved into a delegate once and reused,
+        // instead of calling Marshal.GetDelegateForFunctionPointer on every single
+        // invocation (delegate creation is not free, and several of these - notably
+        // the denoiser calls - run once per rendered frame in a real render loop, not
+        // just at setup time). Cleared by ClearDelegateCache (called from Uninit())
+        // since the underlying function pointers in functionTable are only valid
+        // between a matching Init()/Uninit() pair - a stale cached delegate surviving
+        // past Uninit() would call into a pointer the just-freed nvoptix.dll no longer
+        // backs.
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static T GetOrCreateDelegate<T>(ref T? cache, IntPtr functionPointer)
+            where T : Delegate =>
+            cache ??= Marshal.GetDelegateForFunctionPointer<T>(functionPointer);
+
+        // On return, OptiX's log-size out-parameter reports the full length of the log
+        // message, INCLUDING when that message was truncated to fit the buffer - it is
+        // not clamped to the buffer capacity the caller supplied on input. Reading
+        // reportedLength bytes straight out of a fixed-size buffer would read past the
+        // end of that buffer whenever the driver's message is longer than
+        // DEFAULT_LOG_SIZE, so this always clamps to the buffer's actual capacity.
+        private static unsafe string ReadLog(byte* logPtr, ulong reportedLength, int bufferCapacity)
+        {
+            int length = (int)Math.Min(reportedLength, (ulong)bufferCapacity);
+            return Encoding.UTF8.GetString(logPtr, length);
+        }
+
+        private DeviceContextCreate? cachedDeviceContextCreate;
+        private DeviceContextDestroy? cachedDeviceContextDestroy;
+        private ModuleCreate? cachedModuleCreate;
+        private ModuleDestroy? cachedModuleDestroy;
+        private ProgramGroupCreate? cachedProgramGroupCreate;
+        private ProgramGroupDestroy? cachedProgramGroupDestroy;
+        private PipelineCreate? cachedPipelineCreate;
+        private PipelineDestroy? cachedPipelineDestroy;
+        private PipelineSetStackSize? cachedPipelineSetStackSize;
+        private SbtRecordPackHeader? cachedSbtRecordPackHeader;
+        private Launch? cachedLaunch;
+        private AccelComputeMemoryUsage? cachedAccelComputeMemoryUsage;
+        private AccelBuild? cachedAccelBuild;
+        private AccelCompact? cachedAccelCompact;
+        private DenoiserCreate? cachedDenoiserCreate;
+        private DenoiserDestroy? cachedDenoiserDestroy;
+        private DenoiserComputeMemoryResources? cachedDenoiserComputeMemoryResources;
+        private DenoiserSetup? cachedDenoiserSetup;
+        private DenoiserInvoke? cachedDenoiserInvoke;
+        private DenoiserComputeIntensity? cachedDenoiserComputeIntensity;
+        private DenoiserComputeAverageColor? cachedDenoiserComputeAverageColor;
+
+        private void ClearDelegateCache()
+        {
+            cachedDeviceContextCreate = null;
+            cachedDeviceContextDestroy = null;
+            cachedModuleCreate = null;
+            cachedModuleDestroy = null;
+            cachedProgramGroupCreate = null;
+            cachedProgramGroupDestroy = null;
+            cachedPipelineCreate = null;
+            cachedPipelineDestroy = null;
+            cachedPipelineSetStackSize = null;
+            cachedSbtRecordPackHeader = null;
+            cachedLaunch = null;
+            cachedAccelComputeMemoryUsage = null;
+            cachedAccelBuild = null;
+            cachedAccelCompact = null;
+            cachedDenoiserCreate = null;
+            cachedDenoiserDestroy = null;
+            cachedDenoiserComputeMemoryResources = null;
+            cachedDenoiserSetup = null;
+            cachedDenoiserInvoke = null;
+            cachedDenoiserComputeIntensity = null;
+            cachedDenoiserComputeAverageColor = null;
+        }
+
+        #endregion
+
         #region Methods
 
         /// <summary>
@@ -69,7 +147,7 @@ namespace ILGPU.OptiX
             OptixDeviceContextOptions options,
             out IntPtr deviceContext)
         {
-            var func = Marshal.GetDelegateForFunctionPointer<DeviceContextCreate>(functionTable.OptixDeviceContextCreate);
+            var func = GetOrCreateDelegate(ref cachedDeviceContextCreate, functionTable.OptixDeviceContextCreate);
             return func(cudaContext, options, out deviceContext);
         }
 
@@ -80,7 +158,7 @@ namespace ILGPU.OptiX
         /// <returns>The OptiX result.</returns>
         public OptixResult DeviceContextDestroy(IntPtr deviceContext)
         {
-            var func = Marshal.GetDelegateForFunctionPointer<DeviceContextDestroy>(functionTable.OptixDeviceContextDestroy);
+            var func = GetOrCreateDelegate(ref cachedDeviceContextDestroy, functionTable.OptixDeviceContextDestroy);
             return func(deviceContext);
         }
 
@@ -103,7 +181,7 @@ namespace ILGPU.OptiX
             out IntPtr module,
             out string logString)
         {
-            var func = Marshal.GetDelegateForFunctionPointer<ModuleCreate>(functionTable.OptixModuleCreate);
+            var func = GetOrCreateDelegate(ref cachedModuleCreate, functionTable.OptixModuleCreate);
 
             using var moduleCompileOptionsPtr = SafeHGlobal.AllocFrom(moduleCompileOptions);
             using var pipelineCompileOptionsPtr = SafeHGlobal.AllocFrom(pipelineCompileOptions);
@@ -126,7 +204,7 @@ namespace ILGPU.OptiX
                 );
                 if (result != OptixResult.OPTIX_SUCCESS)
                 {
-                    logString = Encoding.UTF8.GetString(logPtr, (int)logLength);
+                    logString = ReadLog(logPtr, logLength, logBytes.Length);
                 }
                 else
                 {
@@ -143,7 +221,7 @@ namespace ILGPU.OptiX
         /// <returns>The OptiX result.</returns>
         public OptixResult ModuleDestroy(IntPtr module)
         {
-            var func = Marshal.GetDelegateForFunctionPointer<ModuleDestroy>(functionTable.OptixModuleDestroy);
+            var func = GetOrCreateDelegate(ref cachedModuleDestroy, functionTable.OptixModuleDestroy);
             return func(module);
         }
 
@@ -164,7 +242,7 @@ namespace ILGPU.OptiX
             out IntPtr programGroup,
             out string logString)
         {
-            var func = Marshal.GetDelegateForFunctionPointer<ProgramGroupCreate>(functionTable.OptixProgramGroupCreate);
+            var func = GetOrCreateDelegate(ref cachedProgramGroupCreate, functionTable.OptixProgramGroupCreate);
 
             using var programGroupOptionsPtr = SafeHGlobal.AllocFrom(programGroupOptions);
             using var programDescriptionsPtr = SafeHGlobal.AllocFrom(programDescriptions);
@@ -184,7 +262,7 @@ namespace ILGPU.OptiX
                 );
                 if (result != OptixResult.OPTIX_SUCCESS)
                 {
-                    logString = Encoding.UTF8.GetString(logPtr, (int)logLength);
+                    logString = ReadLog(logPtr, logLength, logBytes.Length);
                 }
                 else
                 {
@@ -201,7 +279,7 @@ namespace ILGPU.OptiX
         /// <returns>The OptiX result.</returns>
         public OptixResult ProgramGroupDestroy(IntPtr programGroup)
         {
-            var func = Marshal.GetDelegateForFunctionPointer<ProgramGroupDestroy>(functionTable.OptixProgramGroupDestroy);
+            var func = GetOrCreateDelegate(ref cachedProgramGroupDestroy, functionTable.OptixProgramGroupDestroy);
             return func(programGroup);
         }
 
@@ -226,7 +304,7 @@ namespace ILGPU.OptiX
             out IntPtr pipeline,
             out string logString)
         {
-            var func = Marshal.GetDelegateForFunctionPointer<PipelineCreate>(functionTable.OptixPipelineCreate);
+            var func = GetOrCreateDelegate(ref cachedPipelineCreate, functionTable.OptixPipelineCreate);
 
             using var pipelineCompileOptionsPtr = SafeHGlobal.AllocFrom(pipelineCompileOptions);
             using var pipelineLinkOptionsPtr = SafeHGlobal.AllocFrom(pipelineLinkOptions);
@@ -247,7 +325,7 @@ namespace ILGPU.OptiX
                 );
                 if (result != OptixResult.OPTIX_SUCCESS)
                 {
-                    logString = Encoding.UTF8.GetString(logPtr, (int)logLength);
+                    logString = ReadLog(logPtr, logLength, logBytes.Length);
                 }
                 else
                 {
@@ -264,7 +342,7 @@ namespace ILGPU.OptiX
         /// <returns>The OptiX result.</returns>
         public OptixResult PipelineDestroy(IntPtr pipeline)
         {
-            var func = Marshal.GetDelegateForFunctionPointer<PipelineDestroy>(functionTable.OptixPipelineDestroy);
+            var func = GetOrCreateDelegate(ref cachedPipelineDestroy, functionTable.OptixPipelineDestroy);
             return func(pipeline);
         }
 
@@ -292,7 +370,7 @@ namespace ILGPU.OptiX
             uint continuationStackSize,
             uint maxTraversableGraphDepth)
         {
-            var func = Marshal.GetDelegateForFunctionPointer<PipelineSetStackSize>(functionTable.OptixPipelineSetStackSize);
+            var func = GetOrCreateDelegate(ref cachedPipelineSetStackSize, functionTable.OptixPipelineSetStackSize);
             return func(
                 pipeline,
                 directCallableStackSizeFromTraversal,
@@ -313,7 +391,7 @@ namespace ILGPU.OptiX
             IntPtr programGroup,
             IntPtr sbtRecordHeaderHostPointer)
         {
-            var func = Marshal.GetDelegateForFunctionPointer<SbtRecordPackHeader>(functionTable.OptixSbtRecordPackHeader);
+            var func = GetOrCreateDelegate(ref cachedSbtRecordPackHeader, functionTable.OptixSbtRecordPackHeader);
             return func(
                 programGroup,
                 sbtRecordHeaderHostPointer);
@@ -342,7 +420,7 @@ namespace ILGPU.OptiX
             uint height,
             uint depth)
         {
-            var func = Marshal.GetDelegateForFunctionPointer<Launch>(functionTable.OptixLaunch);
+            var func = GetOrCreateDelegate(ref cachedLaunch, functionTable.OptixLaunch);
             return func(
                 pipeline,
                 stream,
@@ -371,7 +449,7 @@ namespace ILGPU.OptiX
         uint numBuildInputs,
         IntPtr bufferSizes)
         {
-            var func = Marshal.GetDelegateForFunctionPointer<AccelComputeMemoryUsage>(functionTable.OptixAccelComputeMemoryUsage);
+            var func = GetOrCreateDelegate(ref cachedAccelComputeMemoryUsage, functionTable.OptixAccelComputeMemoryUsage);
 
             return func(
                 context,
@@ -412,7 +490,7 @@ namespace ILGPU.OptiX
         IntPtr emittedProperties,
         uint numEmittedProperties)
         {
-            var func = Marshal.GetDelegateForFunctionPointer<AccelBuild>(functionTable.OptixAccelBuild);
+            var func = GetOrCreateDelegate(ref cachedAccelBuild, functionTable.OptixAccelBuild);
 
             return func(
                 context,
@@ -430,6 +508,39 @@ namespace ILGPU.OptiX
         }
 
         /// <summary>
+        /// Compacts a previously built acceleration structure into a smaller output
+        /// buffer. The input handle must have been built with
+        /// OPTIX_BUILD_FLAG_ALLOW_COMPACTION and an OPTIX_PROPERTY_TYPE_COMPACTED_SIZE
+        /// emitted property (see AccelBuild's emittedProperties parameter).
+        /// </summary>
+        /// <param name="context">The OptiX device context.</param>
+        /// <param name="stream">The CUDA stream.</param>
+        /// <param name="inputHandle">The traversable handle of the uncompacted acceleration structure.</param>
+        /// <param name="outputBuffer">The compacted output buffer.</param>
+        /// <param name="outputBufferSizeInBytes">The compacted output buffer size (the compacted size read back from the emitted property).</param>
+        /// <param name="outputHandle">The OptixTraversableHandle pointer, filled in with the new (compacted) handle.</param>
+        /// <returns>The OptiX result.</returns>
+        [CLSCompliant(false)]
+        public OptixResult AccelCompact(
+        IntPtr context,
+        IntPtr stream,
+        ulong inputHandle,
+        IntPtr outputBuffer,
+        ulong outputBufferSizeInBytes,
+        IntPtr outputHandle)
+        {
+            var func = GetOrCreateDelegate(ref cachedAccelCompact, functionTable.OptixAccelCompact);
+
+            return func(
+                context,
+                stream,
+                inputHandle,
+                outputBuffer,
+                outputBufferSizeInBytes,
+                outputHandle);
+        }
+
+        /// <summary>
         /// Creates a new OptiX denoiser.
         /// </summary>
         /// <param name="deviceContext">The OptiX device context.</param>
@@ -444,7 +555,7 @@ namespace ILGPU.OptiX
             OptixDenoiserOptions options,
             out IntPtr denoiser)
         {
-            var func = Marshal.GetDelegateForFunctionPointer<DenoiserCreate>(functionTable.OptixDenoiserCreate);
+            var func = GetOrCreateDelegate(ref cachedDenoiserCreate, functionTable.OptixDenoiserCreate);
             using var optionsPtr = SafeHGlobal.AllocFrom(options);
             return func(deviceContext, modelKind, optionsPtr, out denoiser);
         }
@@ -456,7 +567,7 @@ namespace ILGPU.OptiX
         /// <returns>The OptiX result.</returns>
         public OptixResult DenoiserDestroy(IntPtr denoiser)
         {
-            var func = Marshal.GetDelegateForFunctionPointer<DenoiserDestroy>(functionTable.OptixDenoiserDestroy);
+            var func = GetOrCreateDelegate(ref cachedDenoiserDestroy, functionTable.OptixDenoiserDestroy);
             return func(denoiser);
         }
 
@@ -475,7 +586,7 @@ namespace ILGPU.OptiX
             uint maximumInputHeight,
             out OptixDenoiserSizes sizes)
         {
-            var func = Marshal.GetDelegateForFunctionPointer<DenoiserComputeMemoryResources>(functionTable.OptixDenoiserComputeMemoryResources);
+            var func = GetOrCreateDelegate(ref cachedDenoiserComputeMemoryResources, functionTable.OptixDenoiserComputeMemoryResources);
             var sizesPtr = stackalloc OptixDenoiserSizes[1];
             var result = func(denoiser, maximumInputWidth, maximumInputHeight, new IntPtr(sizesPtr));
             sizes = sizesPtr[0];
@@ -505,7 +616,7 @@ namespace ILGPU.OptiX
             IntPtr scratch,
             ulong scratchSizeInBytes)
         {
-            var func = Marshal.GetDelegateForFunctionPointer<DenoiserSetup>(functionTable.OptixDenoiserSetup);
+            var func = GetOrCreateDelegate(ref cachedDenoiserSetup, functionTable.OptixDenoiserSetup);
             return func(denoiser, stream, inputWidth, inputHeight, state, stateSizeInBytes, scratch, scratchSizeInBytes);
         }
 
@@ -538,7 +649,7 @@ namespace ILGPU.OptiX
             IntPtr scratch,
             ulong scratchSizeInBytes)
         {
-            var func = Marshal.GetDelegateForFunctionPointer<DenoiserInvoke>(functionTable.OptixDenoiserInvoke);
+            var func = GetOrCreateDelegate(ref cachedDenoiserInvoke, functionTable.OptixDenoiserInvoke);
             using var parametersPtr = SafeHGlobal.AllocFrom(parameters);
             using var guideLayerPtr = SafeHGlobal.AllocFrom(guideLayer);
             using var layersPtr = SafeHGlobal.AllocFrom(layers);
@@ -577,7 +688,7 @@ namespace ILGPU.OptiX
             IntPtr scratch,
             ulong scratchSizeInBytes)
         {
-            var func = Marshal.GetDelegateForFunctionPointer<DenoiserComputeIntensity>(functionTable.OptixDenoiserComputeIntensity);
+            var func = GetOrCreateDelegate(ref cachedDenoiserComputeIntensity, functionTable.OptixDenoiserComputeIntensity);
             using var inputImagePtr = SafeHGlobal.AllocFrom(inputImage);
             return func(denoiser, stream, inputImagePtr, outputIntensity, scratch, scratchSizeInBytes);
         }
@@ -602,7 +713,7 @@ namespace ILGPU.OptiX
             IntPtr scratch,
             ulong scratchSizeInBytes)
         {
-            var func = Marshal.GetDelegateForFunctionPointer<DenoiserComputeAverageColor>(functionTable.OptixDenoiserComputeAverageColor);
+            var func = GetOrCreateDelegate(ref cachedDenoiserComputeAverageColor, functionTable.OptixDenoiserComputeAverageColor);
             using var inputImagePtr = SafeHGlobal.AllocFrom(inputImage);
             return func(denoiser, stream, inputImagePtr, outputAverageColor, scratch, scratchSizeInBytes);
         }

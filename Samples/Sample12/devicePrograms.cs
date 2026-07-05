@@ -1,14 +1,16 @@
 using ILGPU;
 using ILGPU.Algorithms;
 using ILGPU.OptiX;
+using ILGPU.OptiX.Device;
+using System.Numerics;
 
 namespace Sample12
 {
     public static class devicePrograms
     {
-        private const uint RADIANCE_RAY_TYPE = 0;
-        private const uint SHADOW_RAY_TYPE = 1;
-        private const uint RAY_TYPE_COUNT = 2;
+        private const uint RADIANCE_RAY_TYPE = OptixPayloadDefaults.RADIANCE_RAY_TYPE;
+        private const uint SHADOW_RAY_TYPE = OptixPayloadDefaults.SHADOW_RAY_TYPE;
+        private const uint RAY_TYPE_COUNT = OptixPayloadDefaults.RAY_TYPE_COUNT;
         private const int NUM_LIGHT_SAMPLES = 4;
 
         public unsafe static void __raygen__renderFrame(LaunchParams launchParams)
@@ -88,25 +90,32 @@ namespace Sample12
         {
             uint primId = OptixGetPrimitiveIndex.Value;
             Vec3i tri = launchParams.Indices[primId];
-            var (bu, bv) = OptixGetTriangleBarycentrics.Value;
-            float bw = 1f - bu - bv;
+            var (bw, bu, bv) = OptixHitProgramHelpers.GetTriangleBarycentrics();
 
             Vec3 a = launchParams.Vertices[tri.x];
             Vec3 b = launchParams.Vertices[tri.y];
             Vec3 c = launchParams.Vertices[tri.z];
-            Vec3 geometricNormal = Vec3.cross(b - a, c - a);
+            var geometricNormalV3 = OptixHitProgramHelpers.GetGeometricNormal(
+                new Vector3(a.x, a.y, a.z),
+                new Vector3(b.x, b.y, b.z),
+                new Vector3(c.x, c.y, c.z));
+            Vec3 geometricNormal = new Vec3(geometricNormalV3.X, geometricNormalV3.Y, geometricNormalV3.Z);
 
             Vec3 n0 = launchParams.Normals[tri.x];
             Vec3 n1 = launchParams.Normals[tri.y];
             Vec3 n2 = launchParams.Normals[tri.z];
-            Vec3 shadingNormal = (bw * n0) + (bu * n1) + (bv * n2);
+            var shadingNormalV3 = OptixHitProgramHelpers.InterpolateAttribute(
+                new Vector3(n0.x, n0.y, n0.z),
+                new Vector3(n1.x, n1.y, n1.z),
+                new Vector3(n2.x, n2.y, n2.z),
+                bw, bu, bv);
+            Vec3 shadingNormal = new Vec3(shadingNormalV3.X, shadingNormalV3.Y, shadingNormalV3.Z);
 
             var (dx, dy, dz) = OptixGetWorldRayDirection.Value;
             Vec3 rayDir = new Vec3(dx, dy, dz);
 
-            if (Vec3.dot(rayDir, geometricNormal) > 0f)
-                geometricNormal = -geometricNormal;
-            geometricNormal = Vec3.unitVector(geometricNormal);
+            var orientedGeomNormalV3 = OptixHitProgramHelpers.OrientGeometricNormal(geometricNormalV3, rayDir);
+            geometricNormal = new Vec3(orientedGeomNormalV3.X, orientedGeomNormalV3.Y, orientedGeomNormalV3.Z);
 
             if (Vec3.dot(geometricNormal, shadingNormal) < 0f)
                 shadingNormal -= 2f * Vec3.dot(geometricNormal, shadingNormal) * geometricNormal;
@@ -186,20 +195,14 @@ namespace Sample12
 
         public static void __miss__shadow(LaunchParams launchParams)
         {
-            OptixPayload.Payload0 = Interop.FloatAsInt(1f);
+            OptixPayloadInterop.SetFloat(0, 1f);
         }
 
         private static void SetPRD(Vec3 color, Vec3 normal, Vec3 albedo)
         {
-            OptixPayload.Payload0 = Interop.FloatAsInt(color.x);
-            OptixPayload.Payload1 = Interop.FloatAsInt(color.y);
-            OptixPayload.Payload2 = Interop.FloatAsInt(color.z);
-            OptixPayload.Payload3 = Interop.FloatAsInt(normal.x);
-            OptixPayload.Payload4 = Interop.FloatAsInt(normal.y);
-            OptixPayload.Payload5 = Interop.FloatAsInt(normal.z);
-            OptixPayload.Payload6 = Interop.FloatAsInt(albedo.x);
-            OptixPayload.Payload7 = Interop.FloatAsInt(albedo.y);
-            OptixPayload.Payload8 = Interop.FloatAsInt(albedo.z);
+            OptixPayloadVec3Helper.SetVec3Registers(0, new Vector3(color.x, color.y, color.z));
+            OptixPayloadVec3Helper.SetVec3Registers(3, new Vector3(normal.x, normal.y, normal.z));
+            OptixPayloadVec3Helper.SetVec3Registers(6, new Vector3(albedo.x, albedo.y, albedo.z));
         }
 
         // Matches example12_denoiseSeparateChannels/toneMap.cu's

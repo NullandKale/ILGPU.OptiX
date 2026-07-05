@@ -3,7 +3,9 @@ using ILGPU.OptiX;
 using ILGPU.OptiX.Interop;
 using ILGPU.Runtime;
 using ILGPU.Runtime.Cuda;
+using MeshRange = ILGPU.OptiX.Pipeline.OptixMeshRange;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 
 namespace Sample14
@@ -58,22 +60,16 @@ namespace Sample14
     /// <summary>
     /// The single source of truth for how a scene's triangles map onto GAS build
     /// inputs and hitgroup SBT record ranges - shared by <see cref="SbtBuilder"/>,
-    /// <see cref="AccelStructureBuilder"/>, and the renderer's HUD summary.
+    /// <see cref="AccelStructureBuilder"/>, and the renderer's HUD summary. Thin
+    /// sample-specific adapter over <see cref="ILGPU.OptiX.Pipeline.OptixSbtLayout"/> -
+    /// the actual range-resolution logic used to be copy-pasted identically into this
+    /// file by Sample13/14/15; it's now defined once in the shared library.
     /// </summary>
     public static class SbtLayout
     {
-        // UseMergedTrianglesGas==true (the default) always returns a single range
-        // spanning the whole Indices array, regardless of what SceneData.MeshRanges
-        // tracked - the original single-build-input behavior. Otherwise, empty/unset
-        // SceneData.MeshRanges still means "treat the whole Indices array as a single
-        // implicit mesh" (every scene that doesn't explicitly track mesh boundaries -
-        // procedural/test/CSG scenes, the single-mesh scenes). Shared by the triangles
-        // GAS build, the hitgroup SBT build, and the IAS SbtOffset math so this
-        // fallback logic lives in one place.
         public static MeshRange[] GetTriangleMeshRanges(SceneData scene, bool useMergedTrianglesGas) =>
-            (!useMergedTrianglesGas && scene.MeshRanges != null && scene.MeshRanges.Length > 0)
-                ? scene.MeshRanges
-                : new[] { new MeshRange { IndexStart = 0, IndexCount = scene.Indices.Length } };
+            ILGPU.OptiX.Pipeline.OptixSbtLayout.GetTriangleMeshRanges(
+                scene.Indices.Length, scene.MeshRanges, useMergedTrianglesGas);
     }
 
     /// <summary>
@@ -102,6 +98,16 @@ namespace Sample14
             this.accelerator = accelerator;
             this.pipeline = pipeline;
             this.textures = textures;
+
+            // Guards the HitgroupRecord/MaterialSbtData layout invariant documented on
+            // HitgroupRecord above - if MaterialSbtData's field list changes without
+            // re-measuring HitgroupRecord's explicit Size, this catches the drift
+            // immediately (mirrors OptixAPI.Init.cs's OptixFunctionTable size assert).
+            Debug.Assert(
+                Marshal.SizeOf<HitgroupRecord>() == Marshal.SizeOf<MaterialSbtData>() + OptixAPI.OPTIX_SBT_RECORD_HEADER_SIZE,
+                "HitgroupRecord's declared Size no longer matches MaterialSbtData's " +
+                "actual marshaled size plus the SBT record header - re-measure via " +
+                "Marshal.SizeOf<MaterialSbtData>() and update HitgroupRecord's Size.");
         }
 
         public unsafe OptixShaderBindingTable Build(SceneData scene, MeshRange[] triangleMeshRanges)
@@ -186,14 +192,14 @@ namespace Sample14
             for (var m = 0; m < triangleMeshCount; m++)
             {
                 FillMaterialRecords(recordIndex);
-                recordIndex += scene.Materials.Length * 2;
+                recordIndex += scene.Materials.Length * (int)Payloads.RAY_TYPE_COUNT;
             }
             for (var kind = 0; kind < customCounts.Length; kind++)
             {
                 if (customCounts[kind] == 0)
                     continue;
                 FillMaterialRecords(recordIndex);
-                recordIndex += scene.Materials.Length * 2;
+                recordIndex += scene.Materials.Length * (int)Payloads.RAY_TYPE_COUNT;
             }
 
             hitgroupRecordsBuffer = accelerator.Allocate1D(hitgroupRecordsArray);

@@ -21,24 +21,18 @@ namespace Sample15
     public sealed class SceneAnimator
     {
         readonly SceneGpuBuffers buffers;
-        readonly AccelStructureBuilder accel;
-        readonly TextureCache textures;
 
         PointLightGpu[] animatedLightsHost = Array.Empty<PointLightGpu>();
-        SphereData[] animatedSpheresHost = Array.Empty<SphereData>();
         readonly Stopwatch animationClock = new Stopwatch();
 
-        public SceneAnimator(SceneGpuBuffers buffers, AccelStructureBuilder accel, TextureCache textures)
+        public SceneAnimator(SceneGpuBuffers buffers)
         {
             this.buffers = buffers;
-            this.accel = accel;
-            this.textures = textures;
         }
 
         public void OnSceneSwitched(SceneData scene)
         {
             animatedLightsHost = (PointLightGpu[])scene.Lights.Clone();
-            animatedSpheresHost = (SphereData[])scene.Spheres.Clone();
             animationClock.Restart();
         }
 
@@ -78,20 +72,6 @@ namespace Sample15
 
             if (lightsChanged)
                 buffers.UpdateLights(animatedLightsHost);
-
-            if (scene.BobbingSpheres.Length > 0)
-            {
-                foreach (var anim in scene.BobbingSpheres)
-                {
-                    float y = anim.BaseY + (anim.Amplitude * XMath.Sin((anim.Speed * t) + anim.Phase));
-                    var sphere = animatedSpheresHost[anim.SphereIndex];
-                    sphere.Center = new Vec3(sphere.Center.x, y, sphere.Center.z);
-                    animatedSpheresHost[anim.SphereIndex] = sphere;
-                }
-
-                buffers.UpdateAnimatedSpheres(animatedSpheresHost);
-                accel.RefitCustomPrimitives(scene);
-            }
         }
     }
 }

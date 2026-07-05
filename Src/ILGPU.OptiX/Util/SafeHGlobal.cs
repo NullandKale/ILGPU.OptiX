@@ -75,6 +75,28 @@ namespace ILGPU.OptiX.Util
         }
 
         /// <summary>
+        /// Convenience function to allocate and marshal a span, or return IntPtr.Zero if empty.
+        /// </summary>
+        /// <param name="span">Elements to marshal; if empty, returns IntPtr.Zero.</param>
+        public static IntPtr AllocFromOrNull<T>(ReadOnlySpan<T> span)
+            where T : unmanaged
+        {
+            if (span.IsEmpty)
+                return IntPtr.Zero;
+
+            var elementSize = Marshal.SizeOf<T>();
+            IntPtr handle = Marshal.AllocHGlobal(elementSize * span.Length);
+
+            IntPtr nextPtr = handle;
+            foreach (var element in span)
+            {
+                Marshal.StructureToPtr(element, nextPtr, false);
+                nextPtr += elementSize;
+            }
+            return handle;
+        }
+
+        /// <summary>
         /// Convenience function to allocate a block of memory.
         /// </summary>
         public static SafeHGlobal FromString(string? str) =>

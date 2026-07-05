@@ -11,7 +11,10 @@
 
 using ILGPU;
 using ILGPU.OptiX;
+using ILGPU.OptiX.Device;
 using ILGPU.OptiX.Interop;
+using ILGPU.OptiX.Pipeline;
+using ILGPU.OptiX.AccelStructures;
 using ILGPU.Runtime;
 using ILGPU.Runtime.Cuda;
 using System;
@@ -61,10 +64,6 @@ namespace Sample09
         CudaAccelerator accelerator;
         OptixDeviceContext deviceContext;
 
-        OptixModuleCompileOptions moduleCompileOptions;
-        OptixPipelineCompileOptions pipelineCompileOptions;
-        OptixPipelineLinkOptions pipelineLinkOptions;
-
         OptixKernel raygenKernel;
         OptixKernel radianceMissKernel;
         OptixKernel shadowMissKernel;
@@ -74,7 +73,6 @@ namespace Sample09
         OptixKernel[] raygenKernels;
         OptixKernel[] missKernels;
         OptixKernel[] hitgroupKernels;
-        OptixKernel[] allKernels;
 
         OptixPipeline pipeline;
 
@@ -82,10 +80,7 @@ namespace Sample09
         MissRecord[] missRecordsArray;
         HitgroupRecord[] hitgroupRecordsArray;
 
-        MemoryBuffer1D<RaygenRecord, Stride1D.Dense> raygenRecordsBuffer;
-        MemoryBuffer1D<MissRecord, Stride1D.Dense> missRecordsBuffer;
-        MemoryBuffer1D<HitgroupRecord, Stride1D.Dense> hitgroupRecordsBuffer;
-
+        BuiltSbt? builtSbt;
         OptixShaderBindingTable sbt;
 
         MemoryBuffer1D<byte, Stride1D.Dense> colorBuffer0;
@@ -113,7 +108,7 @@ namespace Sample09
 
         List<CudaTextureObject> textureObjects = new List<CudaTextureObject>();
 
-        MemoryBuffer1D<byte, Stride1D.Dense> asBuffer;
+        BuiltAccelStructure builtAccel;
         IntPtr traversable;
 
         public unsafe SampleRenderer(int width, int height, MainWindow window)
@@ -122,57 +117,44 @@ namespace Sample09
 
             context = Context.Create(b => b.Cuda().InitOptiX());
             accelerator = context.CreateCudaAccelerator(0);
-            deviceContext = accelerator.CreateDeviceContext();
-
-            moduleCompileOptions = new OptixModuleCompileOptions()
-            {
-                MaxRegisterCount = 50,
-                OptimizationLevel = OptixCompileOptimizationLevel.OPTIX_COMPILE_OPTIMIZATION_DEFAULT,
-                DebugLevel = OptixCompileDebugLevel.OPTIX_COMPILE_DEBUG_LEVEL_NONE
-            };
-
-            pipelineCompileOptions = new OptixPipelineCompileOptions()
-            {
-                TraversableGraphFlags = OptixTraversableGraphFlags.OPTIX_TRAVERSABLE_GRAPH_FLAG_ALLOW_SINGLE_GAS,
-                NumPayloadValues = 3,
-                NumAttributeValues = 2,
-                ExceptionFlags = OptixExceptionFlags.OPTIX_EXCEPTION_FLAG_NONE,
-                PipelineLaunchParamsVariableName = OptixLaunchParams.VariableName
-            };
-
-            pipelineLinkOptions = new OptixPipelineLinkOptions()
-            {
-                MaxTraceDepth = 2
-            };
+            deviceContext = accelerator.CreateDeviceContext()
+                .WithModuleCompileOptions(new OptixModuleCompileOptions()
+                {
+                    MaxRegisterCount = 50,
+                    OptimizationLevel = OptixCompileOptimizationLevel.OPTIX_COMPILE_OPTIMIZATION_DEFAULT,
+                    DebugLevel = OptixCompileDebugLevel.OPTIX_COMPILE_DEBUG_LEVEL_NONE
+                })
+                .WithPipelineCompileOptions(new OptixPipelineCompileOptions()
+                {
+                    TraversableGraphFlags = OptixTraversableGraphFlags.OPTIX_TRAVERSABLE_GRAPH_FLAG_ALLOW_SINGLE_GAS,
+                    NumPayloadValues = 3,
+                    NumAttributeValues = 2,
+                    ExceptionFlags = OptixExceptionFlags.OPTIX_EXCEPTION_FLAG_NONE,
+                    PipelineLaunchParamsVariableName = OptixLaunchParams.VariableName
+                })
+                .WithPipelineLinkOptions(new OptixPipelineLinkOptions()
+                {
+                    MaxTraceDepth = 2
+                });
 
             raygenKernel = deviceContext.CreateRaygenKernel<LaunchParams>(
-                devicePrograms.__raygen__renderFrame,
-                moduleCompileOptions,
-                pipelineCompileOptions);
+                devicePrograms.__raygen__renderFrame);
 
             radianceMissKernel = deviceContext.CreateMissKernel<LaunchParams>(
-                devicePrograms.__miss__radiance,
-                moduleCompileOptions,
-                pipelineCompileOptions);
+                devicePrograms.__miss__radiance);
 
             shadowMissKernel = deviceContext.CreateMissKernel<LaunchParams>(
-                devicePrograms.__miss__shadow,
-                moduleCompileOptions,
-                pipelineCompileOptions);
+                devicePrograms.__miss__shadow);
 
             radianceHitgroupKernel = deviceContext.CreateHitgroupKernel<LaunchParams>(
                 devicePrograms.__closest__radiance,
                 devicePrograms.__anyhit__radiance,
-                null,
-                moduleCompileOptions,
-                pipelineCompileOptions);
+                null);
 
             shadowHitgroupKernel = deviceContext.CreateHitgroupKernel<LaunchParams>(
                 devicePrograms.__closesthit__shadow,
                 devicePrograms.__anyhit__shadow,
-                null,
-                moduleCompileOptions,
-                pipelineCompileOptions);
+                null);
 
             raygenKernels = new[] { raygenKernel };
             missKernels = new[] { radianceMissKernel, shadowMissKernel };
@@ -186,21 +168,25 @@ namespace Sample09
             // corresponding kernel's program group; per-material Color/TextureObject
             // are filled in afterward, radiance records only.
             var modelPath = Path.Combine(AppContext.BaseDirectory, "models", "sponza.obj");
+            Console.WriteLine($"Loading model: {modelPath}...");
             model = OBJModel.Load(modelPath);
+            Console.WriteLine($"Loaded {model.Indices.Length} triangles, {model.Vertices.Length} vertices, {model.Materials.Length} materials.");
             var materialTextures = LoadMaterialTextures(model, Path.GetDirectoryName(modelPath));
-            var hitgroupKernelsList = new List<OptixKernel>(model.Materials.Length * 2);
+            Console.WriteLine($"Loaded {textureObjects.Count} unique texture(s) for {materialTextures.Count(h => h != 0)} of {model.Materials.Length} materials.");
+            var hitgroupKernelsList = new List<OptixKernel>(model.Materials.Length * (int)OptixPayloadDefaults.RAY_TYPE_COUNT);
             for (var i = 0; i < model.Materials.Length; i++)
             {
                 hitgroupKernelsList.Add(radianceHitgroupKernel);
                 hitgroupKernelsList.Add(shadowHitgroupKernel);
             }
             hitgroupKernels = hitgroupKernelsList.ToArray();
-            allKernels = (raygenKernels.Concat(missKernels).Concat(new[] { radianceHitgroupKernel, shadowHitgroupKernel })).ToArray();
 
-            pipeline = deviceContext.CreatePipeline(
-                pipelineCompileOptions,
-                pipelineLinkOptions,
-                allKernels.Select(x => x.ProgramGroup).ToArray());
+            // Build pipeline using builder
+            var pipelineBuilder = new OptixPipelineBuilder();
+            pipelineBuilder.AddKernels(raygenKernels);
+            pipelineBuilder.AddKernels(missKernels);
+            pipelineBuilder.AddKernels(new[] { radianceHitgroupKernel, shadowHitgroupKernel });
+            pipeline = pipelineBuilder.Build(deviceContext);
 
             pipeline.SetStackSize(
                 2 * 1024,
@@ -213,24 +199,17 @@ namespace Sample09
             hitgroupRecordsArray = OptixSbt.PackRecords<HitgroupRecord>(hitgroupKernels);
             for (var i = 0; i < model.Materials.Length; i++)
             {
-                hitgroupRecordsArray[i * 2].Color = model.Materials[i].Diffuse;
-                hitgroupRecordsArray[i * 2].TextureObject = materialTextures[i];
+                hitgroupRecordsArray[i * (int)OptixPayloadDefaults.RAY_TYPE_COUNT].Color = model.Materials[i].Diffuse;
+                hitgroupRecordsArray[i * (int)OptixPayloadDefaults.RAY_TYPE_COUNT].TextureObject = materialTextures[i];
             }
 
-            raygenRecordsBuffer = accelerator.Allocate1D(raygenRecordsArray);
-            missRecordsBuffer = accelerator.Allocate1D(missRecordsArray);
-            hitgroupRecordsBuffer = accelerator.Allocate1D(hitgroupRecordsArray);
-
-            sbt = new OptixShaderBindingTable()
-            {
-                RaygenRecord = raygenRecordsBuffer.NativePtr,
-                MissRecordBase = missRecordsBuffer.NativePtr,
-                MissRecordStrideInBytes = (uint)Marshal.SizeOf<MissRecord>(),
-                MissRecordCount = (uint)missRecordsBuffer.Length,
-                HitgroupRecordBase = hitgroupRecordsBuffer.NativePtr,
-                HitgroupRecordStrideInBytes = (uint)Marshal.SizeOf<HitgroupRecord>(),
-                HitgroupRecordCount = (uint)hitgroupRecordsBuffer.Length
-            };
+            var sbtBuilder = new OptixSbtBuilder();
+            sbtBuilder.WithAccelerator(accelerator);
+            sbtBuilder.SetRaygenRecords(raygenRecordsArray);
+            sbtBuilder.SetMissRecords(missRecordsArray);
+            sbtBuilder.AddHitgroupRecords(hitgroupRecordsArray);
+            builtSbt = sbtBuilder.Build();
+            sbt = builtSbt.Sbt;
 
             d_vertices = accelerator.Allocate1D(model.Vertices);
             d_normals = accelerator.Allocate1D(model.Normals);
@@ -238,9 +217,16 @@ namespace Sample09
             d_indices = accelerator.Allocate1D(model.Indices);
             d_materialIds = accelerator.Allocate1D(model.TriangleMaterialIds);
 
+            Console.WriteLine("Camera positioned at a fixed viewpoint chosen to show shadows under Sponza's colonnade (not auto-fit to the model, unlike Sample07/08).");
             camera = FitCameraToModel(model, width, height);
 
-            traversable = buildAccel(model);
+            var accelBuilder = new OptixAccelBuilder()
+                .WithDeviceContext(deviceContext)
+                .WithAccelerator(accelerator)
+                .AddTriangleMesh(d_vertices as MemoryBuffer, d_indices as MemoryBuffer, d_materialIds as MemoryBuffer, (uint)model.Materials.Length)
+                .AllowCompaction();
+            builtAccel = accelBuilder.Build();
+            traversable = builtAccel.TraversableHandle;
 
             resize(width, height);
             flipBitmap = accelerator.LoadAutoGroupedStreamKernel<Index1D, int, int, ArrayView<byte>, ArrayView<byte>>(devicePrograms.flipBitmap);
@@ -273,6 +259,7 @@ namespace Sample09
                     }
                     else
                     {
+                        Console.WriteLine($"[Warning] Texture not found, material will use its flat diffuse color instead: {texturePath}");
                         handle = 0;
                     }
                     cache[texturePath] = handle;
@@ -318,9 +305,7 @@ namespace Sample09
             d_normals.Dispose();
             d_vertices.Dispose();
 
-            hitgroupRecordsBuffer.Dispose();
-            missRecordsBuffer.Dispose();
-            raygenRecordsBuffer.Dispose();
+            builtSbt?.Dispose();
 
             pipeline.Dispose();
 
@@ -359,66 +344,6 @@ namespace Sample09
                     Indices = (Vec3i*)d_indices.NativePtr
                 };
             }
-        }
-
-        public unsafe IntPtr buildAccel(OBJModel model)
-        {
-            OptixBuildInput triangleInput = new OptixBuildInput()
-            {
-                Type = OptixBuildInputType.OPTIX_BUILD_INPUT_TYPE_TRIANGLES,
-            };
-
-            var vertexBuffers = stackalloc IntPtr[1];
-            vertexBuffers[0] = d_vertices.NativePtr;
-
-            triangleInput.TriangleArray.VertexFormat = OptixVertexFormat.OPTIX_VERTEX_FORMAT_FLOAT3;
-            triangleInput.TriangleArray.VertexStrideInBytes = (uint)sizeof(Vec3);
-            triangleInput.TriangleArray.NumVerticies = (uint)model.Vertices.Length;
-            triangleInput.TriangleArray.VertexBuffers = new IntPtr(vertexBuffers);
-
-            triangleInput.TriangleArray.IndexFormat = OptixIndicesFormat.OPTIX_INDICES_FORMAT_UNSIGNED_INT3;
-            triangleInput.TriangleArray.IndexStrideInBytes = (uint)sizeof(Vec3i);
-            triangleInput.TriangleArray.NumIndexTriplets = (uint)model.Indices.Length;
-            triangleInput.TriangleArray.IndexBuffer = d_indices.NativePtr;
-
-            // One SBT-GAS-index per material (NOT per ray type - OptiX multiplies by
-            // sbtStride/RAY_TYPE_COUNT at trace time, see the constructor) - OptiX
-            // looks up d_materialIds[triangleIndex] (Model's TriangleMaterialIds, one
-            // uint per triangle) to select which material's hitgroup records apply, so
-            // every material needs its own flag entry here too.
-            var triangleInputFlags = stackalloc uint[model.Materials.Length];
-            triangleInput.TriangleArray.Flags = triangleInputFlags;
-            triangleInput.TriangleArray.NumSbtRecords = (uint)model.Materials.Length;
-            triangleInput.TriangleArray.SbtIndexOffsetBuffer = d_materialIds.NativePtr;
-            triangleInput.TriangleArray.SbtIndexOffsetSizeInBytes = sizeof(uint);
-            triangleInput.TriangleArray.SbtIndexOffsetStrideInBytes = 0;
-
-            OptixAccelBuildOptions accelOptions = new OptixAccelBuildOptions()
-            {
-                BuildFlags = OptixBuildFlags.OPTIX_BUILD_FLAG_NONE | OptixBuildFlags.OPTIX_BUILD_FLAG_ALLOW_COMPACTION,
-                Operation = OptixBuildOperation.OPTIX_BUILD_OPERATION_BUILD
-            };
-            accelOptions.MotionOptions.NumKeys = 1;
-
-            OptixAccelBufferSizes blasBufferSizes = deviceContext.AccelComputeMemoryUsage(accelOptions, triangleInput);
-
-            using MemoryBuffer1D<ulong, Stride1D.Dense> compactedSizeBuffer = accelerator.Allocate1D<ulong>(1);
-
-            OptixAccelEmitDesc[] emitDesc = {
-                new OptixAccelEmitDesc()
-                {
-                    Type = OptixAccelPropertyType.OPTIX_PROPERTY_TYPE_COMPACTED_SIZE,
-                    Result = compactedSizeBuffer.NativePtr
-                }
-            };
-
-            OptixBuildInput[] buildInputs = { triangleInput };
-
-            using MemoryBuffer1D<byte, Stride1D.Dense> tempBuffer = accelerator.Allocate1D<byte>((long)blasBufferSizes.TempSizeInBytes);
-
-            asBuffer = accelerator.Allocate1D<byte>((long)blasBufferSizes.OutputSizeInBytes);
-
-            return deviceContext.AccelBuild(accelerator.DefaultStream, accelOptions, buildInputs, tempBuffer, asBuffer, emitDesc);
         }
 
         public void setCamera(Camera camera)

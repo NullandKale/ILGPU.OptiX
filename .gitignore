@@ -247,8 +247,10 @@ ModelManifest.xml
 .doxygen
 
 # Ignore T4 generated files
-Src/ILGPU.Optix/OptixPayload.cs
-Src/ILGPU.Optix/OptixTrace.cs
+Src/ILGPU.OptiX/OptixPayload.cs
+Src/ILGPU.OptiX/OptixTrace.cs
+Src/ILGPU.OptiX/DeviceApi/OptixPayload.cs
+Src/ILGPU.OptiX/DeviceApi/OptixTrace.cs
 .claude
 example
 

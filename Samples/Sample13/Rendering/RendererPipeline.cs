@@ -1,6 +1,7 @@
 using ILGPU;
 using ILGPU.OptiX;
 using ILGPU.OptiX.Interop;
+using ILGPU.OptiX.Pipeline;
 using ILGPU.Runtime;
 using System;
 using System.Linq;
@@ -42,83 +43,66 @@ namespace Sample13
 
         public RendererPipeline(GpuContext gpu)
         {
-            var deviceContext = gpu.DeviceContext;
-
-            var moduleCompileOptions = new OptixModuleCompileOptions()
-            {
-                MaxRegisterCount = 50,
-                OptimizationLevel = OptixCompileOptimizationLevel.OPTIX_COMPILE_OPTIMIZATION_DEFAULT,
-                DebugLevel = OptixCompileDebugLevel.OPTIX_COMPILE_DEBUG_LEVEL_NONE
-            };
-
-            var pipelineCompileOptions = new OptixPipelineCompileOptions()
-            {
-                // Triangle and custom-primitive geometry cannot be combined as multiple
-                // build inputs within a single GAS (confirmed against the OptiX SDK's
-                // own optixSimpleMotionBlur sample, which builds one GAS per build-input
-                // type and combines them via an IAS) - so this is a single level of
-                // instancing (one IAS directly over two GASes), not a single GAS.
-                TraversableGraphFlags = OptixTraversableGraphFlags.OPTIX_TRAVERSABLE_GRAPH_FLAG_ALLOW_SINGLE_LEVEL_INSTANCING,
-                // color(3) + flag(1) + new-ray-origin(3) + new-ray-direction(3) +
-                // throughput-tint(3) + normal(3) + albedo(3) = 19 - see Payloads.cs's
-                // SetContinuePayload/SetTerminalPayload/SetAovPayload and
-                // docs/SAMPLE13_PLAN.md design (e). The shadow ray's own
-                // transmittance(3)+hitCount(1) = 4 payloads fit within this.
-                NumPayloadValues = 19,
-                NumAttributeValues = 2,
-                ExceptionFlags = OptixExceptionFlags.OPTIX_EXCEPTION_FLAG_NONE,
-                PipelineLaunchParamsVariableName = OptixLaunchParams.VariableName
-            };
-
-            var pipelineLinkOptions = new OptixPipelineLinkOptions()
-            {
-                MaxTraceDepth = 2
-            };
+            var deviceContext = gpu.DeviceContext
+                .WithModuleCompileOptions(new OptixModuleCompileOptions()
+                {
+                    MaxRegisterCount = 50,
+                    OptimizationLevel = OptixCompileOptimizationLevel.OPTIX_COMPILE_OPTIMIZATION_DEFAULT,
+                    DebugLevel = OptixCompileDebugLevel.OPTIX_COMPILE_DEBUG_LEVEL_NONE
+                })
+                .WithPipelineCompileOptions(new OptixPipelineCompileOptions()
+                {
+                    // Triangle and custom-primitive geometry cannot be combined as multiple
+                    // build inputs within a single GAS (confirmed against the OptiX SDK's
+                    // own optixSimpleMotionBlur sample, which builds one GAS per build-input
+                    // type and combines them via an IAS) - so this is a single level of
+                    // instancing (one IAS directly over two GASes), not a single GAS.
+                    TraversableGraphFlags = OptixTraversableGraphFlags.OPTIX_TRAVERSABLE_GRAPH_FLAG_ALLOW_SINGLE_LEVEL_INSTANCING,
+                    // color(3) + flag(1) + new-ray-origin(3) + new-ray-direction(3) +
+                    // throughput-tint(3) + normal(3) + albedo(3) = 19 - see Payloads.cs's
+                    // SetContinuePayload/SetTerminalPayload/SetAovPayload and
+                    // docs/SAMPLE13_PLAN.md design (e). The shadow ray's own
+                    // transmittance(3)+hitCount(1) = 4 payloads fit within this.
+                    NumPayloadValues = 19,
+                    NumAttributeValues = 2,
+                    ExceptionFlags = OptixExceptionFlags.OPTIX_EXCEPTION_FLAG_NONE,
+                    PipelineLaunchParamsVariableName = OptixLaunchParams.VariableName
+                })
+                .WithPipelineLinkOptions(new OptixPipelineLinkOptions()
+                {
+                    MaxTraceDepth = 2
+                });
 
             raygenKernel = deviceContext.CreateRaygenKernel<LaunchParams>(
-                RaygenProgram.__raygen__renderFrame,
-                moduleCompileOptions,
-                pipelineCompileOptions);
+                RaygenProgram.__raygen__renderFrame);
 
             radianceMissKernel = deviceContext.CreateMissKernel<LaunchParams>(
-                MissAndShadowPrograms.__miss__radiance,
-                moduleCompileOptions,
-                pipelineCompileOptions);
+                MissAndShadowPrograms.__miss__radiance);
 
             shadowMissKernel = deviceContext.CreateMissKernel<LaunchParams>(
-                MissAndShadowPrograms.__miss__shadow,
-                moduleCompileOptions,
-                pipelineCompileOptions);
+                MissAndShadowPrograms.__miss__shadow);
 
             RadianceHitgroupKernel = deviceContext.CreateHitgroupKernel<LaunchParams>(
                 ClosestHitProgram.__closest__radiance,
                 MissAndShadowPrograms.__anyhit__radiance,
-                null,
-                moduleCompileOptions,
-                pipelineCompileOptions);
+                null);
 
             ShadowHitgroupKernel = deviceContext.CreateHitgroupKernel<LaunchParams>(
                 MissAndShadowPrograms.__closesthit__shadow,
                 MissAndShadowPrograms.__anyhit__shadow,
-                null,
-                moduleCompileOptions,
-                pipelineCompileOptions);
+                null);
 
             void CreateCustomHitgroupKernel(uint kind, Action<LaunchParams> intersectionKernel)
             {
                 RadianceHitgroupKernelsCustom[kind] = deviceContext.CreateHitgroupKernel<LaunchParams>(
                     ClosestHitProgram.__closest__radiance,
                     MissAndShadowPrograms.__anyhit__radiance,
-                    intersectionKernel,
-                    moduleCompileOptions,
-                    pipelineCompileOptions);
+                    intersectionKernel);
 
                 ShadowHitgroupKernelsCustom[kind] = deviceContext.CreateHitgroupKernel<LaunchParams>(
                     MissAndShadowPrograms.__closesthit__shadow,
                     MissAndShadowPrograms.__anyhit__shadow,
-                    intersectionKernel,
-                    moduleCompileOptions,
-                    pipelineCompileOptions);
+                    intersectionKernel);
             }
 
             CreateCustomHitgroupKernel(IntersectionPrograms.HitKindSphere, IntersectionPrograms.__intersection__sphere);
@@ -132,29 +116,24 @@ namespace Sample13
             RadianceHitgroupKernelVolumeGrid = deviceContext.CreateHitgroupKernel<LaunchParams>(
                 ClosestHitProgram.__closest__radiance,
                 MissAndShadowPrograms.__anyhit__radiance,
-                IntersectionPrograms.__intersection__volumeGrid,
-                moduleCompileOptions,
-                pipelineCompileOptions);
+                IntersectionPrograms.__intersection__volumeGrid);
 
             ShadowHitgroupKernelVolumeGrid = deviceContext.CreateHitgroupKernel<LaunchParams>(
                 MissAndShadowPrograms.__closesthit__shadow,
                 MissAndShadowPrograms.__anyhit__shadow,
-                IntersectionPrograms.__intersection__volumeGrid,
-                moduleCompileOptions,
-                pipelineCompileOptions);
+                IntersectionPrograms.__intersection__volumeGrid);
 
             var raygenKernels = new[] { raygenKernel };
             var missKernels = new[] { radianceMissKernel, shadowMissKernel };
-            var allKernels = raygenKernels.Concat(missKernels)
-                .Concat(new[] { RadianceHitgroupKernel, ShadowHitgroupKernel, RadianceHitgroupKernelVolumeGrid, ShadowHitgroupKernelVolumeGrid })
-                .Concat(RadianceHitgroupKernelsCustom)
-                .Concat(ShadowHitgroupKernelsCustom)
-                .ToArray();
 
-            Pipeline = deviceContext.CreatePipeline(
-                pipelineCompileOptions,
-                pipelineLinkOptions,
-                allKernels.Select(x => x.ProgramGroup).ToArray());
+            // Build pipeline using builder
+            var pipelineBuilder = new OptixPipelineBuilder();
+            pipelineBuilder.AddKernels(raygenKernels);
+            pipelineBuilder.AddKernels(missKernels);
+            pipelineBuilder.AddKernels(new[] { RadianceHitgroupKernel, ShadowHitgroupKernel, RadianceHitgroupKernelVolumeGrid, ShadowHitgroupKernelVolumeGrid });
+            pipelineBuilder.AddKernels(RadianceHitgroupKernelsCustom);
+            pipelineBuilder.AddKernels(ShadowHitgroupKernelsCustom);
+            Pipeline = pipelineBuilder.Build(deviceContext);
 
             // maxTraversableGraphDepth = 2: our traversable graph is one IAS directly
             // over GASes (triangles/custom primitives), not a single bare GAS - per

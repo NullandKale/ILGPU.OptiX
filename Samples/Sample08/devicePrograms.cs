@@ -1,6 +1,7 @@
 using ILGPU;
 using ILGPU.Algorithms;
 using ILGPU.OptiX;
+using System.Numerics;
 
 namespace Sample08
 {
@@ -67,13 +68,20 @@ namespace Sample08
             // CudaTex2D.cs).
             uint primId = OptixGetPrimitiveIndex.Value;
             Vec3i tri = launchParams.Indices[primId];
-            var (bu, bv) = OptixGetTriangleBarycentrics.Value;
-            float bw = 1f - bu - bv;
+            var (bw, bu, bv) = OptixHitProgramHelpers.GetTriangleBarycentrics();
 
             Vec3 n0 = launchParams.Normals[tri.x];
             Vec3 n1 = launchParams.Normals[tri.y];
             Vec3 n2 = launchParams.Normals[tri.z];
-            Vec3 normal = Vec3.unitVector((bw * n0) + (bu * n1) + (bv * n2));
+            var normalV3 = OptixHitProgramHelpers.InterpolateAttribute(
+                new Vector3(n0.x, n0.y, n0.z),
+                new Vector3(n1.x, n1.y, n1.z),
+                new Vector3(n2.x, n2.y, n2.z),
+                bw, bu, bv);
+            Vec3 normal = new Vec3(
+                Vector3.Normalize(normalV3).X,
+                Vector3.Normalize(normalV3).Y,
+                Vector3.Normalize(normalV3).Z);
 
             MaterialSbtData* sbtData = (MaterialSbtData*)OptixGetSbtDataPointer.Value;
             Vec3 diffuseColor = sbtData->Color;
@@ -103,9 +111,9 @@ namespace Sample08
 
         private static void SetPRD(Vec3 color)
         {
-            OptixPayload.Payload0 = Interop.FloatAsInt(color.x);
-            OptixPayload.Payload1 = Interop.FloatAsInt(color.y);
-            OptixPayload.Payload2 = Interop.FloatAsInt(color.z);
+            OptixPayloadInterop.SetFloat(0, color.x);
+            OptixPayloadInterop.SetFloat(1, color.y);
+            OptixPayloadInterop.SetFloat(2, color.z);
         }
 
         public static void flipBitmap(Index1D index, int width, int height, ArrayView<byte> source, ArrayView<byte> dest)

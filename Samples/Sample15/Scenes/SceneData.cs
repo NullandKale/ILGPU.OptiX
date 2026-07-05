@@ -9,6 +9,7 @@
 // Source License. See LICENSE.txt for details.
 // ---------------------------------------------------------------------------------------
 
+using MeshRange = ILGPU.OptiX.Pipeline.OptixMeshRange;
 using System;
 
 namespace Sample15
@@ -41,22 +42,6 @@ namespace Sample15
         public float MinMult;
         public float MaxMult;
         public float Speed;
-    }
-
-    public struct BobbingSphereAnim
-    {
-        public int SphereIndex;
-        public float BaseY;
-        public float Amplitude;
-        public float Speed;
-        public float Phase;
-    }
-
-    // See SceneData.MeshRanges.
-    public struct MeshRange
-    {
-        public int IndexStart;
-        public int IndexCount;
     }
 
     // Host-side POCO a Scenes.cs builder method returns; SampleRenderer.SwitchToScene
@@ -110,38 +95,6 @@ namespace Sample15
         public string[] MaterialNormalTexturePaths = Array.Empty<string>();
         public string[] MaterialOrmTexturePaths = Array.Empty<string>();
 
-        // Custom primitives - each *MaterialIds array indexes into the SAME shared
-        // Materials[] list as triangles (one merged material palette per scene, not a
-        // separate one per primitive kind).
-        public SphereData[] Spheres = Array.Empty<SphereData>();
-        public uint[] SphereMaterialIds = Array.Empty<uint>();
-
-        public BoxData[] Boxes = Array.Empty<BoxData>();
-        public uint[] BoxMaterialIds = Array.Empty<uint>();
-
-        public CylinderYData[] CylindersY = Array.Empty<CylinderYData>();
-        public uint[] CylinderYMaterialIds = Array.Empty<uint>();
-
-        public DiskData[] Disks = Array.Empty<DiskData>();
-        public uint[] DiskMaterialIds = Array.Empty<uint>();
-
-        public RectData[] XYRects = Array.Empty<RectData>();
-        public uint[] XYRectMaterialIds = Array.Empty<uint>();
-
-        public RectData[] XZRects = Array.Empty<RectData>();
-        public uint[] XZRectMaterialIds = Array.Empty<uint>();
-
-        public RectData[] YZRects = Array.Empty<RectData>();
-        public uint[] YZRectMaterialIds = Array.Empty<uint>();
-
-        // Volume grid - one flat row-major (x*Dims.y*Dims.z + y*Dims.z + z) array; 0 =
-        // empty/air, N = Materials[N-1] (see devicePrograms.cs's ShadeVolumeGrid).
-        // VoxelMaterialIds.Length == 0 means "no volume grid in this scene".
-        public uint[] VoxelMaterialIds = Array.Empty<uint>();
-        public Vec3 VolumeGridMin;
-        public Vec3 VolumeVoxelSize = new Vec3(1f, 1f, 1f);
-        public Vec3i VolumeDims;
-
         public PointLightGpu[] Lights = Array.Empty<PointLightGpu>();
 
         // NEE light list (docs/SAMPLE15_PLAN.md Milestone M4) - computed by
@@ -154,19 +107,14 @@ namespace Sample15
         public float[] NeeLightCdf = Array.Empty<float>();
         public float[] NeeLightAreaPdf = Array.Empty<float>();
         public Vec3 AmbientColor = new Vec3(1f, 1f, 1f);
-        public float AmbientIntensity = 0.05f;
+        public float AmbientIntensity = 0.1f;
 
         // Per-frame animation (museum/radial-museum scenes only) - see
-        // SampleRenderer.ApplyAnimation. BobbingSpheres requires refitting the custom-
-        // primitives GAS every frame (OPTIX_BUILD_OPERATION_UPDATE), so its presence
-        // also drives BuildOrUpdateCustomPrimitivesGas's ALLOW_UPDATE flag and forces
-        // progressive accumulation off for the scene (see HasAnimatedGeometry/render()).
+        // SampleRenderer.ApplyAnimation.
         public OrbitingLightAnim[] OrbitingLights = Array.Empty<OrbitingLightAnim>();
         public PulsingLightAnim[] PulsingLights = Array.Empty<PulsingLightAnim>();
-        public BobbingSphereAnim[] BobbingSpheres = Array.Empty<BobbingSphereAnim>();
 
-        public bool HasAnimatedGeometry => BobbingSpheres.Length > 0;
-        public bool HasAnyAnimation => OrbitingLights.Length > 0 || PulsingLights.Length > 0 || BobbingSpheres.Length > 0;
+        public bool HasAnyAnimation => OrbitingLights.Length > 0 || PulsingLights.Length > 0;
 
         public Vec3 BackgroundTop = new Vec3(0.4f, 0.55f, 0.8f);
         public Vec3 BackgroundBottom = new Vec3(0.05f, 0.05f, 0.08f);

@@ -56,58 +56,116 @@ namespace ILGPU.OptiX
 
         #endregion
 
+        #region Instance
+
+        // OptixAPI.Current is a process-wide singleton, so Init()/Uninit() must be
+        // ref-counted rather than unconditionally loading/freeing nvoptix.dll and
+        // clearing functionTable/the delegate cache on every call - without this, a
+        // second independent caller's Uninit() (e.g. a second OptixContext, or any
+        // future multi-context/multi-window scenario) would free the module and zero
+        // out functionTable out from under a still-live first caller's pipelines/
+        // modules, which would then call through stale/zeroed function pointers.
+        private readonly object initLock = new object();
+        private int initRefCount;
+
+        #endregion
+
         #region Methods
 
         /// <summary>
-        /// Initializes the Optix API.
+        /// Initializes the Optix API. Safe to call more than once (e.g. from multiple
+        /// independent <see cref="OptixContext"/> users) - reference-counted against
+        /// the matching number of <see cref="Uninit"/> calls.
         /// </summary>
         /// <returns>The OptiX result.</returns>
         public OptixResult Init()
         {
-            hmodule = LoadOptixDLL();
-            if (hmodule == IntPtr.Zero)
-                return OptixResult.OPTIX_ERROR_LIBRARY_NOT_FOUND;
+            lock (initLock)
+            {
+                if (initRefCount > 0)
+                {
+                    initRefCount++;
+                    return OptixResult.OPTIX_SUCCESS;
+                }
 
-            var proc = NativeMethods.GetProcAddressA(hmodule, "optixQueryFunctionTable");
-            if (proc == IntPtr.Zero)
-                return OptixResult.OPTIX_ERROR_ENTRY_SYMBOL_NOT_FOUND;
+                hmodule = LoadOptixDLL();
+                if (hmodule == IntPtr.Zero)
+                    return OptixResult.OPTIX_ERROR_LIBRARY_NOT_FOUND;
 
-            var functionTableSize = Marshal.SizeOf<OptixFunctionTable>();
-            Debug.Assert(
-                functionTableSize == IntPtr.Size * 52,
-                "OptixFunctionTable field count no longer matches the native " +
-                "OptixFunctionTable (52 function pointers in OptiX SDK 9.0.0) - " +
-                "re-check optix_function_table.h. See docs/OPTIX_ROADMAP.md.");
-            using var functionTablePtr = SafeHGlobal.Alloc(functionTableSize);
+                var proc = NativeMethods.GetProcAddressA(hmodule, "optixQueryFunctionTable");
+                if (proc == IntPtr.Zero)
+                {
+                    NativeMethods.FreeLibrary(hmodule);
+                    hmodule = IntPtr.Zero;
+                    return OptixResult.OPTIX_ERROR_ENTRY_SYMBOL_NOT_FOUND;
+                }
 
-            var query =
-                Marshal.GetDelegateForFunctionPointer<OptixQueryFunctionTable>(proc);
-            var result = query(
-                OPTIX_ABI_VERSION,
-                0,
-                IntPtr.Zero,
-                IntPtr.Zero,
-                functionTablePtr,
-                (ulong)functionTableSize);
-            functionTable = Marshal.PtrToStructure<OptixFunctionTable>(functionTablePtr);
-            return result;
+                var functionTableSize = Marshal.SizeOf<OptixFunctionTable>();
+                Debug.Assert(
+                    functionTableSize == IntPtr.Size * 52,
+                    "OptixFunctionTable field count no longer matches the native " +
+                    "OptixFunctionTable (52 function pointers in OptiX SDK 9.0.0) - " +
+                    "re-check optix_function_table.h. See docs/OPTIX_ROADMAP.md.");
+                using var functionTablePtr = SafeHGlobal.Alloc(functionTableSize);
+
+                var query =
+                    Marshal.GetDelegateForFunctionPointer<OptixQueryFunctionTable>(proc);
+                var result = query(
+                    OPTIX_ABI_VERSION,
+                    0,
+                    IntPtr.Zero,
+                    IntPtr.Zero,
+                    functionTablePtr,
+                    (ulong)functionTableSize);
+
+                if (result != OptixResult.OPTIX_SUCCESS)
+                {
+                    NativeMethods.FreeLibrary(hmodule);
+                    hmodule = IntPtr.Zero;
+                    return result;
+                }
+
+                functionTable = Marshal.PtrToStructure<OptixFunctionTable>(functionTablePtr);
+                initRefCount = 1;
+                return result;
+            }
         }
 
         /// <summary>
-        /// Uninitializes the OptiX API.
+        /// Uninitializes the OptiX API. Must be called once per successful
+        /// <see cref="Init"/> call - the module is only actually unloaded once the
+        /// matching number of <see cref="Uninit"/> calls has been made, so one
+        /// caller's Uninit() cannot invalidate a still-live second caller's function
+        /// pointers. A call with no matching outstanding Init() is a no-op.
         /// </summary>
         /// <returns>The OptiX result.</returns>
         public OptixResult Uninit()
         {
-            functionTable = default;
-
-            if (hmodule != IntPtr.Zero)
+            lock (initLock)
             {
-                NativeMethods.FreeLibrary(hmodule);
-                hmodule = IntPtr.Zero;
-            }
+                if (initRefCount == 0)
+                    return OptixResult.OPTIX_SUCCESS;
 
-            return OptixResult.OPTIX_SUCCESS;
+                if (--initRefCount > 0)
+                    return OptixResult.OPTIX_SUCCESS;
+
+                functionTable = default;
+                // Cached delegates (see OptixAPI.cs's "Delegate cache" region) are only
+                // valid for as long as the function pointers they wrap point into a
+                // loaded nvoptix.dll - clear them here so a later Init() re-resolves
+                // fresh ones against the (possibly different) reloaded module, rather
+                // than calling into whatever the OS already unloaded/reused that
+                // address for.
+                ClearDelegateCache();
+
+                if (hmodule != IntPtr.Zero)
+                {
+                    NativeMethods.FreeLibrary(hmodule);
+                    hmodule = IntPtr.Zero;
+                }
+
+                return OptixResult.OPTIX_SUCCESS;
+            }
         }
 
         /// <summary>

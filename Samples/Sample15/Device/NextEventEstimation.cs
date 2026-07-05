@@ -28,19 +28,22 @@ namespace Sample15
             if (numLights == 0)
                 return new Vec3(0f, 0f, 0f);
 
-            // Linear CDF scan - light counts in this sample's scenes are small (a
-            // handful of point lights plus a few dozen emissive triangles at most), so
-            // a binary search isn't worth the extra branching.
+            // Binary search over the (monotonically increasing) CDF - O(log N) instead
+            // of a linear scan. Scenes like Sponza register one light-list entry per
+            // emissive triangle (LightList.cs), which can reach tens of thousands of
+            // entries (e.g. Sponza's hand-promoted emissive vases), where a linear scan
+            // would cost thousands of iterations per NEE sample per bounce per pixel.
             float u = rng.Next();
-            int lightIdx = numLights - 1;
-            for (int i = 0; i < numLights; i++)
+            int lo = 0, hi = numLights - 1;
+            while (lo < hi)
             {
-                if (u <= launchParams.NeeLightCdf[i])
-                {
-                    lightIdx = i;
-                    break;
-                }
+                int mid = (lo + hi) / 2;
+                if (u <= launchParams.NeeLightCdf[mid])
+                    hi = mid;
+                else
+                    lo = mid + 1;
             }
+            int lightIdx = lo;
 
             LightGpu light = launchParams.NeeLights[lightIdx];
             if (light.Pdf <= 0f)

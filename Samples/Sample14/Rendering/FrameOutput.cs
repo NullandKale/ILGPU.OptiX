@@ -1,5 +1,6 @@
 using ILGPU;
 using ILGPU.OptiX;
+using ILGPU.OptiX.Denoising;
 using ILGPU.OptiX.Interop;
 using ILGPU.Runtime;
 using ILGPU.Runtime.Cuda;
@@ -19,7 +20,6 @@ namespace Sample14
     public sealed class FrameOutput : IDisposable
     {
         readonly GpuContext gpu;
-        readonly OptixDenoiser denoiser;
         readonly Action<Index1D, int, int, ArrayView<Vec4>, ArrayView<byte>> tonemapAndFlip;
         readonly Stopwatch stepStopwatch = new Stopwatch();
 
@@ -31,8 +31,7 @@ namespace Sample14
         public MemoryBuffer1D<Vec4, Stride1D.Dense> NormalBuffer { get; private set; }
         MemoryBuffer1D<Vec4, Stride1D.Dense> denoisedColorBuffer;
         MemoryBuffer1D<byte, Stride1D.Dense> denoiserIntensity;
-        MemoryBuffer1D<byte, Stride1D.Dense> denoiserState;
-        MemoryBuffer1D<byte, Stride1D.Dense> denoiserScratch;
+        BuiltDenoiser builtDenoiser;
 
         CudaGlInteropDisplayBuffer interopBuffer;
         public int GlTextureHandle => interopBuffer.GlTextureHandle;
@@ -41,14 +40,7 @@ namespace Sample14
         {
             this.gpu = gpu;
 
-            // Guide-layer denoiser (matches Sample12/Sample13's OPTIX_DENOISER_MODEL_KIND_LDR +
-            // GuideAlbedo/GuideNormal setup) - one denoiser instance works across every
-            // scene switch since it only depends on width/height (set up in Resize),
-            // not on scene content.
-            denoiser = gpu.DeviceContext.CreateDenoiser(
-                OptixDenoiserModelKind.OPTIX_DENOISER_MODEL_KIND_LDR,
-                new OptixDenoiserOptions { GuideAlbedo = 1, GuideNormal = 1 });
-
+            // Denoiser will be created in Resize() when dimensions are known
             tonemapAndFlip = gpu.Accelerator.LoadAutoGroupedStreamKernel<Index1D, int, int, ArrayView<Vec4>, ArrayView<byte>>(TonemapKernel.tonemapAndFlip);
         }
 
@@ -73,20 +65,13 @@ namespace Sample14
             denoiserIntensity?.Dispose();
             denoiserIntensity = accelerator.Allocate1D<byte>(sizeof(float));
 
-            denoiserState?.Dispose();
-            denoiserScratch?.Dispose();
-            var denoiserSizes = denoiser.ComputeMemoryResources((uint)width, (uint)height);
-            denoiserState = accelerator.Allocate1D<byte>((long)denoiserSizes.StateSizeInBytes);
-            ulong denoiserScratchSize = Math.Max(denoiserSizes.WithOverlapScratchSizeInBytes, denoiserSizes.WithoutOverlapScratchSizeInBytes);
-            denoiserScratch = accelerator.Allocate1D<byte>((long)denoiserScratchSize);
-            denoiser.Setup(
-                gpu.DefaultStreamPtr,
-                (uint)width,
-                (uint)height,
-                denoiserState.NativePtr,
-                (ulong)denoiserState.LengthInBytes,
-                denoiserScratch.NativePtr,
-                (ulong)denoiserScratch.LengthInBytes);
+            builtDenoiser?.Dispose();
+            builtDenoiser = new OptixDenoiserBuilder()
+                .WithDeviceContext(gpu.DeviceContext)
+                .WithAccelerator(accelerator)
+                .WithImageDimensions((uint)width, (uint)height)
+                .WithDenoiserOptions(new OptixDenoiserOptions { GuideAlbedo = 1, GuideNormal = 1 })
+                .Build();
         }
 
         // Restarts progressive accumulation (scene switch / camera move).
@@ -115,32 +100,36 @@ namespace Sample14
                 var colorImage = MakeImage(HdrColorBuffer);
 
                 stepStopwatch.Restart();
-                denoiser.ComputeIntensity(
-                    gpu.DefaultStreamPtr,
-                    colorImage,
-                    denoiserIntensity.NativePtr,
-                    denoiserScratch.NativePtr,
-                    (ulong)denoiserScratch.LengthInBytes);
-
-                var denoiserParams = new OptixDenoiserParams
+                if (builtDenoiser != null)
                 {
-                    HdrIntensity = (ulong)denoiserIntensity.NativePtr.ToInt64(),
-                    HdrAverageColor = 0,
-                    BlendFactor = accumulate ? 1f / frameId : 0f,
-                    TemporalModeUsePreviousLayers = 0
-                };
-                var guideLayer = new OptixDenoiserGuideLayer { Albedo = MakeImage(AlbedoBuffer), Normal = MakeImage(NormalBuffer) };
-                var layer = new OptixDenoiserLayer { Input = colorImage, Output = MakeImage(denoisedColorBuffer) };
+                    var cudaStream = (CudaStream)gpu.Accelerator.DefaultStream;
+                    builtDenoiser.Denoiser.ComputeIntensity(
+                        cudaStream.StreamPtr,
+                        colorImage,
+                        denoiserIntensity.NativePtr,
+                        builtDenoiser.ScratchBuffer.NativePtr,
+                        (ulong)builtDenoiser.ScratchBuffer.LengthInBytes);
 
-                denoiser.Invoke(
-                    gpu.DefaultStreamPtr,
-                    denoiserParams,
-                    denoiserState.NativePtr,
-                    (ulong)denoiserState.LengthInBytes,
-                    guideLayer,
-                    new[] { layer },
-                    denoiserScratch.NativePtr,
-                    (ulong)denoiserScratch.LengthInBytes);
+                    var denoiserParams = new OptixDenoiserParams
+                    {
+                        HdrIntensity = (ulong)denoiserIntensity.NativePtr.ToInt64(),
+                        HdrAverageColor = 0,
+                        BlendFactor = accumulate ? 1f / frameId : 0f,
+                        TemporalModeUsePreviousLayers = 0
+                    };
+                    var guideLayer = new OptixDenoiserGuideLayer { Albedo = MakeImage(AlbedoBuffer), Normal = MakeImage(NormalBuffer) };
+                    var layer = new OptixDenoiserLayer { Input = colorImage, Output = MakeImage(denoisedColorBuffer) };
+
+                    builtDenoiser.Denoiser.Invoke(
+                        cudaStream.StreamPtr,
+                        denoiserParams,
+                        builtDenoiser.StateBuffer.NativePtr,
+                        (ulong)builtDenoiser.StateBuffer.LengthInBytes,
+                        guideLayer,
+                        new[] { layer },
+                        builtDenoiser.ScratchBuffer.NativePtr,
+                        (ulong)builtDenoiser.ScratchBuffer.LengthInBytes);
+                }
                 gpu.Accelerator.Synchronize();
                 denoiseMs = stepStopwatch.Elapsed.TotalMilliseconds;
                 tonemapSource = denoisedColorBuffer;
@@ -170,9 +159,7 @@ namespace Sample14
         public void Dispose()
         {
             denoiserIntensity?.Dispose();
-            denoiserScratch?.Dispose();
-            denoiserState?.Dispose();
-            denoiser.Dispose();
+            builtDenoiser?.Dispose();
 
             interopBuffer?.Dispose();
             denoisedColorBuffer.Dispose();

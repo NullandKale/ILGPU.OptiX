@@ -40,6 +40,10 @@ namespace Sample10
         {
             InitializeComponent();
 
+            Console.WriteLine("Controls: Left-drag orbit, Right-drag dolly (zoom), Middle-drag pan.");
+            Console.WriteLine("Arrow keys move the point light in the XZ plane, PageUp/PageDown move it vertically");
+            Console.WriteLine("(the window title updates with the light's new position).");
+
             wBitmap = new WriteableBitmap(width, height, 96, 96, PixelFormats.Bgra32, null);
             rect = new Int32Rect(0, 0, width, height);
             Frame.Source = wBitmap;

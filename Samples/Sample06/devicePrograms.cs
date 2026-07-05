@@ -91,10 +91,16 @@ namespace Sample06
             Vec3 a = vertices[tri.x];
             Vec3 b = vertices[tri.y];
             Vec3 c = vertices[tri.z];
-            Vec3 normal = Vec3.unitVector(Vec3.cross(b - a, c - a));
 
             var (dx, dy, dz) = OptixGetWorldRayDirection.Value;
             Vec3 rayDir = new Vec3(dx, dy, dz);
+
+            // Use OptixHitProgramHelpers for geometric normal computation
+            var normalV3 = OptixHitProgramHelpers.GetGeometricNormal(
+                new System.Numerics.Vector3(a.x, a.y, a.z),
+                new System.Numerics.Vector3(b.x, b.y, b.z),
+                new System.Numerics.Vector3(c.x, c.y, c.z));
+            Vec3 normal = new Vec3(normalV3.X, normalV3.Y, normalV3.Z);
 
             float cosDN = 0.2f + (0.8f * XMath.Abs(Vec3.dot(rayDir, normal)));
             SetPRD(cosDN * color);
@@ -105,9 +111,9 @@ namespace Sample06
 
         private static void SetPRD(Vec3 color)
         {
-            OptixPayload.Payload0 = Interop.FloatAsInt(color.x);
-            OptixPayload.Payload1 = Interop.FloatAsInt(color.y);
-            OptixPayload.Payload2 = Interop.FloatAsInt(color.z);
+            OptixPayloadInterop.SetFloat(0, color.x);
+            OptixPayloadInterop.SetFloat(1, color.y);
+            OptixPayloadInterop.SetFloat(2, color.z);
         }
 
         public static void flipBitmap(Index1D index, int width, int height, ArrayView<byte> source, ArrayView<byte> dest)

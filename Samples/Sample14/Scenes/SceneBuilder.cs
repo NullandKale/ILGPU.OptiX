@@ -1,3 +1,4 @@
+using MeshRange = ILGPU.OptiX.Pipeline.OptixMeshRange;
 using System;
 using System.Collections.Generic;
 using System.IO;

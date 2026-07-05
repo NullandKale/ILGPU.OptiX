@@ -10,7 +10,6 @@
 // ---------------------------------------------------------------------------------------
 
 using ILGPU.OptiX;
-using System;
 using System.Runtime.InteropServices;
 
 namespace Sample02
@@ -19,6 +18,8 @@ namespace Sample02
     public unsafe struct RaygenRecord
     {
         public fixed byte Header[OptixAPI.OPTIX_SBT_RECORD_HEADER_SIZE];
-        public IntPtr Data;
+        // just a dummy value - later examples will use more interesting
+        // data here
+        public int ObjectID;
     }
 }

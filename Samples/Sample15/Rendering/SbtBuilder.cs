@@ -3,6 +3,7 @@ using ILGPU.OptiX;
 using ILGPU.OptiX.Interop;
 using ILGPU.Runtime;
 using ILGPU.Runtime.Cuda;
+using MeshRange = ILGPU.OptiX.Pipeline.OptixMeshRange;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
@@ -11,9 +12,8 @@ namespace Sample15
 {
     // The three SBT record layouts plus everything that computes with the hitgroup
     // record ordering live together in this file on purpose: HitgroupRecord's field
-    // order, SbtBuilder.Build's record layout, and the IAS SbtOffset math (via
-    // SbtLayout, also used by AccelStructureBuilder) are one invariant - change one
-    // and the others must follow.
+    // order and SbtBuilder.Build's record layout are one invariant - change one and the
+    // other must follow.
 
     [StructLayout(LayoutKind.Sequential, Pack = OptixAPI.OPTIX_SBT_RECORD_ALIGNMENT, Size = 48)]
     public unsafe struct RaygenRecord
@@ -69,36 +69,26 @@ namespace Sample15
     /// <summary>
     /// The single source of truth for how a scene's triangles map onto GAS build
     /// inputs and hitgroup SBT record ranges - shared by <see cref="SbtBuilder"/>,
-    /// <see cref="AccelStructureBuilder"/>, and the renderer's HUD summary.
+    /// <see cref="AccelStructureBuilder"/>, and the renderer's HUD summary. Thin
+    /// sample-specific adapter over <see cref="ILGPU.OptiX.Pipeline.OptixSbtLayout"/> -
+    /// the actual range-resolution logic used to be copy-pasted identically into this
+    /// file by Sample13/14/15; it's now defined once in the shared library.
     /// </summary>
     public static class SbtLayout
     {
-        // UseMergedTrianglesGas==true (the default) always returns a single range
-        // spanning the whole Indices array, regardless of what SceneData.MeshRanges
-        // tracked - the original single-build-input behavior. Otherwise, empty/unset
-        // SceneData.MeshRanges still means "treat the whole Indices array as a single
-        // implicit mesh" (every scene that doesn't explicitly track mesh boundaries -
-        // procedural/test/CSG scenes, the single-mesh scenes). Shared by the triangles
-        // GAS build, the hitgroup SBT build, and the IAS SbtOffset math so this
-        // fallback logic lives in one place.
         public static MeshRange[] GetTriangleMeshRanges(SceneData scene, bool useMergedTrianglesGas) =>
-            (!useMergedTrianglesGas && scene.MeshRanges != null && scene.MeshRanges.Length > 0)
-                ? scene.MeshRanges
-                : new[] { new MeshRange { IndexStart = 0, IndexCount = scene.Indices.Length } };
+            ILGPU.OptiX.Pipeline.OptixSbtLayout.GetTriangleMeshRanges(
+                scene.Indices.Length, scene.MeshRanges, useMergedTrianglesGas);
     }
 
     /// <summary>
     /// Builds the per-scene hitgroup portion of the shader binding table.
     ///
     /// Hitgroup records are laid out as [triangle mat0-radiance, mat0-shadow, mat1-
-    /// radiance, mat1-shadow, ...] repeated per triangle mesh build input, followed by
-    /// the same per-material sequence again for each custom-primitive kind actually
-    /// present in the scene, in canonical kind order (Sphere, Box, CylinderY, Disk,
-    /// XYRect, XZRect, YZRect - matching IntersectionPrograms.HitKind* and the
-    /// custom-primitives GAS's build-input order). This relies on OptiX automatically
-    /// summing NumSbtRecords across build inputs within a GAS to compute each build
-    /// input's base SBT-GAS-index, so each build input's own SbtIndexOffsetBuffer
-    /// values stay local/0-based - see docs/SAMPLE13_PLAN.md.
+    /// radiance, mat1-shadow, ...] repeated per triangle mesh build input. This relies
+    /// on OptiX automatically summing NumSbtRecords across build inputs within a GAS to
+    /// compute each build input's base SBT-GAS-index, so each build input's own
+    /// SbtIndexOffsetBuffer values stay local/0-based - see docs/SAMPLE13_PLAN.md.
     /// </summary>
     public sealed class SbtBuilder
     {
@@ -129,14 +119,8 @@ namespace Sample15
         {
             bool hasTriangles = scene.Vertices.Length > 0 && scene.Indices.Length > 0;
             // One full Materials.Length radiance+shadow block per triangle mesh build
-            // input (see SbtLayout.GetTriangleMeshRanges), not just one for the whole
-            // scene - mirrors the per-custom-primitive-kind blocks below.
+            // input (see SbtLayout.GetTriangleMeshRanges).
             int triangleMeshCount = hasTriangles ? triangleMeshRanges.Length : 0;
-            int[] customCounts =
-            {
-                scene.Spheres.Length, scene.Boxes.Length, scene.CylindersY.Length, scene.Disks.Length,
-                scene.XYRects.Length, scene.XZRects.Length, scene.YZRects.Length,
-            };
 
             var hitgroupKernelsList = new List<OptixKernel>();
             for (var m = 0; m < triangleMeshCount; m++)
@@ -146,27 +130,6 @@ namespace Sample15
                     hitgroupKernelsList.Add(pipeline.RadianceHitgroupKernel);
                     hitgroupKernelsList.Add(pipeline.ShadowHitgroupKernel);
                 }
-            }
-            for (var kind = 0; kind < customCounts.Length; kind++)
-            {
-                if (customCounts[kind] == 0)
-                    continue;
-                for (var i = 0; i < scene.Materials.Length; i++)
-                {
-                    hitgroupKernelsList.Add(pipeline.RadianceHitgroupKernelsCustom[kind]);
-                    hitgroupKernelsList.Add(pipeline.ShadowHitgroupKernelsCustom[kind]);
-                }
-            }
-
-            bool hasVolumeGrid = scene.VoxelMaterialIds.Length > 0;
-            if (hasVolumeGrid)
-            {
-                // NumSbtRecords=1 for this build input (see the custom-primitives GAS
-                // build) - its record's own custom data is never read (ShadeVolumeGrid
-                // looks up materials directly via LaunchParams.Materials instead), so
-                // only the kernel entries (for header/program-group dispatch) matter.
-                hitgroupKernelsList.Add(pipeline.RadianceHitgroupKernelVolumeGrid);
-                hitgroupKernelsList.Add(pipeline.ShadowHitgroupKernelVolumeGrid);
             }
 
             var hitgroupRecordsArray = OptixSbt.PackRecords<HitgroupRecord>(hitgroupKernelsList);
@@ -225,14 +188,7 @@ namespace Sample15
             for (var m = 0; m < triangleMeshCount; m++)
             {
                 FillMaterialRecords(recordIndex);
-                recordIndex += scene.Materials.Length * 2;
-            }
-            for (var kind = 0; kind < customCounts.Length; kind++)
-            {
-                if (customCounts[kind] == 0)
-                    continue;
-                FillMaterialRecords(recordIndex);
-                recordIndex += scene.Materials.Length * 2;
+                recordIndex += scene.Materials.Length * (int)Payloads.RAY_TYPE_COUNT;
             }
 
             hitgroupRecordsBuffer = accelerator.Allocate1D(hitgroupRecordsArray);

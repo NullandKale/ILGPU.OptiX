@@ -40,6 +40,9 @@ namespace Sample05
         {
             InitializeComponent();
 
+            Console.WriteLine("Sample05: single triangle mesh (floor + cube), one shader-binding-table record.");
+            Console.WriteLine("Controls: Left-drag orbit, Right-drag dolly (zoom), Middle-drag pan.");
+
             wBitmap = new WriteableBitmap(width, height, 96, 96, PixelFormats.Bgra32, null);
             rect = new Int32Rect(0, 0, width, height);
             Frame.Source = wBitmap;

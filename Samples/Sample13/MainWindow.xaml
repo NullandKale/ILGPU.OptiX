@@ -102,7 +102,7 @@
                         <LineBreak/>
                         <Run Text="LMB + Mouse: Look"/>
                         <LineBreak/>
-                        <Run Text="M: GAS Mode"/>
+                        <Run Text="M: acceleration-structure build mode (perf only, no visual change - see console)"/>
                         <LineBreak/>
                         <Run Text="F1: Toggle UI"/>
                     </TextBlock>

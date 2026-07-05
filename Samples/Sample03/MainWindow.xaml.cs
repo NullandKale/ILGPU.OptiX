@@ -37,6 +37,9 @@ namespace Sample03
         {
             InitializeComponent();
 
+            Console.WriteLine("Sample03: animated color-gradient test pattern - no controls, just confirms the");
+            Console.WriteLine("OptiX launch -> WPF WriteableBitmap pipeline is rendering continuously. Close the window to exit.");
+
             wBitmap = new WriteableBitmap(width, height, 96, 96, PixelFormats.Bgra32, null);
             rect = new Int32Rect(0, 0, width, height);
             Frame.Source = wBitmap;

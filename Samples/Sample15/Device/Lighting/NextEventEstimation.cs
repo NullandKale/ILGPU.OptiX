@@ -10,7 +10,7 @@ namespace Sample15
     /// can never land on a measure-zero point, so their NEE sample is always the sole
     /// estimator); emissive triangles are finite-pdf area lights, MIS-combined against
     /// the surface's own BSDF pdf via the power heuristic, symmetric with the
-    /// BSDF-sampled-ray-hits-a-light case handled in ShadingHelpers.ShadeSurface.
+    /// BSDF-sampled-ray-hits-a-light case handled in MaterialShading.ShadeSurface.
     /// </summary>
     internal static class NextEventEstimation
     {
@@ -68,7 +68,7 @@ namespace Sample15
             }
             else if (light.Kind == LightGpu.KindEnvMap)
             {
-                // "At infinity" - ShadowTransmittance's shadow ray needs a tmax well
+                // "At infinity" - ShadowRay.Trace's shadow ray needs a tmax well
                 // past any scene geometry, matching the camera/bounce rays' own 1e20f
                 // ceiling in RaygenProgram.cs (one order of magnitude down so its own
                 // (1 - 1e-3) tmax shrink still leaves ample margin).
@@ -121,7 +121,7 @@ namespace Sample15
             if (NdotL <= 0f)
                 return new Vec3(0f, 0f, 0f);
 
-            Vec3 transmittance = ShadingHelpers.ShadowTransmittance(launchParams, surfPos, outwardNormal, lightDir, dist);
+            Vec3 transmittance = ShadowRay.Trace(launchParams, surfPos, outwardNormal, lightDir, dist);
             if (transmittance.lengthSquared() <= 0f)
                 return new Vec3(0f, 0f, 0f);
 

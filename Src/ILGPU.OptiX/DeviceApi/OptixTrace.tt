@@ -18,6 +18,7 @@
 
 using ILGPU.Runtime.Cuda;
 using System;
+using System.Numerics;
 
 namespace ILGPU.OptiX
 {
@@ -191,5 +192,64 @@ namespace ILGPU.OptiX
         }
 
 <# } #>
+<#
+    // Generic struct-payload wrapper: dispatches to one of the fixed-payload-count
+    // Trace(...) overloads generated above, based on sizeof(T)/4. Unlike those
+    // overloads, T's field layout drives the register count directly (see
+    // OptixPayloadLayout.CountOf<T>, host-side only, which validates T has no hidden
+    // padding before a pipeline using it is ever built), so raygen code never
+    // hand-counts payload registers or bit-casts floats through
+    // Interop.FloatAsInt/IntAsFloat.
+    //
+    // NOTE (docs/API_USABILITY_PLAN.md section 2.5): whether ILGPU folds the switch
+    // below to a single branch (since count is constant once T is a concrete type)
+    // has not been verified on real hardware - inspect PTX via DumpGeneratedPtx
+    // before relying on this in a hot per-frame path.
+#>
+        /// <summary>
+        /// Traces a ray carrying a single struct-typed payload instead of individual
+        /// <c>ref uint</c> registers - see <see cref="OptixPayload.Read{T}"/> and
+        /// <see cref="OptixPayload.Write{T}"/> to access it from hit/miss programs, and
+        /// <see cref="OptixPayloadLayout.CountOf{T}"/> (host-side only) to derive
+        /// <c>NumPayloadValues</c> for the pipeline compile options from
+        /// <c>sizeof(T)</c> instead of a hand-maintained constant. Internally
+        /// dispatches to one of the fixed-count overloads above based on
+        /// <c>sizeof(T)/4</c> - see the verification note on this method in
+        /// OptixTrace.tt before relying on it in a hot per-frame path.
+        /// </summary>
+        public static unsafe void Trace<T>(
+            ulong traversableHandle,
+            Vector3 rayOrigin,
+            Vector3 rayDirection,
+            float tmin,
+            float tmax,
+            ref T payload,
+            float rayTime = 0f,
+            uint visibilityMask = 0xff,
+            OptixRayFlags rayFlags = OptixRayFlags.OPTIX_RAY_FLAG_NONE,
+            uint sbtOffset = 0,
+            uint sbtStride = 1,
+            uint missSbtIndex = 0)
+            where T : unmanaged
+        {
+            var origin = (rayOrigin.X, rayOrigin.Y, rayOrigin.Z);
+            var direction = (rayDirection.X, rayDirection.Y, rayDirection.Z);
+            int count = sizeof(T) / 4;
+            T local = payload;
+            uint* w = (uint*)&local;
+
+            switch (count)
+            {
+<#  for (int paramIdx = 0; paramIdx <= MaxAchievablePayloadValues; paramIdx++) {
+        var refArgs = string.Concat(Enumerable.Range(0, paramIdx).Select(i => $", ref w[{i}]"));
+#>
+                case <#= paramIdx #>:
+                    Trace(traversableHandle, origin, direction, tmin, tmax, rayTime, visibilityMask, rayFlags, sbtOffset, sbtStride, missSbtIndex<#= refArgs #>);
+                    break;
+<#  } #>
+            }
+
+            payload = local;
+        }
     }
 }

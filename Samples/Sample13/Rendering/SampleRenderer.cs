@@ -12,6 +12,7 @@
 using MeshRange = ILGPU.OptiX.Pipeline.OptixMeshRange;
 using ILGPU;
 using ILGPU.OptiX;
+using ILGPU.OptiX.Device;
 using ILGPU.OptiX.Interop;
 using System;
 using System.Collections.Generic;
@@ -137,7 +138,7 @@ namespace Sample13
         // launchParams/traversable/scene buffers) breaks that cycle.
         readonly object gpuLock = new object();
 
-        public unsafe SampleRenderer(int width, int height, MainWindow window)
+        public SampleRenderer(int width, int height, MainWindow window)
         {
             this.window = window;
 
@@ -199,7 +200,7 @@ namespace Sample13
             return gasParts.Count > 0 ? header + "\n  " + string.Join("\n  ", gasParts) : header + " (none)";
         }
 
-        public unsafe void SwitchToScene(int index)
+        public void SwitchToScene(int index)
         {
             lock (gpuLock)
             {
@@ -251,23 +252,23 @@ namespace Sample13
 
                 launchParams.camera = camera;
                 launchParams.traversable = unchecked((ulong)traversable.ToInt64());
-                launchParams.Vertices = (Vec3*)SceneGpuBuffers.NativePtrOrZero(buffers.Vertices);
-                launchParams.Normals = (Vec3*)SceneGpuBuffers.NativePtrOrZero(buffers.Normals);
-                launchParams.TexCoords = (Vec2*)SceneGpuBuffers.NativePtrOrZero(buffers.TexCoords);
-                launchParams.Indices = (Vec3i*)SceneGpuBuffers.NativePtrOrZero(buffers.Indices);
-                launchParams.Spheres = (SphereData*)SceneGpuBuffers.NativePtrOrZero(buffers.Spheres);
-                launchParams.Boxes = (BoxData*)SceneGpuBuffers.NativePtrOrZero(buffers.Boxes);
-                launchParams.CylindersY = (CylinderYData*)SceneGpuBuffers.NativePtrOrZero(buffers.CylindersY);
-                launchParams.Disks = (DiskData*)SceneGpuBuffers.NativePtrOrZero(buffers.Disks);
-                launchParams.XYRects = (RectData*)SceneGpuBuffers.NativePtrOrZero(buffers.XYRects);
-                launchParams.XZRects = (RectData*)SceneGpuBuffers.NativePtrOrZero(buffers.XZRects);
-                launchParams.YZRects = (RectData*)SceneGpuBuffers.NativePtrOrZero(buffers.YZRects);
-                launchParams.VoxelMaterialIds = (uint*)SceneGpuBuffers.NativePtrOrZero(buffers.VoxelMaterialIds);
+                launchParams.Vertices = OptixDeviceView<Vec3>.From(buffers.Vertices);
+                launchParams.Normals = OptixDeviceView<Vec3>.From(buffers.Normals);
+                launchParams.TexCoords = OptixDeviceView<Vec2>.From(buffers.TexCoords);
+                launchParams.Indices = OptixDeviceView<Vec3i>.From(buffers.Indices);
+                launchParams.Spheres = OptixDeviceView<SphereData>.From(buffers.Spheres);
+                launchParams.Boxes = OptixDeviceView<BoxData>.From(buffers.Boxes);
+                launchParams.CylindersY = OptixDeviceView<CylinderYData>.From(buffers.CylindersY);
+                launchParams.Disks = OptixDeviceView<DiskData>.From(buffers.Disks);
+                launchParams.XYRects = OptixDeviceView<RectData>.From(buffers.XYRects);
+                launchParams.XZRects = OptixDeviceView<RectData>.From(buffers.XZRects);
+                launchParams.YZRects = OptixDeviceView<RectData>.From(buffers.YZRects);
+                launchParams.VoxelMaterialIds = OptixDeviceView<uint>.From(buffers.VoxelMaterialIds);
                 launchParams.VolumeGridMin = scene.VolumeGridMin;
                 launchParams.VolumeVoxelSize = scene.VolumeVoxelSize;
                 launchParams.VolumeDims = scene.VolumeDims;
-                launchParams.Materials = (MaterialSbtData*)SceneGpuBuffers.NativePtrOrZero(buffers.Materials);
-                launchParams.PointLights = (PointLightGpu*)SceneGpuBuffers.NativePtrOrZero(buffers.Lights);
+                launchParams.Materials = OptixDeviceView<MaterialSbtData>.From(buffers.Materials);
+                launchParams.PointLights = OptixDeviceView<PointLightGpu>.From(buffers.Lights);
                 launchParams.NumPointLights = scene.Lights.Length;
                 launchParams.AmbientColor = scene.AmbientColor;
                 launchParams.AmbientIntensity = scene.AmbientIntensity;
@@ -313,7 +314,7 @@ namespace Sample13
             gpu.Dispose();
         }
 
-        public unsafe void resize(int width, int height)
+        public void resize(int width, int height)
         {
             if (width == 0 || height == 0)
                 return;
@@ -332,9 +333,9 @@ namespace Sample13
             launchParams.MaxMirrorBounces = MaxMirrorBounces;
             launchParams.MaxRefractionBounces = MaxRefractionBounces;
             launchParams.MaxDiffuseBounces = MaxDiffuseBounces;
-            launchParams.ColorBuffer = (Vec4*)frameOutput.HdrColorBuffer.NativePtr;
-            launchParams.AlbedoBuffer = (Vec4*)frameOutput.AlbedoBuffer.NativePtr;
-            launchParams.NormalBuffer = (Vec4*)frameOutput.NormalBuffer.NativePtr;
+            launchParams.ColorBuffer = OptixDeviceView<Vec4>.From(frameOutput.HdrColorBuffer);
+            launchParams.AlbedoBuffer = OptixDeviceView<Vec4>.From(frameOutput.AlbedoBuffer);
+            launchParams.NormalBuffer = OptixDeviceView<Vec4>.From(frameOutput.NormalBuffer);
         }
 
         public void setCamera(Camera camera)
@@ -347,7 +348,7 @@ namespace Sample13
             }
         }
 
-        public unsafe void render()
+        public void render()
         {
             double traceMs, denoiseMs, tonemapMs;
             int samplesAccumulated;

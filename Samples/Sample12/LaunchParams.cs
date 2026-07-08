@@ -9,6 +9,8 @@
 // Source License. See LICENSE.txt for details.
 // ---------------------------------------------------------------------------------------
 
+using ILGPU.OptiX.Device;
+
 namespace Sample12
 {
     // Adds AlbedoBuffer/NormalBuffer to Sample11's LaunchParams - AOV guide images the
@@ -20,20 +22,20 @@ namespace Sample12
     // against one hitgroup record per material per ray type (see MaterialSbtData.cs/
     // SampleRenderer.cs's buildAccel/constructor) - see Sample07's LaunchParams.cs for
     // why.
-    public unsafe struct LaunchParams
+    public struct LaunchParams
     {
         public int NumPixelSamples;
         public int FrameID;
-        public Vec4* ColorBuffer;
-        public Vec4* AlbedoBuffer;
-        public Vec4* NormalBuffer;
+        public OptixDeviceView<Vec4> ColorBuffer;
+        public OptixDeviceView<Vec4> AlbedoBuffer;
+        public OptixDeviceView<Vec4> NormalBuffer;
         public Camera camera;
         public ulong traversable;
 
-        public Vec3* Vertices;
-        public Vec3* Normals;
-        public Vec2* TexCoords;
-        public Vec3i* Indices;
+        public OptixDeviceView<Vec3> Vertices;
+        public OptixDeviceView<Vec3> Normals;
+        public OptixDeviceView<Vec2> TexCoords;
+        public OptixDeviceView<Vec3i> Indices;
 
         public Vec3 LightOrigin;
         public Vec3 LightDu;

@@ -43,7 +43,7 @@ namespace Sample15
             // Textured floor - the sample's only real normal/ORM-mapped surface
             // (docs/SAMPLE15_PLAN.md Milestone M6/M9). Roughness/Metallic scalars are
             // pure multipliers against arm.png's G/B channels (the glTF convention -
-            // see ShadingHelpers.ShadeSurface's ORM block), so both stay at 1 here to
+            // see MaterialShading.ShadeSurface's ORM block), so both stay at 1 here to
             // reproduce the texture's own per-texel values unscaled.
             uint texturedFloor = (uint)b.AddMaterial(
                 new MaterialSbtData

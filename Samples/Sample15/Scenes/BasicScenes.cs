@@ -317,7 +317,7 @@ namespace Sample15
         }
 
         // Pure point-light demo - AmbientIntensity=0, no env map, near-black background,
-        // so ShadeSurface's flat unshadowed ambient term (see ShadingHelpers.cs's own
+        // so ShadeSurface's flat unshadowed ambient term (see MaterialShading.cs's own
         // comment on it being a pre-GGX hack with no occlusion) can't wash out the NEE
         // shadowing/falloff this scene exists to show off cleanly.
         public static SceneData BuildNoAmbientLightDemoScene()

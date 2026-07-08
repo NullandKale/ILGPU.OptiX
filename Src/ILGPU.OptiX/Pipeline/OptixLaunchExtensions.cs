@@ -69,10 +69,14 @@ namespace ILGPU.OptiX
             if (pipeline == null)
                 throw new ArgumentNullException(nameof(pipeline));
 
-            var launchParamsBuffer = accelerator.Allocate1D<TLaunchParams>(1);
+            // NOTE: this path allocates + frees a launch-params buffer and a native
+            // SBT copy on every call, which is the correct but slow shape (freeing
+            // GPU memory forces an implicit device sync). For per-frame launches,
+            // prefer a facade that keeps these buffers persistent across calls.
+            using var launchParamsBuffer = accelerator.Allocate1D<TLaunchParams>(1);
             launchParamsBuffer.View.CopyFromCPU(stream, ref launchParams, 1);
 
-            var sbtPtr = SafeHGlobal.AllocFrom(sbt);
+            using var sbtPtr = SafeHGlobal.AllocFrom(sbt);
 
             OptixException.ThrowIfFailed(
                 OptixAPI.Current.Launch(

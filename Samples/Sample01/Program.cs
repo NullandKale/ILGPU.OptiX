@@ -26,27 +26,14 @@ namespace Sample01
             try
             {
                 Console.WriteLine("Initializing CUDA + OptiX...");
-                using var context = Context.Create(b => b.Cuda().InitOptiX());
+                using var context = Context.Create(b => b.Cuda());
                 using var accelerator = context.CreateCudaAccelerator(0);
                 Console.WriteLine($"Success: CUDA accelerator '{accelerator.Name}' and OptiX context initialized.");
-                Console.WriteLine("(This sample renders nothing - see Sample02 for the first rendered image.)");
             }
             catch (Exception ex)
             {
-                Program.PrintException(ex);
+                Console.WriteLine(ex);
                 Environment.Exit(1);
-            }
-        }
-
-        internal static void PrintException(Exception ex)
-        {
-            Console.Error.WriteLine("Unhandled exception:");
-            for (var current = ex; current != null; current = current.InnerException)
-            {
-                Console.Error.WriteLine($"--- {current.GetType().FullName}: {current.Message}");
-                if (current is OptixException optixEx)
-                    Console.Error.WriteLine($"    OptixResult: {optixEx.OptixResult}");
-                Console.Error.WriteLine(current.StackTrace);
             }
         }
     }

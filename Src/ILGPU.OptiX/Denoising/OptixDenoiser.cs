@@ -9,8 +9,10 @@
 // Source License. See LICENSE.txt for details.
 // ---------------------------------------------------------------------------------------
 
+using ILGPU.OptiX.Util;
 using ILGPU.Util;
 using System;
+using System.Runtime.InteropServices;
 
 namespace ILGPU.OptiX
 {
@@ -27,6 +29,23 @@ namespace ILGPU.OptiX
         /// The native OptiX denoiser.
         /// </summary>
         public IntPtr DenoiserPtr { get; private set; }
+
+        #endregion
+
+        #region Fields
+
+        // Persistent native scratch for Invoke()/ComputeIntensity()'s marshaled
+        // struct arguments - overwritten in place every call instead of the
+        // struct-taking OptixAPI overloads' per-call AllocHGlobal/FreeHGlobal
+        // (SafeHGlobal.AllocFrom), since Invoke runs every frame in a real-time
+        // denoiser loop (see Sample15's FrameOutput.DenoiseAndTonemap). layersHandle
+        // is resized only if the layer count itself changes (it doesn't, in
+        // practice - always 1 - but this stays correct if a caller varies it).
+        SafeHGlobal? parametersHandle;
+        SafeHGlobal? guideLayerHandle;
+        SafeHGlobal? layersHandle;
+        int layersHandleCount;
+        SafeHGlobal? intensityImageHandle;
 
         #endregion
 
@@ -118,15 +137,36 @@ namespace ILGPU.OptiX
             IntPtr scratch,
             ulong scratchSizeInBytes)
         {
+            parametersHandle ??= SafeHGlobal.Alloc<OptixDenoiserParams>();
+            Marshal.StructureToPtr(parameters, parametersHandle.NativePtr, false);
+
+            guideLayerHandle ??= SafeHGlobal.Alloc<OptixDenoiserGuideLayer>();
+            Marshal.StructureToPtr(guideLayer, guideLayerHandle.NativePtr, false);
+
+            if (layersHandle == null || layersHandleCount != layers.Length)
+            {
+                layersHandle?.Dispose();
+                layersHandle = SafeHGlobal.Alloc<OptixDenoiserLayer>(layers.Length);
+                layersHandleCount = layers.Length;
+            }
+            var layerSize = Marshal.SizeOf<OptixDenoiserLayer>();
+            var nextLayerPtr = layersHandle.NativePtr;
+            foreach (var layer in layers)
+            {
+                Marshal.StructureToPtr(layer, nextLayerPtr, false);
+                nextLayerPtr += layerSize;
+            }
+
             OptixException.ThrowIfFailed(
                 OptixAPI.Current.DenoiserInvoke(
                     DenoiserPtr,
                     stream,
-                    parameters,
+                    parametersHandle.NativePtr,
                     denoiserState,
                     denoiserStateSizeInBytes,
-                    guideLayer,
-                    layers,
+                    guideLayerHandle.NativePtr,
+                    layersHandle.NativePtr,
+                    (uint)layers.Length,
                     0,
                     0,
                     scratch,
@@ -149,11 +189,14 @@ namespace ILGPU.OptiX
             IntPtr scratch,
             ulong scratchSizeInBytes)
         {
+            intensityImageHandle ??= SafeHGlobal.Alloc<OptixImage2D>();
+            Marshal.StructureToPtr(inputImage, intensityImageHandle.NativePtr, false);
+
             OptixException.ThrowIfFailed(
                 OptixAPI.Current.DenoiserComputeIntensity(
                     DenoiserPtr,
                     stream,
-                    inputImage,
+                    intensityImageHandle.NativePtr,
                     outputIntensity,
                     scratch,
                     scratchSizeInBytes));
@@ -199,6 +242,11 @@ namespace ILGPU.OptiX
                     OptixAPI.Current.DenoiserDestroy(DenoiserPtr);
                     DenoiserPtr = IntPtr.Zero;
                 }
+
+                parametersHandle?.Dispose();
+                guideLayerHandle?.Dispose();
+                layersHandle?.Dispose();
+                intensityImageHandle?.Dispose();
             }
             base.Dispose(disposing);
         }

@@ -20,12 +20,5 @@ namespace Sample15
         public double Fps;
 
         public int SamplesAccumulated;
-
-        // Primary-ray throughput this frame (renderWidth*renderHeight*NumPixelSamples
-        // / TraceMs) - the control signal for SampleRenderer's render-scale slider/
-        // auto-scaler and its own UI readout, not a full "every ray including bounces/
-        // shadows" count (Russian roulette makes that path-length-dependent and not
-        // worth instrumenting just for a resolution-scaling control signal).
-        public double RaysPerSecond;
     }
 }

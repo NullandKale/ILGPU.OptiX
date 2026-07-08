@@ -13,7 +13,7 @@ namespace Sample12
         private const uint RAY_TYPE_COUNT = OptixPayloadDefaults.RAY_TYPE_COUNT;
         private const int NUM_LIGHT_SAMPLES = 4;
 
-        public unsafe static void __raygen__renderFrame(LaunchParams launchParams)
+        public static void __raygen__renderFrame(LaunchParams launchParams)
         {
             var ix = OptixGetLaunchIndex.X;
             var iy = OptixGetLaunchIndex.Y;

@@ -9,6 +9,7 @@
 // Source License. See LICENSE.txt for details.
 // ---------------------------------------------------------------------------------------
 
+using ILGPU.OptiX.Pipeline;
 using System;
 
 #pragma warning disable CS0649 // Field is never assigned to
@@ -126,6 +127,11 @@ namespace ILGPU.OptiX
         out IntPtr programGroups);
 
     internal delegate OptixResult ProgramGroupDestroy(IntPtr programGroup);
+
+    internal delegate OptixResult ProgramGroupGetStackSize(
+        IntPtr programGroup,
+        out OptixStackSizes stackSizes,
+        IntPtr pipeline);
 
     internal delegate OptixResult PipelineCreate(
         IntPtr deviceContext,

@@ -1,12 +1,13 @@
 using ILGPU;
 using ILGPU.Algorithms;
 using ILGPU.OptiX;
+using ILGPU.OptiX.Device;
 
 namespace Sample06
 {
     public static class devicePrograms
     {
-        public unsafe static void __raygen__renderFrame(LaunchParams launchParams)
+        public static void __raygen__renderFrame(LaunchParams launchParams)
         {
             var ix = OptixGetLaunchIndex.X;
             var iy = OptixGetLaunchIndex.Y;
@@ -67,7 +68,7 @@ namespace Sample06
             SetPRD(launchParams.camera.noHitColor);
         }
 
-        public unsafe static void __closest__radiance(LaunchParams launchParams)
+        public static void __closest__radiance(LaunchParams launchParams)
         {
             // ILGPU.OptiX doesn't wrap optixGetSbtDataPointer (it returns a raw
             // device pointer, and ILGPU has no support for reinterpreting an
@@ -83,8 +84,8 @@ namespace Sample06
             uint meshId = OptixGetSbtGASIndex.Value;
             uint primId = OptixGetPrimitiveIndex.Value;
 
-            Vec3* vertices = meshId == 0 ? launchParams.mesh0Vertices : launchParams.mesh1Vertices;
-            Vec3i* indices = meshId == 0 ? launchParams.mesh0Indices : launchParams.mesh1Indices;
+            OptixDeviceView<Vec3> vertices = meshId == 0 ? launchParams.mesh0Vertices : launchParams.mesh1Vertices;
+            OptixDeviceView<Vec3i> indices = meshId == 0 ? launchParams.mesh0Indices : launchParams.mesh1Indices;
             Vec3 color = meshId == 0 ? launchParams.mesh0Color : launchParams.mesh1Color;
 
             Vec3i tri = indices[primId];

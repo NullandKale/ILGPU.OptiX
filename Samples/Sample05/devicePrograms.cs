@@ -7,7 +7,7 @@ namespace Sample05
 {
     public static class devicePrograms
     {
-        public unsafe static void __raygen__renderFrame(LaunchParams launchParams)
+        public static void __raygen__renderFrame(LaunchParams launchParams)
         {
             var ix = OptixGetLaunchIndex.X;
             var iy = OptixGetLaunchIndex.Y;
@@ -64,7 +64,7 @@ namespace Sample05
             SetPRD(launchParams.camera.noHitColor);
         }
 
-        public unsafe static void __closest__radiance(LaunchParams launchParams)
+        public static void __closest__radiance(LaunchParams launchParams)
         {
             // ILGPU.OptiX doesn't wrap optixGetSbtDataPointer (it returns a raw
             // device pointer, and ILGPU has no support for reinterpreting an

@@ -11,6 +11,7 @@
 
 using ILGPU;
 using ILGPU.OptiX;
+using ILGPU.OptiX.Device;
 using ILGPU.OptiX.Interop;
 using ILGPU.OptiX.Pipeline;
 using ILGPU.OptiX.AccelStructures;
@@ -93,12 +94,12 @@ namespace Sample06
         BuiltAccelStructure builtAccel;
         IntPtr traversable;
 
-        public unsafe SampleRenderer(int width, int height, MainWindow window)
+        public SampleRenderer(int width, int height, MainWindow window)
         {
             this.window = window;
 
             //init optix
-            context = Context.Create(b => b.Cuda().InitOptiX());
+            context = Context.Create(b => b.Cuda());
             accelerator = context.CreateCudaAccelerator(0);
             deviceContext = accelerator.CreateDeviceContext()
                 .WithModuleCompileOptions(new OptixModuleCompileOptions()
@@ -208,7 +209,7 @@ namespace Sample06
             context.Dispose();
         }
 
-        public unsafe void resize(int width, int height)
+        public void resize(int width, int height)
         {
             if (width != 0 && height != 0)
             {
@@ -223,14 +224,14 @@ namespace Sample06
                 colorArray = new byte[colorBuffer0.Length];
                 launchParams = new LaunchParams()
                 {
-                    ColorBuffer = (uint*)colorBuffer0.NativePtr,
+                    ColorBuffer = OptixDeviceView<uint>.FromBytes(colorBuffer0),
                     camera = this.camera,
                     traversable = unchecked((ulong)this.traversable.ToInt64()),
-                    mesh0Vertices = (Vec3*)meshes[0].d_vertexBuffer.NativePtr,
-                    mesh0Indices = (Vec3i*)meshes[0].d_triangleIndexBuffer.NativePtr,
+                    mesh0Vertices = OptixDeviceView<Vec3>.From(meshes[0].d_vertexBuffer),
+                    mesh0Indices = OptixDeviceView<Vec3i>.From(meshes[0].d_triangleIndexBuffer),
                     mesh0Color = meshes[0].color,
-                    mesh1Vertices = (Vec3*)meshes[1].d_vertexBuffer.NativePtr,
-                    mesh1Indices = (Vec3i*)meshes[1].d_triangleIndexBuffer.NativePtr,
+                    mesh1Vertices = OptixDeviceView<Vec3>.From(meshes[1].d_vertexBuffer),
+                    mesh1Indices = OptixDeviceView<Vec3i>.From(meshes[1].d_triangleIndexBuffer),
                     mesh1Color = meshes[1].color
                 };
             }

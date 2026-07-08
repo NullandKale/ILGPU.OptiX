@@ -6,11 +6,12 @@ namespace Sample15
 {
     /// <summary>
     /// Material shading branches (unified GGX metallic-roughness surface/dielectric -
-    /// see Bsdf.cs for the GGX math itself) plus the texture sampling and shadow-ray
-    /// helpers they share. All methods are static and get inlined by ILGPU into
-    /// whichever OptiX program calls them.
+    /// see Bsdf.cs for the GGX math itself) plus the texture/geometry sampling helpers
+    /// they share. All methods are static and get inlined by ILGPU into whichever
+    /// OptiX program calls them. The shadow ray's own trace-call-site wrapper lives in
+    /// Rays/ShadowRay.cs instead of here - see that file's payload-contract comment.
     /// </summary>
-    public static class ShadingHelpers
+    public static class MaterialShading
     {
         // Unified metallic-roughness GGX BSDF shading (docs/SAMPLE15_PLAN.md Milestones
         // M2/M4) - replaces Sample14/M1's separate Oren-Nayar-diffuse/perfect-mirror
@@ -21,7 +22,7 @@ namespace Sample15
         // at the sampled direction (see Bsdf.cs and docs/SAMPLE15_PLAN.md Design
         // Decision 1/3). bsdfPdfIn/lightPickAreaPdf implement the MIS side of a
         // BSDF-sampled ray landing directly on this material's own emission - see
-        // Payloads.cs's own doc comment and ClosestHitProgram.cs's callsite.
+        // Payloads.cs's own doc comment and Rays/RadianceRay.cs's callsite.
         internal unsafe static void ShadeSurface(LaunchParams launchParams, MaterialSbtData mat, Vec3 baseColor, Vec3 surfPos, Vec3 shadingNormal, Vec3 outwardNormal, Vec3 rayDir, uint rngStateIn, float bsdfPdfIn, float lightPickAreaPdf, Vec2 uv)
         {
             float roughness = mat.Roughness;
@@ -87,7 +88,14 @@ namespace Sample15
             if (isDelta)
             {
                 Vec3 reflectDir = Vec3.reflect(shadingNormal, rayDir);
-                Payloads.SetContinuePayload(pixelColor, Payloads.BOUNCE_CONTINUE_MIRROR, newOrigin, reflectDir, f0, shadingNormal, baseColor, rng.State, Payloads.DeltaOrPrimarySentinel, surfPos);
+                // Angle-dependent Fresnel (not just the normal-incidence f0) - without
+                // this, a delta mirror never shows the grazing-angle brightening a real
+                // mirror has, and there's a visible brightness pop as Roughness crosses
+                // DeltaRoughnessThreshold from the rough branch below (which already
+                // Fresnel-weights via EvalSpecularBRDF's own FresnelSchlick call).
+                float NdotV = XMath.Clamp(Vec3.dot(shadingNormal, viewDir), 0f, 1f);
+                Vec3 mirrorTint = Bsdf.FresnelSchlick(NdotV, f0);
+                Payloads.SetContinuePayload(pixelColor, Payloads.BOUNCE_CONTINUE_MIRROR, newOrigin, reflectDir, mirrorTint, shadingNormal, baseColor, rng.State, Payloads.DeltaOrPrimarySentinel, surfPos);
                 return;
             }
 
@@ -225,40 +233,6 @@ namespace Sample15
             }
             refracted = Vec3.reflect(n, v);
             return false;
-        }
-
-        // Multi-hit colored transmittance shadow ray (docs/SAMPLE13_PLAN.md design
-        // decision (f)) - walks through transparent occluders via __anyhit__shadow's
-        // optixIgnoreIntersection, accumulating TransmissionColor*Transparency per hit
-        // up to MaxRefractions, unlike a plain binary occlusion test.
-        internal unsafe static Vec3 ShadowTransmittance(LaunchParams launchParams, Vec3 surfPos, Vec3 outwardNormal, Vec3 lightDir, float lightDist)
-        {
-            uint t0 = Interop.FloatAsInt(1f);
-            uint t1 = Interop.FloatAsInt(1f);
-            uint t2 = Interop.FloatAsInt(1f);
-            uint hitCount = 0;
-
-            OptixTrace.Trace(
-                launchParams.traversable,
-                (surfPos.x + (1e-3f * outwardNormal.x), surfPos.y + (1e-3f * outwardNormal.y), surfPos.z + (1e-3f * outwardNormal.z)),
-                (lightDir.x, lightDir.y, lightDir.z),
-                1e-3f,
-                lightDist * (1f - 1e-3f),
-                0.0f,
-                0xff,
-                // __closesthit__shadow (MissAndShadowPrograms.cs) is an intentional
-                // no-op - all of this ray's real work happens in __anyhit__shadow
-                // (transmittance accumulation) and __miss__shadow. Disabling
-                // closest-hit for shadow rays skips that no-op invocation entirely
-                // (attribute setup + SBT lookup + empty call) on every hit that
-                // terminates the ray, at zero behavioral cost.
-                OptixRayFlags.OPTIX_RAY_FLAG_DISABLE_CLOSESTHIT,
-                Payloads.SHADOW_RAY_TYPE,
-                Payloads.RAY_TYPE_COUNT,
-                Payloads.SHADOW_RAY_TYPE,
-                ref t0, ref t1, ref t2, ref hitCount);
-
-            return new Vec3(Interop.IntAsFloat(t0), Interop.IntAsFloat(t1), Interop.IntAsFloat(t2));
         }
 
         // Cosine-weighted hemisphere sampling: generate a random direction in the

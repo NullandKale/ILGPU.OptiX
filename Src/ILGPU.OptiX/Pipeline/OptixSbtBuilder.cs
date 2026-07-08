@@ -94,6 +94,80 @@ namespace ILGPU.OptiX.Pipeline
         }
 
         /// <summary>
+        /// Sets the raygen record from a buffer packed by
+        /// <see cref="OptixSbtRecords.Pack{T}(System.Collections.Generic.IReadOnlyList{OptixKernel}, System.ReadOnlySpan{T})"/>.
+        /// Unlike the generic <see cref="SetRaygenRecords{TRecord}(TRecord[])"/>
+        /// overload, the stride is explicit, so <typeparamref name="T"/> never needs a
+        /// hand-declared <c>[StructLayout(Size = ...)]</c> to satisfy SBT alignment.
+        /// </summary>
+        public OptixSbtBuilder SetRaygenRecords<T>(byte[] packedRecordBytes) where T : unmanaged
+        {
+            if (packedRecordBytes == null)
+                throw new ArgumentNullException(nameof(packedRecordBytes));
+            if (accelerator == null)
+                throw new InvalidOperationException("Accelerator must be set via WithAccelerator() first.");
+
+            raygenData?.Buffer.Dispose();
+
+            var buffer = accelerator.Allocate1D(packedRecordBytes);
+            raygenData = new BufferData
+            {
+                Buffer = buffer,
+                Count = 1,
+                Stride = (uint)OptixSbtRecords.StrideOf<T>()
+            };
+            return this;
+        }
+
+        /// <summary>
+        /// Sets miss records from a buffer packed by
+        /// <see cref="OptixSbtRecords.Pack{T}(System.Collections.Generic.IReadOnlyList{OptixKernel}, System.ReadOnlySpan{T})"/>.
+        /// </summary>
+        public OptixSbtBuilder SetMissRecords<T>(byte[] packedRecordBytes) where T : unmanaged
+        {
+            if (packedRecordBytes == null)
+                throw new ArgumentNullException(nameof(packedRecordBytes));
+            if (accelerator == null)
+                throw new InvalidOperationException("Accelerator must be set via WithAccelerator() first.");
+
+            missData?.Buffer.Dispose();
+
+            var stride = (uint)OptixSbtRecords.StrideOf<T>();
+            var buffer = accelerator.Allocate1D(packedRecordBytes);
+            missData = new BufferData
+            {
+                Buffer = buffer,
+                Count = (uint)(packedRecordBytes.Length / stride),
+                Stride = stride
+            };
+            return this;
+        }
+
+        /// <summary>
+        /// Adds hitgroup records from a buffer packed by
+        /// <see cref="OptixSbtRecords.Pack{T}(System.Collections.Generic.IReadOnlyList{OptixKernel}, System.ReadOnlySpan{T})"/>.
+        /// </summary>
+        public OptixSbtBuilder AddHitgroupRecords<T>(byte[] packedRecordBytes) where T : unmanaged
+        {
+            if (packedRecordBytes == null)
+                throw new ArgumentNullException(nameof(packedRecordBytes));
+            if (accelerator == null)
+                throw new InvalidOperationException("Accelerator must be set via WithAccelerator() first.");
+
+            hitgroupData?.Buffer.Dispose();
+
+            var stride = (uint)OptixSbtRecords.StrideOf<T>();
+            var buffer = accelerator.Allocate1D(packedRecordBytes);
+            hitgroupData = new BufferData
+            {
+                Buffer = buffer,
+                Count = (uint)(packedRecordBytes.Length / stride),
+                Stride = stride
+            };
+            return this;
+        }
+
+        /// <summary>
         /// Sets miss records (already packed array).
         /// For kernel collections, call OptixSbt.PackRecords{TRecord}(kernels) first.
         /// </summary>

@@ -1,4 +1,4 @@
-﻿// ---------------------------------------------------------------------------------------
+// ---------------------------------------------------------------------------------------
 //                                    ILGPU Samples
 //                        Copyright (c) 2020-2022 ILGPU Project
 //                                    www.ilgpu.net
@@ -11,24 +11,33 @@
 
 using ILGPU;
 using ILGPU.OptiX;
-using ILGPU.OptiX.Interop;
+using ILGPU.OptiX.Device;
 using ILGPU.OptiX.Pipeline;
 using ILGPU.Runtime;
 using ILGPU.Runtime.Cuda;
 using System;
 using System.IO;
-using System.Linq;
 using System.Runtime.InteropServices;
 
 namespace Sample02
 {
+    public struct LaunchParams
+    {
+        public int FrameID;
+        public OptixDeviceView<uint> ColorBuffer;
+        public int Width;
+        public int Height;
+    }
+
     public class Program
     {
-        public unsafe static void __raygen__renderFrame(LaunchParams launchParams)
+        public static void RenderFrame(LaunchParams launchParams)
         {
+            // Get the pixel position
             var ix = OptixGetLaunchIndex.X;
             var iy = OptixGetLaunchIndex.Y;
 
+            // generate a gradient based on the pixel position
             uint r = (ix % 256);
             uint g = (iy % 256);
             uint b = ((ix + iy) % 256);
@@ -38,145 +47,64 @@ namespace Sample02
             uint rgba = 0xff000000 | (r << 0) | (g << 8) | (b << 16);
 
             // and write to frame buffer ...
-            long fbIndex = ix + iy * launchParams.FbSizeX;
-            launchParams.ColorBuffer[fbIndex] = rgba;
+            long pixel = ix + iy * launchParams.Width;
+            launchParams.ColorBuffer[pixel] = rgba;
         }
 
-        public static void __miss__radiance(LaunchParams launchParams)
-        { }
+        public static void MissRadiance(LaunchParams launchParams) { }
+        public static void ClosestHitRadiance(LaunchParams launchParams) { }
+        public static void AnyHitRadiance(LaunchParams launchParams) { }
 
-        public static void __closest__radiance(LaunchParams launchParams)
-        { }
-
-        public static void __anyhit__radiance(LaunchParams launchParams)
-        { }
-
-        unsafe static void Main()
-        {
-            try
-            {
-                Run();
-            }
-            catch (Exception ex)
-            {
-                PrintException(ex);
-                Environment.Exit(1);
-            }
-        }
-
-        static void PrintException(Exception ex)
-        {
-            Console.Error.WriteLine("Unhandled exception:");
-            for (var current = ex; current != null; current = current.InnerException)
-            {
-                Console.Error.WriteLine($"--- {current.GetType().FullName}: {current.Message}");
-                if (current is OptixException optixEx)
-                    Console.Error.WriteLine($"    OptixResult: {optixEx.OptixResult}");
-                Console.Error.WriteLine(current.StackTrace);
-            }
-        }
-
-        unsafe static void Run()
+        static void Main()
         {
             Console.WriteLine("Initializing CUDA + OptiX...");
-            using var context = Context.Create(b => b.Cuda().InitOptiX());
+            using var context = Context.Create(b => b.Cuda());
             using var accelerator = context.CreateCudaAccelerator(0);
-            using var deviceContext = accelerator.CreateDeviceContext()
-                .WithModuleCompileOptions(new OptixModuleCompileOptions()
-                {
-                    MaxRegisterCount = 50,
-                    OptimizationLevel = OptixCompileOptimizationLevel.OPTIX_COMPILE_OPTIMIZATION_DEFAULT,
-                    DebugLevel = OptixCompileDebugLevel.OPTIX_COMPILE_DEBUG_LEVEL_NONE
-                })
-                .WithPipelineCompileOptions(new OptixPipelineCompileOptions()
-                {
-                    TraversableGraphFlags = OptixTraversableGraphFlags.OPTIX_TRAVERSABLE_GRAPH_FLAG_ALLOW_SINGLE_GAS,
-                    NumPayloadValues = 2,
-                    NumAttributeValues = 2,
-                    ExceptionFlags = OptixExceptionFlags.OPTIX_EXCEPTION_FLAG_NONE,
-                    PipelineLaunchParamsVariableName = OptixLaunchParams.VariableName
-                })
-                .WithPipelineLinkOptions(new OptixPipelineLinkOptions()
-                {
-                    MaxTraceDepth = 2
-                });
+            using var rt = OptixRayTracer.Create(accelerator);
 
-            using var raygenKernel = deviceContext.CreateRaygenKernel<LaunchParams>(
-                __raygen__renderFrame);
+            // No module/pipeline/link compile options, no SBT record structs, no
+            // manually chosen stack sizes - see docs/API_USABILITY_PLAN.md. This
+            // sample never calls OptixTrace.Trace(...), so its single ray type needs
+            // no Payload<T>() and its hitgroup needs no real per-material data - byte
+            // is just a 1-byte placeholder record.
+            using var pipeline = rt.CreatePipeline<LaunchParams>(b => b
+                .Raygen(RenderFrame)
+                .RayType("radiance", r => r
+                    .Miss(MissRadiance)
+                    .HitGroup<byte>(ClosestHitRadiance, AnyHitRadiance))
+                .MaxTraceDepth(2));
 
-            using var missKernel = deviceContext.CreateMissKernel<LaunchParams>(
-                __miss__radiance);
-
-            using var hitgroupKernel = deviceContext.CreateHitgroupKernel<LaunchParams>(
-                __closest__radiance,
-                __anyhit__radiance,
-                null);
-
-            var raygenKernels = new[] { raygenKernel };
-            var missKernels = new[] { missKernel };
-            var hitgroupKernels = new[] { hitgroupKernel };
-
-            // Build pipeline using builder
-            using var pipelineBuilder = new OptixPipelineBuilder();
-            pipelineBuilder.AddKernels(raygenKernels);
-            pipelineBuilder.AddKernels(missKernels);
-            pipelineBuilder.AddKernels(hitgroupKernels);
-            using var pipeline = pipelineBuilder.Build(deviceContext);
-
-            pipeline.SetStackSize(
-                2 * 1024,
-                2 * 1024,
-                2 * 1024,
-                1);
-
-            // Build SBT using builder
-            var raygenRecordsArray = OptixSbt.PackRecords<RaygenRecord>(raygenKernels);
-            var missRecordsArray = OptixSbt.PackRecords<MissRecord>(missKernels);
-            var hitgroupRecordsArray = OptixSbt.PackRecords<HitgroupRecord>(hitgroupKernels);
-
-            using var sbtBuilder = new OptixSbtBuilder();
-            sbtBuilder.WithAccelerator(accelerator);
-            sbtBuilder.SetRaygenRecords(raygenRecordsArray);
-            sbtBuilder.SetMissRecords(missRecordsArray);
-            sbtBuilder.AddHitgroupRecords(hitgroupRecordsArray);
-            using var builtSbt = sbtBuilder.Build();
-            var sbt = builtSbt.Sbt;
+            pipeline.SetHitRecords<byte>(new byte[] { 0 });
 
             // Setup launch parameters.
             var sizeX = 1200;
             var sizeY = 1024;
-            using var colorBuffer = accelerator.Allocate1D<byte>(sizeX * sizeY * sizeof(uint));
+            using var colorBuffer = accelerator.Allocate1D<uint>(sizeX * sizeY);
             colorBuffer.MemSetToZero();
 
             var launchParams =
                 new LaunchParams()
                 {
-                    ColorBuffer = (uint*)colorBuffer.NativePtr,
-                    FbSizeX = sizeX,
-                    FbSizeY = sizeY
+                    ColorBuffer = OptixDeviceView<uint>.From(colorBuffer),
+                    Width = sizeX,
+                    Height = sizeY
                 };
 
             // Launch pipeline.
             Console.WriteLine($"Rendering a {sizeX}x{sizeY} gradient...");
-            accelerator.OptixLaunch(
-                accelerator.DefaultStream,
-                pipeline,
-                launchParams,
-                sbt,
-                (uint)launchParams.FbSizeX,
-                (uint)launchParams.FbSizeY,
-                1);
+            pipeline.Launch(launchParams, launchParams.Width, launchParams.Height);
             accelerator.Synchronize();
 
-            // Write output.
-            var outputArray = colorBuffer.GetAsArray1D();
+            // Write output - stb_image_write wants raw RGBA bytes, so reinterpret the
+            // uint pixels (already packed 0xAABBGGRR by RenderFrame above) as bytes.
+            var outputArray = MemoryMarshal.AsBytes(colorBuffer.GetAsArray1D().AsSpan()).ToArray();
             string outputPath = Path.GetFullPath("sample02.png");
             using var pngStream = File.OpenWrite(outputPath);
             var writer = new StbImageWriteSharp.ImageWriter();
             writer.WritePng(
                 outputArray,
-                launchParams.FbSizeX,
-                launchParams.FbSizeY,
+                launchParams.Width,
+                launchParams.Height,
                 StbImageWriteSharp.ColorComponents.RedGreenBlueAlpha,
                 pngStream);
             Console.WriteLine($"Success: wrote {outputPath}");

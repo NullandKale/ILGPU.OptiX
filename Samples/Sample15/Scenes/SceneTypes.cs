@@ -11,9 +11,10 @@
 
 namespace Sample15
 {
-    // Device-visible per-light data, uploaded as a flat array (LaunchParams.PointLights /
-    // NumPointLights). The reference (RayTracing/Objects/PointLight.cs) only has this one
-    // light type - no area/quad lights exist there.
+    // Device-visible per-light data, uploaded as a flat array (LaunchParams.PointLights,
+    // indexed by LightGpu.RefIndex from the unified NEE light list below - never walked
+    // 0..count directly). The reference (RayTracing/Objects/PointLight.cs) only has this
+    // one light type - no area/quad lights exist there.
     public struct PointLightGpu
     {
         public Vec3 Position;

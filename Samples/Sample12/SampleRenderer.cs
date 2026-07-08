@@ -132,11 +132,11 @@ namespace Sample12
 
         BuiltDenoiser builtDenoiser;
 
-        public unsafe SampleRenderer(int width, int height, MainWindow window)
+        public SampleRenderer(int width, int height, MainWindow window)
         {
             this.window = window;
 
-            context = Context.Create(b => b.Cuda().InitOptiX());
+            context = Context.Create(b => b.Cuda());
             accelerator = context.CreateCudaAccelerator(0);
             deviceContext = accelerator.CreateDeviceContext()
                 .WithModuleCompileOptions(new OptixModuleCompileOptions()
@@ -370,7 +370,7 @@ namespace Sample12
             context.Dispose();
         }
 
-        public unsafe void resize(int width, int height)
+        public void resize(int width, int height)
         {
             if (width != 0 && height != 0)
             {
@@ -404,15 +404,15 @@ namespace Sample12
                 launchParams = new LaunchParams()
                 {
                     NumPixelSamples = NumPixelSamples,
-                    ColorBuffer = (Vec4*)hdrColorBuffer.NativePtr,
-                    AlbedoBuffer = (Vec4*)albedoBuffer.NativePtr,
-                    NormalBuffer = (Vec4*)normalBuffer.NativePtr,
+                    ColorBuffer = OptixDeviceView<Vec4>.From(hdrColorBuffer),
+                    AlbedoBuffer = OptixDeviceView<Vec4>.From(albedoBuffer),
+                    NormalBuffer = OptixDeviceView<Vec4>.From(normalBuffer),
                     camera = this.camera,
                     traversable = unchecked((ulong)this.traversable.ToInt64()),
-                    Vertices = (Vec3*)d_vertices.NativePtr,
-                    Normals = (Vec3*)d_normals.NativePtr,
-                    TexCoords = (Vec2*)d_texCoords.NativePtr,
-                    Indices = (Vec3i*)d_indices.NativePtr,
+                    Vertices = OptixDeviceView<Vec3>.From(d_vertices),
+                    Normals = OptixDeviceView<Vec3>.From(d_normals),
+                    TexCoords = OptixDeviceView<Vec2>.From(d_texCoords),
+                    Indices = OptixDeviceView<Vec3i>.From(d_indices),
                     LightOrigin = lightOrigin,
                     LightDu = lightDu,
                     LightDv = lightDv,

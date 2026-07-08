@@ -13,7 +13,7 @@ namespace Sample10
         private const uint RAY_TYPE_COUNT = OptixPayloadDefaults.RAY_TYPE_COUNT;
         private const int NUM_PIXEL_SAMPLES = 16;
 
-        public unsafe static void __raygen__renderFrame(LaunchParams launchParams)
+        public static void __raygen__renderFrame(LaunchParams launchParams)
         {
             var ix = OptixGetLaunchIndex.X;
             var iy = OptixGetLaunchIndex.Y;

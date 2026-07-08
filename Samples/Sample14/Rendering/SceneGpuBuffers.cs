@@ -167,9 +167,6 @@ namespace Sample14
         MemoryBuffer1D<T, Stride1D.Dense> AllocateOrNull<T>(T[] data) where T : unmanaged =>
             data.Length > 0 ? accelerator.Allocate1D(data) : null;
 
-        public static IntPtr NativePtrOrZero<T>(MemoryBuffer1D<T, Stride1D.Dense> buffer) where T : unmanaged =>
-            buffer?.NativePtr ?? IntPtr.Zero;
-
         static OptixAabb[] ComputeSphereAabbs(SphereData[] spheres)
         {
             var result = new OptixAabb[spheres.Length];

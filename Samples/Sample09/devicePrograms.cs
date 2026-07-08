@@ -18,7 +18,7 @@ namespace Sample09
         // identical, untransformed sponza.obj.
         private static readonly Vec3 LightPos = new Vec3(-907.108f, 2205.875f, -400.0267f);
 
-        public unsafe static void __raygen__renderFrame(LaunchParams launchParams)
+        public static void __raygen__renderFrame(LaunchParams launchParams)
         {
             var ix = OptixGetLaunchIndex.X;
             var iy = OptixGetLaunchIndex.Y;

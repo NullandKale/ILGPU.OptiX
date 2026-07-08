@@ -10,7 +10,7 @@ namespace Sample15
     // sampling (Heitz 2018, "Sampling the GGX Distribution of Visible Normals").
     //
     // Reflection only - the dielectric transmission (glass) lobe stays on
-    // ShadingHelpers.ShadeDielectric's perfect-specular Fresnel-Schlick path until M7's
+    // MaterialShading.ShadeDielectric's perfect-specular Fresnel-Schlick path until M7's
     // rough BTDF (Walter et al. 2007) replaces it. Diffuse + specular are combined via
     // single-sample stochastic lobe selection (M2's ShadeSurface picks one lobe to
     // extend the path with, weighted by the *combined* pdf of both lobes at the sampled
@@ -32,12 +32,26 @@ namespace Sample15
         internal static Vec3 SpecularF0(Vec3 baseColor, float metallic) =>
             new Vec3(0.04f, 0.04f, 0.04f) + (metallic * (baseColor - new Vec3(0.04f, 0.04f, 0.04f)));
 
+        // D blows up like 1/alpha^2 as Roughness approaches DeltaRoughnessThreshold
+        // from above (~2e6 at Roughness=0.02, vs ~3e3 at Roughness=0.1) - for a
+        // material in that fragile near-delta band, NextEventEstimation's direct-
+        // light sample toward a point light (which gets no MIS counterweight - see
+        // SampleDirectLighting's isDeltaLight branch, always misWeight=1) can land
+        // near the lobe's peak and produce a flickering, per-frame "firefly" pixel.
+        // Clamping D bounds this for both EvalSpecularBRDF (NEE) and PdfSpecular
+        // (the indirect bounce's importance-sampling denominator) consistently,
+        // since both pull from this same function - their D-term cancellation (the
+        // bounded specularF/PdfSpecular ratio Design Decision 3 relies on) is
+        // unaffected. The cap sits well above any Roughness gtrsim 0.08's natural
+        // peak, so it only engages in the fragile near-delta band, not general use.
+        private const float MaxNormalDistribution = 20000f;
+
         // Trowbridge-Reitz/GGX normal distribution function.
         private static float DistributionGGX(float NdotH, float alpha)
         {
             float a2 = alpha * alpha;
             float d = (NdotH * NdotH * (a2 - 1f)) + 1f;
-            return a2 / (XMath.PI * XMath.Max(d * d, 1e-8f));
+            return XMath.Min(a2 / (XMath.PI * XMath.Max(d * d, 1e-8f)), MaxNormalDistribution);
         }
 
         // Smith masking function for a single direction (used for the VNDF sampling pdf,
@@ -69,10 +83,10 @@ namespace Sample15
 
         // Full unpolarized dielectric Fresnel reflectance (docs/SAMPLE15_PLAN.md
         // Design Decision 3/Milestone M7, ported from optixIntro_06) - replaces the
-        // Schlick approximation ShadingHelpers.ShadeDielectric used through M1-M6.
+        // Schlick approximation MaterialShading.ShadeDielectric used through M1-M6.
         // etaFrom/etaTo are the refractive indices of the medium containing cosThetaI's
         // direction and the medium being entered, respectively (same convention as
-        // ShadingHelpers.TryRefract's niOverNt). Returns 1 (full reflection) for total
+        // MaterialShading.TryRefract's niOverNt). Returns 1 (full reflection) for total
         // internal reflection.
         internal static float FresnelDielectric(float cosThetaI, float etaFrom, float etaTo)
         {
@@ -144,7 +158,7 @@ namespace Sample15
         // into that frame by the caller) so the algorithm's own z-up convention lines up
         // with the shading normal. Split out from the old SampleSpecularDirection
         // (docs/SAMPLE15_PLAN.md Milestone M7) so the rough dielectric BTDF
-        // (ShadingHelpers.ShadeDielectric) can sample the same microfacet distribution
+        // (MaterialShading.ShadeDielectric) can sample the same microfacet distribution
         // and then reflect *or* refract about it, instead of only ever reflecting.
         internal static Vec3 SampleVisibleNormal(Vec3 n, Vec3 v, float roughness, ref LCG rng)
         {

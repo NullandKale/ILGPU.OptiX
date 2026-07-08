@@ -175,13 +175,6 @@ namespace Sample15.UI
                 renderer.Accumulate = accumulate;
                 System.Console.WriteLine($"[Accumulate] {renderer.Accumulate}");
             }
-
-            bool taaOn = renderer.TemporalDenoiseEnabled;
-            if (ImGui.Checkbox("TAA (temporal denoise)", ref taaOn))
-            {
-                renderer.TemporalDenoiseEnabled = taaOn;
-                System.Console.WriteLine($"[TAA] {renderer.TemporalDenoiseEnabled}");
-            }
         }
 
         // Tonemap + env-map controls (docs/SAMPLE15_PLAN.md Milestone M8). Env-map
@@ -229,7 +222,7 @@ namespace Sample15.UI
             ImGui.TextColored(new Vector4(0.7f, 0.85f, 1f, 1f), "CONTROLS");
             ImGui.TextUnformatted("WASD move, hold Left Mouse to look");
             ImGui.TextUnformatted("[ / ] prev/next scene, M merged-GAS");
-            ImGui.TextUnformatted("1/2 bounces -/+, Space denoiser, Tab accumulate, V TAA");
+            ImGui.TextUnformatted("1/2 bounces -/+, Space denoiser, Tab accumulate");
             ImGui.TextUnformatted("R auto render-scale, T toggle tonemap operator");
             ImGui.TextUnformatted("Esc quit");
         }

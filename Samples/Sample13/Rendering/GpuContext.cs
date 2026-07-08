@@ -28,7 +28,7 @@ namespace Sample13
 
         public GpuContext()
         {
-            Context = Context.Create(b => b.Cuda().InitOptiX().EnableAlgorithms());
+            Context = Context.Create(b => b.Cuda().EnableAlgorithms());
             Accelerator = Context.CreateCudaAccelerator(0);
 
             // Validation mode ALL + a log callback surfaces OptiX's own descriptive

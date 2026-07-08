@@ -20,8 +20,12 @@ namespace Sample15
             var b = new SceneBuilder
             {
                 Name = "Demo scene (random spheres)",
-                AmbientColor = new Vec3(1f, 1f, 1f),
-                AmbientIntensity = 0.1f,
+                // Flat ambient is a pre-HDRI fill hack (see MaterialShading.ShadeSurface) -
+                // left non-zero here it would double-count diffuse illumination on top of
+                // the HDRI's own GI below, so it's zeroed the same way PbrShowcaseScene.cs
+                // does for its HDRI-lit scene.
+                AmbientColor = new Vec3(0f, 0f, 0f),
+                AmbientIntensity = 0f,
                 BackgroundTop = new Vec3(0.6f, 0.8f, 1.0f),
                 BackgroundBottom = new Vec3(0.9f, 0.95f, 1.0f),
                 // HDRI environment map test case (docs/SAMPLE15_PLAN.md Milestone M5) -

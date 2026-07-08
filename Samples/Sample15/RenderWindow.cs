@@ -24,10 +24,13 @@ namespace Sample15
         FullscreenQuad quad;
         int frameCount;
 
+        readonly bool benchMode;
+        BenchmarkRunner benchmarkRunner;
+
         // FPS camera state - same math as Sample13's MainWindow.xaml.cs
         // UpdateFPSMovement/UpdateFPSCamera (written entirely against the UI-framework-
-        // agnostic Camera/Vec3/CameraMotion types, so it ports with no math changes,
-        // only the input-source glue below). Mouse delta is computed manually from
+        // agnostic Camera/Vec3 types, so it ports with no math changes, only the
+        // input-source glue below). Mouse delta is computed manually from
         // absolute MouseState.X/Y (no MouseState.Delta convenience property exists in
         // OpenTK 4.8 - same pattern example/OpenTKSplat/OpenTKSplat/Graphics/Camera.cs
         // uses).
@@ -40,9 +43,10 @@ namespace Sample15
         const float MouseSensitivity = 0.1f;
         const float MoveSpeedFraction = 0.01f;
 
-        public RenderWindow(GameWindowSettings gameWindowSettings, NativeWindowSettings nativeWindowSettings)
+        public RenderWindow(GameWindowSettings gameWindowSettings, NativeWindowSettings nativeWindowSettings, bool benchMode = false)
             : base(gameWindowSettings, nativeWindowSettings)
         {
+            this.benchMode = benchMode;
         }
 
         protected override void OnLoad()
@@ -71,13 +75,26 @@ namespace Sample15
             ImguiImplOpenTK4.Init(this);
             ImguiImplOpenGL3.Init();
 
-            PrintControls();
+            if (benchMode)
+            {
+                // Uncapped frame rate - VSync would otherwise clamp wall-clock frame
+                // time at the monitor refresh rate, hiding any actual GPU-side
+                // speedup/regression the benchmark exists to measure (see
+                // BenchmarkRunner's own doc comment).
+                VSync = VSyncMode.Off;
+                benchmarkRunner = new BenchmarkRunner();
+                benchmarkRunner.Start(sampleRenderer);
+            }
+            else
+            {
+                PrintControls();
+            }
         }
 
         static void PrintControls()
         {
             Console.WriteLine("[Controls] W/A/S/D move, hold Left Mouse to look, [/] prev/next scene,");
-            Console.WriteLine("[Controls] M toggle merged-GAS, Space denoiser, Tab accumulate, V TAA,");
+            Console.WriteLine("[Controls] M toggle merged-GAS, Space denoiser, Tab accumulate,");
             Console.WriteLine("[Controls] R auto render-scale, 1/2 bounces -/+, T tonemap operator, Esc quit");
         }
 
@@ -218,11 +235,6 @@ namespace Sample15
                 sampleRenderer.Accumulate = !sampleRenderer.Accumulate;
                 Console.WriteLine($"[Accumulate] {sampleRenderer.Accumulate}");
             }
-            if (IsKeyPressed(Keys.V))
-            {
-                sampleRenderer.TemporalDenoiseEnabled = !sampleRenderer.TemporalDenoiseEnabled;
-                Console.WriteLine($"[TAA] {sampleRenderer.TemporalDenoiseEnabled}");
-            }
             if (IsKeyPressed(Keys.R))
             {
                 sampleRenderer.AutoScaleEnabled = !sampleRenderer.AutoScaleEnabled;
@@ -279,6 +291,14 @@ namespace Sample15
             ImguiImplOpenGL3.RenderDrawData(ImGui.GetDrawData());
 
             SwapBuffers();
+
+            if (benchmarkRunner != null)
+            {
+                benchmarkRunner.OnFrameRendered(sampleRenderer);
+                if (benchmarkRunner.Finished)
+                    Close();
+                return;
+            }
 
             // Console stats logging (see docs/SAMPLE14_PLAN.md) stays in place
             // alongside the panel's own STATS section - useful when the panel is

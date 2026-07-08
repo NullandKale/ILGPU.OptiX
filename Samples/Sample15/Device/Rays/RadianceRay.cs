@@ -6,12 +6,48 @@ using System.Numerics;
 namespace Sample15
 {
     /// <summary>
-    /// The radiance closest-hit program: recovers the hit geometry via triangle
-    /// interpolation and dispatches to the material shading branches in
-    /// <see cref="ShadingHelpers"/>.
+    /// Everything about the radiance ray type in one place: the three OptiX device
+    /// programs it invokes, in invocation order (any-hit during traversal, then
+    /// whichever of closest-hit/miss is the ray's terminal outcome). RaygenProgram.cs's
+    /// own trace-call-site loop is NOT folded in here, unlike ShadowRay.Trace - it's a
+    /// 351-line multi-bounce driver with accumulation/denoiser-AOV/motion-vector
+    /// responsibilities far beyond seeding a payload, so merging it would bloat this
+    /// file without adding contract clarity (the radiance payload's contract is
+    /// genuinely spread across "raygen seeds/continues it" and "closest-hit/miss write
+    /// it" - that's inherent to it being a multi-bounce loop, not a scattering bug).
+    ///
+    /// PAYLOAD CONTRACT - RadiancePayload (contribution/flag/new-ray/tint/AOVs/RNG/pdf/hitpos):
+    ///   Seed (RaygenProgram, before the first OptixTrace.Trace of a sample):  RngState/BsdfPdf only
+    ///   __anyhit__radiance   (alpha-cutout below threshold): no write, IgnoreIntersection()
+    ///   __anyhit__radiance   (otherwise):                    no write, hit accepted normally
+    ///   __closest__radiance:  full write via MaterialShading.ShadeSurface/ShadeDielectric's
+    ///                         Payloads.SetContinuePayload/SetTerminalPayload - every
+    ///                         field, every call, regardless of which bounce this is
+    ///   __miss__radiance:     full write via Payloads.SetTerminalPayload (background/
+    ///                         envmap radiance, BOUNCE_TERMINAL)
+    ///   Reader: RaygenProgram's own bounce loop, between successive Trace() calls
     /// </summary>
-    public static class ClosestHitProgram
+    public static class RadianceRay
     {
+        // Alpha-cutout test (Sponza's leaf geometry): a triangle whose sampled texture
+        // alpha falls below the material's AlphaCutoff is invisible to radiance rays -
+        // ignoring the intersection lets the ray continue through to whatever is behind
+        // it, instead of shading the leaf quad's transparent background pixels as solid
+        // geometry. AlphaCutoff defaults to 0, which short-circuits this for every
+        // other (opaque-textured) material without an extra texture fetch. Never
+        // touches the payload either way - see this class's own payload-contract doc
+        // comment above.
+        public unsafe static void __anyhit__radiance(LaunchParams launchParams)
+        {
+            MaterialSbtData* sbtData = (MaterialSbtData*)OptixGetSbtDataPointer.Value;
+            if (sbtData->AlphaCutoff <= 0f || sbtData->BaseColorTexture == 0)
+                return;
+
+            if (MaterialShading.TryGetTriangleUV(launchParams, out Vec2 uv) &&
+                MaterialShading.SampleAlpha(sbtData, uv) < sbtData->AlphaCutoff)
+                OptixIgnoreIntersection.Ignore();
+        }
+
         public unsafe static void __closest__radiance(LaunchParams launchParams)
         {
             var (dx, dy, dz) = OptixGetWorldRayDirection.Value;
@@ -100,14 +136,45 @@ namespace Sample15
             // Fresnel-tinted GGX specular.
             if (sbtData->Transmission > 0f)
             {
-                ShadingHelpers.ShadeDielectric(launchParams, sbtData, rayDir, outwardNormal, frontFace, surfPos, rngStateIn);
+                MaterialShading.ShadeDielectric(launchParams, sbtData, rayDir, outwardNormal, frontFace, surfPos, rngStateIn);
                 return;
             }
 
-            Vec3 baseColor = ShadingHelpers.SampleAlbedo(sbtData, surfPos, uv);
+            Vec3 baseColor = MaterialShading.SampleAlbedo(sbtData, surfPos, uv);
             if (sbtData->NormalTexture != 0)
-                shadingNormal = ShadingHelpers.ApplyNormalMap(sbtData, uv, shadingNormal, tangent);
-            ShadingHelpers.ShadeSurface(launchParams, *sbtData, baseColor, surfPos, shadingNormal, outwardNormal, rayDir, rngStateIn, bsdfPdfIn, lightPickAreaPdf, uv);
+                shadingNormal = MaterialShading.ApplyNormalMap(sbtData, uv, shadingNormal, tangent);
+            MaterialShading.ShadeSurface(launchParams, *sbtData, baseColor, surfPos, shadingNormal, outwardNormal, rayDir, rngStateIn, bsdfPdfIn, lightPickAreaPdf, uv);
+        }
+
+        public static void __miss__radiance(LaunchParams launchParams)
+        {
+            var (dx, dy, dz) = OptixGetWorldRayDirection.Value;
+
+            // Scene-dependent HDRI environment map (docs/SAMPLE15_PLAN.md Milestone
+            // M5) - EnvMapWidth == 0 means this scene has none (SceneData.EnvMapPath
+            // unset), keeping the original flat analytic gradient sky below.
+            if (launchParams.EnvMapWidth > 0)
+            {
+                Vec3 rayDir = new Vec3(dx, dy, dz);
+                Vec3 envRadiance = EnvironmentMapSampling.Evaluate(launchParams, rayDir, out float pdfSolidAngle);
+
+                // MIS-weight a BSDF-sampled ray escaping directly into the environment
+                // (symmetric with MaterialShading.ShadeSurface's own emissive-triangle
+                // MIS weighting) - full unweighted radiance for the primary/camera ray
+                // or a ray that just left a delta lobe, matching that same sentinel
+                // convention (Payloads.DeltaOrPrimarySentinel).
+                float bsdfPdfIn = Payloads.GetCarriedBsdfPdf();
+                float weight = 1f;
+                if (launchParams.EnvMapLightPdf > 0f && bsdfPdfIn > 0f && pdfSolidAngle > 0f)
+                    weight = NextEventEstimation.PowerHeuristic(bsdfPdfIn, launchParams.EnvMapLightPdf * pdfSolidAngle);
+
+                Payloads.SetTerminalPayload(envRadiance * weight, new Vec3(0f, 0f, 0f), new Vec3(0f, 0f, 0f), new Vec3(0f, 0f, 0f));
+                return;
+            }
+
+            float t = 0.5f * (dy + 1f);
+            Vec3 sky = launchParams.BackgroundBottom + (t * (launchParams.BackgroundTop - launchParams.BackgroundBottom));
+            Payloads.SetTerminalPayload(sky, new Vec3(0f, 0f, 0f), new Vec3(0f, 0f, 0f), new Vec3(0f, 0f, 0f));
         }
     }
 }

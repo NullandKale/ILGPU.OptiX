@@ -12,10 +12,12 @@
 namespace Sample15
 {
     // Device-side view of a hitgroup record's custom data (the bytes after the header) -
-    // what OptixGetSbtDataPointer.Value points at inside __closest__radiance. Field layout
-    // must match HitgroupRecord in SbtBuilder.cs starting right after its fixed Header
-    // array. Only the radiance hitgroup record's data is ever read (the shadow ray's
-    // closest-hit is an empty stub).
+    // what OptixGetSbtDataPointer.Value points at inside __closest__radiance. This is T
+    // in SbtBuilder.cs's SbtRecord<MaterialSbtData>/OptixSbtRecords.Pack<MaterialSbtData>
+    // calls, which pack this struct immediately after each record's header - no
+    // hand-measured duplicate struct to keep in sync with this one anymore. Only the
+    // radiance hitgroup record's data is ever read (the shadow ray's closest-hit is an
+    // empty stub).
     //
     // This is Sample15's PBR material model (docs/SAMPLE15_PLAN.md Design Decision 2): a
     // glTF-style metallic-roughness parameter set, replacing Sample14's Albedo/
@@ -53,7 +55,7 @@ namespace Sample15
 
         // Roughness of the transmissive (BTDF) lobe specifically (docs/SAMPLE15_PLAN.md
         // Milestone M7, Walter et al. rough dielectric transmission,
-        // ShadingHelpers.ShadeDielectric) - the struct default (0) is a deliberate,
+        // MaterialShading.ShadeDielectric) - the struct default (0) is a deliberate,
         // desired degenerate case here (unlike the base Roughness field's own
         // struct-default trap, see docs/SAMPLE15_PLAN.md Milestone M4's postmortem):
         // it correctly reproduces M1's perfect-specular glass unless a scene
@@ -63,7 +65,7 @@ namespace Sample15
         // Texture handles, 0 = none (Sample08's convention). BaseColorTexture is read
         // starting in M1 (renamed from Sample14's TextureObject); OrmTexture (packed
         // occlusion.r/roughness.g/metallic.b) and NormalTexture are wired up by M6's
-        // texture/tangent pipeline (ShadingHelpers.cs's ApplyNormalMap/ShadeSurface).
+        // texture/tangent pipeline (MaterialShading.cs's ApplyNormalMap/ShadeSurface).
         public ulong BaseColorTexture;
         public ulong OrmTexture;
         public ulong NormalTexture;

@@ -258,3 +258,8 @@ example
 !Samples/Models/sponza/
 !Samples/Models/sponza/**
 docs
+
+# Visual Studio WPF designer temp projects (auto-generated, machine/session-specific
+# names like Sample05_lvy1z2eq_wpftmp.csproj) and Dear ImGui's per-run layout cache.
+*_wpftmp.csproj
+imgui.ini

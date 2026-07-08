@@ -10,6 +10,7 @@
 // ---------------------------------------------------------------------------------------
 
 using ILGPU.OptiX.Interop;
+using ILGPU.OptiX.Pipeline;
 using ILGPU.OptiX.Util;
 using ILGPU.Util;
 using System;
@@ -89,6 +90,7 @@ namespace ILGPU.OptiX
         private ModuleDestroy? cachedModuleDestroy;
         private ProgramGroupCreate? cachedProgramGroupCreate;
         private ProgramGroupDestroy? cachedProgramGroupDestroy;
+        private ProgramGroupGetStackSize? cachedProgramGroupGetStackSize;
         private PipelineCreate? cachedPipelineCreate;
         private PipelineDestroy? cachedPipelineDestroy;
         private PipelineSetStackSize? cachedPipelineSetStackSize;
@@ -113,6 +115,7 @@ namespace ILGPU.OptiX
             cachedModuleDestroy = null;
             cachedProgramGroupCreate = null;
             cachedProgramGroupDestroy = null;
+            cachedProgramGroupGetStackSize = null;
             cachedPipelineCreate = null;
             cachedPipelineDestroy = null;
             cachedPipelineSetStackSize = null;
@@ -281,6 +284,27 @@ namespace ILGPU.OptiX
         {
             var func = GetOrCreateDelegate(ref cachedProgramGroupDestroy, functionTable.OptixProgramGroupDestroy);
             return func(programGroup);
+        }
+
+        /// <summary>
+        /// Queries a program group's stack size requirements, feeding
+        /// <see cref="OptixStackSizeUtil.ComputeStackSizes"/> so pipeline stack sizes
+        /// can be computed instead of guessed.
+        /// </summary>
+        /// <param name="programGroup">The OptiX program group.</param>
+        /// <param name="stackSizes">The program group's stack size requirements.</param>
+        /// <param name="pipeline">
+        /// An optional pipeline to additionally account for external function calls;
+        /// pass <see cref="IntPtr.Zero"/> if not applicable.
+        /// </param>
+        [CLSCompliant(false)]
+        public OptixResult ProgramGroupGetStackSize(
+            IntPtr programGroup,
+            out OptixStackSizes stackSizes,
+            IntPtr pipeline)
+        {
+            var func = GetOrCreateDelegate(ref cachedProgramGroupGetStackSize, functionTable.OptixProgramGroupGetStackSize);
+            return func(programGroup, out stackSizes, pipeline);
         }
 
         /// <summary>
@@ -669,6 +693,58 @@ namespace ILGPU.OptiX
         }
 
         /// <summary>
+        /// Invokes the denoiser using already-marshaled native buffers for
+        /// <paramref name="parameters"/>/<paramref name="guideLayer"/>/
+        /// <paramref name="layers"/>, instead of the struct-taking overload's
+        /// per-call <see cref="SafeHGlobal.AllocFrom{T}(T)"/> marshaling. For
+        /// callers invoked every frame (e.g. a real-time denoiser loop) that already
+        /// own persistent native buffers sized once and overwritten per call.
+        /// </summary>
+        /// <param name="denoiser">The OptiX denoiser.</param>
+        /// <param name="stream">The CUDA stream.</param>
+        /// <param name="parameters">Native buffer holding a marshaled <see cref="OptixDenoiserParams"/>.</param>
+        /// <param name="denoiserState">The denoiser state buffer.</param>
+        /// <param name="denoiserStateSizeInBytes">The denoiser state buffer size.</param>
+        /// <param name="guideLayer">Native buffer holding a marshaled <see cref="OptixDenoiserGuideLayer"/>.</param>
+        /// <param name="layers">Native buffer holding <paramref name="numLayers"/> marshaled <see cref="OptixDenoiserLayer"/> entries.</param>
+        /// <param name="numLayers">The number of entries in <paramref name="layers"/>.</param>
+        /// <param name="inputOffsetX">The input tile X offset.</param>
+        /// <param name="inputOffsetY">The input tile Y offset.</param>
+        /// <param name="scratch">The denoiser scratch buffer.</param>
+        /// <param name="scratchSizeInBytes">The denoiser scratch buffer size.</param>
+        /// <returns>The OptiX result.</returns>
+        [CLSCompliant(false)]
+        public OptixResult DenoiserInvoke(
+            IntPtr denoiser,
+            IntPtr stream,
+            IntPtr parameters,
+            IntPtr denoiserState,
+            ulong denoiserStateSizeInBytes,
+            IntPtr guideLayer,
+            IntPtr layers,
+            uint numLayers,
+            uint inputOffsetX,
+            uint inputOffsetY,
+            IntPtr scratch,
+            ulong scratchSizeInBytes)
+        {
+            var func = GetOrCreateDelegate(ref cachedDenoiserInvoke, functionTable.OptixDenoiserInvoke);
+            return func(
+                denoiser,
+                stream,
+                parameters,
+                denoiserState,
+                denoiserStateSizeInBytes,
+                guideLayer,
+                layers,
+                numLayers,
+                inputOffsetX,
+                inputOffsetY,
+                scratch,
+                scratchSizeInBytes);
+        }
+
+        /// <summary>
         /// Computes the average log intensity of an input image, for use as
         /// OptixDenoiserParams.HdrIntensity.
         /// </summary>
@@ -691,6 +767,33 @@ namespace ILGPU.OptiX
             var func = GetOrCreateDelegate(ref cachedDenoiserComputeIntensity, functionTable.OptixDenoiserComputeIntensity);
             using var inputImagePtr = SafeHGlobal.AllocFrom(inputImage);
             return func(denoiser, stream, inputImagePtr, outputIntensity, scratch, scratchSizeInBytes);
+        }
+
+        /// <summary>
+        /// Computes the average log intensity using an already-marshaled native
+        /// buffer for <paramref name="inputImage"/>, instead of the struct-taking
+        /// overload's per-call <see cref="SafeHGlobal.AllocFrom{T}(T)"/> marshaling.
+        /// For callers invoked every frame that already own a persistent native
+        /// buffer sized once and overwritten per call.
+        /// </summary>
+        /// <param name="denoiser">The OptiX denoiser.</param>
+        /// <param name="stream">The CUDA stream.</param>
+        /// <param name="inputImage">Native buffer holding a marshaled <see cref="OptixImage2D"/>.</param>
+        /// <param name="outputIntensity">The output device buffer (a single float).</param>
+        /// <param name="scratch">The denoiser scratch buffer.</param>
+        /// <param name="scratchSizeInBytes">The denoiser scratch buffer size.</param>
+        /// <returns>The OptiX result.</returns>
+        [CLSCompliant(false)]
+        public OptixResult DenoiserComputeIntensity(
+            IntPtr denoiser,
+            IntPtr stream,
+            IntPtr inputImage,
+            IntPtr outputIntensity,
+            IntPtr scratch,
+            ulong scratchSizeInBytes)
+        {
+            var func = GetOrCreateDelegate(ref cachedDenoiserComputeIntensity, functionTable.OptixDenoiserComputeIntensity);
+            return func(denoiser, stream, inputImage, outputIntensity, scratch, scratchSizeInBytes);
         }
 
         /// <summary>

@@ -1,8 +1,6 @@
-using ILGPU;
 using ILGPU.OptiX;
 using ILGPU.OptiX.Device;
-using System;
-using System.Numerics;
+using System.Runtime.InteropServices;
 
 namespace Sample15
 {
@@ -25,16 +23,39 @@ namespace Sample15
     /// </summary>
     public static class Payloads
     {
-        // Single source of truth for the radiance payload's register count - read by
-        // RendererPipeline.cs's NumPayloadValues so the pipeline's declared count and
-        // the actual OptixTrace.Trace(...) call site in RaygenProgram.cs can never
-        // drift out of sync again (docs/SAMPLE15_PLAN.md Milestone M3 - this drift is
-        // exactly what caused "20 payload values specified in optixTrace, but only 19
-        // values are configured for payload type 0" the first time this was bumped).
-        // 24 is within the true 26-register ceiling (see the OptixTrace payload
-        // ceiling note - bounded by CudaAsm.EmitRef's 44-ref generated overload cap,
-        // not OptiX's own 32-payload limit), so no .tt regeneration is needed.
-        internal const int RadiancePayloadCount = 24;
+        // Exact device-side layout of the radiance ray's 24-register payload, used by
+        // OptixPayload.Read{T}/Write{T} (this file) and OptixTrace.Trace{T}
+        // (RaygenProgram.cs) - see docs/API_USABILITY_PLAN.md section 2. Flat
+        // float/uint fields (rather than nesting Vec3, which has no
+        // [StructLayout] of its own and so has no *guaranteed* field order) avoid
+        // depending on an unrelated type's undocumented layout for correctness here.
+        // OptixPayloadLayout.CountOf<T> (host-side only) validates this struct is
+        // exactly 24 words with no padding.
+        [StructLayout(LayoutKind.Sequential)]
+        internal struct RadiancePayload
+        {
+            public float RadianceX, RadianceY, RadianceZ;    // 0-2
+            public uint Flag;                                 // 3
+            public float NewOriginX, NewOriginY, NewOriginZ;  // 4-6
+            public float NewDirX, NewDirY, NewDirZ;           // 7-9
+            public float TintX, TintY, TintZ;                 // 10-12
+            public float NormalX, NormalY, NormalZ;           // 13-15
+            public float AlbedoX, AlbedoY, AlbedoZ;           // 16-18
+            public uint RngState;                             // 19
+            public float BsdfPdf;                             // 20
+            public float HitPosX, HitPosY, HitPosZ;           // 21-23
+        }
+
+        // The shadow ray only ever uses payload0-3 (transmittance xyz + hit count) -
+        // see Rays/ShadowRay.cs's Trace/__anyhit__shadow/__miss__shadow (and its own
+        // payload-contract doc comment). Same flat-fields-not-nested-Vec3 rationale as
+        // RadiancePayload above.
+        [StructLayout(LayoutKind.Sequential)]
+        internal struct ShadowPayload
+        {
+            public float TransmittanceX, TransmittanceY, TransmittanceZ; // 0-2
+            public uint HitCount;                                        // 3
+        }
 
         // A real BSDF pdf is always > 0 - this sentinel flags "no valid MIS competitor
         // for this bounce" (either the previous bounce sampled a delta lobe, whose pdf
@@ -64,64 +85,69 @@ namespace Sample15
         // which bounce a given closest-hit invocation corresponds to.
         internal static void SetTerminalPayload(Vec3 contribution, Vec3 normal, Vec3 albedo, Vec3 hitPos)
         {
-            // Span<T>/stackalloc + OptixPayload.SetRange are host-only conveniences -
-            // ILGPU's device-code IL frontend cannot compile Span<T> (it hits an
-            // internal compiler error resolving its metadata token), so payload
-            // registers are set one at a time here instead.
-            OptixPayload.Set(0, Interop.FloatAsInt(contribution.x));
-            OptixPayload.Set(1, Interop.FloatAsInt(contribution.y));
-            OptixPayload.Set(2, Interop.FloatAsInt(contribution.z));
-            OptixPayload.Set(3, BOUNCE_TERMINAL);
-            SetAovPayload(normal, albedo);
-            SetHitPositionPayload(hitPos);
-            // Payload19 (RNG state) deliberately left untouched - raygen's loop breaks
-            // on BOUNCE_TERMINAL before it would read a next-bounce seed back out.
+            // NewOrigin/NewDirection/Tint/RngState/BsdfPdf are left at their struct
+            // default (0) - raygen's bounce loop breaks as soon as it sees
+            // BOUNCE_TERMINAL, before it would ever read any of them back out (see
+            // RaygenProgram.cs's __raygen__renderFrame), so writing 0 instead of
+            // leaving the incoming register value untouched (what the old
+            // per-register OptixPayload.Set(...) calls did) is not observable.
+            var payload = new RadiancePayload
+            {
+                RadianceX = contribution.x,
+                RadianceY = contribution.y,
+                RadianceZ = contribution.z,
+                Flag = BOUNCE_TERMINAL,
+                NormalX = normal.x,
+                NormalY = normal.y,
+                NormalZ = normal.z,
+                AlbedoX = albedo.x,
+                AlbedoY = albedo.y,
+                AlbedoZ = albedo.z,
+                HitPosX = hitPos.x,
+                HitPosY = hitPos.y,
+                HitPosZ = hitPos.z,
+            };
+            OptixPayload.Write(in payload);
         }
 
         internal static void SetContinuePayload(Vec3 contribution, uint flag, Vec3 newOrigin, Vec3 newDir, Vec3 tint, Vec3 normal, Vec3 albedo, uint rngState, float bsdfPdf, Vec3 hitPos)
         {
-            OptixPayload.Set(0, Interop.FloatAsInt(contribution.x));
-            OptixPayload.Set(1, Interop.FloatAsInt(contribution.y));
-            OptixPayload.Set(2, Interop.FloatAsInt(contribution.z));
-            OptixPayload.Set(3, flag);
-            OptixPayload.Set(4, Interop.FloatAsInt(newOrigin.x));
-            OptixPayload.Set(5, Interop.FloatAsInt(newOrigin.y));
-            OptixPayload.Set(6, Interop.FloatAsInt(newOrigin.z));
-            OptixPayload.Set(7, Interop.FloatAsInt(newDir.x));
-            OptixPayload.Set(8, Interop.FloatAsInt(newDir.y));
-            OptixPayload.Set(9, Interop.FloatAsInt(newDir.z));
-            OptixPayload.Set(10, Interop.FloatAsInt(tint.x));
-            OptixPayload.Set(11, Interop.FloatAsInt(tint.y));
-            OptixPayload.Set(12, Interop.FloatAsInt(tint.z));
-            SetAovPayload(normal, albedo);
-            OptixPayload.Payload19 = rngState;
-            OptixPayload.Payload20 = Interop.FloatAsInt(bsdfPdf);
-            SetHitPositionPayload(hitPos);
+            var payload = new RadiancePayload
+            {
+                RadianceX = contribution.x,
+                RadianceY = contribution.y,
+                RadianceZ = contribution.z,
+                Flag = flag,
+                NewOriginX = newOrigin.x,
+                NewOriginY = newOrigin.y,
+                NewOriginZ = newOrigin.z,
+                NewDirX = newDir.x,
+                NewDirY = newDir.y,
+                NewDirZ = newDir.z,
+                TintX = tint.x,
+                TintY = tint.y,
+                TintZ = tint.z,
+                NormalX = normal.x,
+                NormalY = normal.y,
+                NormalZ = normal.z,
+                AlbedoX = albedo.x,
+                AlbedoY = albedo.y,
+                AlbedoZ = albedo.z,
+                RngState = rngState,
+                BsdfPdf = bsdfPdf,
+                HitPosX = hitPos.x,
+                HitPosY = hitPos.y,
+                HitPosZ = hitPos.z,
+            };
+            OptixPayload.Write(in payload);
         }
 
         // Reads the RNG state carried in via Payload19 before this closest-hit call -
         // the caller (raygen) seeds it once per sample before the bounce loop starts.
-        internal static uint GetCarriedRngState() => OptixPayload.Payload19;
+        internal static uint GetCarriedRngState() => OptixPayload.Read<RadiancePayload>().RngState;
 
         // Reads the BSDF pdf (or DeltaOrPrimarySentinel) carried in via Payload20 -
         // see this class's own doc comment.
-        internal static float GetCarriedBsdfPdf() => Interop.IntAsFloat(OptixPayload.Payload20);
-
-        internal static void SetAovPayload(Vec3 normal, Vec3 albedo)
-        {
-            OptixPayload.Set(13, Interop.FloatAsInt(normal.x));
-            OptixPayload.Set(14, Interop.FloatAsInt(normal.y));
-            OptixPayload.Set(15, Interop.FloatAsInt(normal.z));
-            OptixPayload.Set(16, Interop.FloatAsInt(albedo.x));
-            OptixPayload.Set(17, Interop.FloatAsInt(albedo.y));
-            OptixPayload.Set(18, Interop.FloatAsInt(albedo.z));
-        }
-
-        internal static void SetHitPositionPayload(Vec3 hitPos)
-        {
-            OptixPayload.Set(21, Interop.FloatAsInt(hitPos.x));
-            OptixPayload.Set(22, Interop.FloatAsInt(hitPos.y));
-            OptixPayload.Set(23, Interop.FloatAsInt(hitPos.z));
-        }
+        internal static float GetCarriedBsdfPdf() => OptixPayload.Read<RadiancePayload>().BsdfPdf;
     }
 }

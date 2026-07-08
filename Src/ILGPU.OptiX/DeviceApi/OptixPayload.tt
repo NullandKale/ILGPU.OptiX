@@ -57,14 +57,24 @@ namespace ILGPU.OptiX
 
         /// <summary>
         /// Reads payload register <paramref name="index"/> (0..<see cref="MaxCount"/>-1).
-        /// Prefer the individually named Payload0/Payload1/... properties when the
-        /// index is a compile-time constant (identical generated code either way,
-        /// since the underlying _optix_get_payload pseudo-call already takes the
-        /// index as a runtime register regardless of whether the C# call site does) -
-        /// this overload exists for callers that need to address a payload by a
-        /// genuinely runtime-computed index, e.g. a loop copying several registers.
         /// </summary>
-        /// <param name="index">The payload register index.</param>
+        /// <remarks>
+        /// <paramref name="index"/> MUST be a compile-time constant at this call site
+        /// (a literal, or an expression ILGPU is known to constant-fold before
+        /// generating PTX) - the underlying OptiX driver rejects
+        /// <c>optixGetPayload</c>/<c>optixSetPayload</c> calls whose index argument
+        /// isn't a literal in the compiled module with "payload index operator isn't
+        /// a constant integer", confirmed by an actual failed OptiX module compile. A
+        /// genuinely runtime-computed index (e.g. a loop variable in
+        /// <c>for (int i = 0; i &lt; count; i++) Get(i);</c>) fails this way even
+        /// though ILGPU itself compiles the kernel without complaint - the error only
+        /// surfaces one step later, at OptiX module compilation. Prefer the
+        /// individually named Payload0/Payload1/... properties, or
+        /// <see cref="Read{T}"/>/<see cref="Write{T}"/> for a whole payload struct at
+        /// once (both use a literal index per call, generated per register count -
+        /// see <see cref="Read{T}"/>'s own remarks).
+        /// </remarks>
+        /// <param name="index">The payload register index; must be a compile-time constant.</param>
         /// <returns>The raw 32-bit payload value.</returns>
         public static uint Get(int index)
         {
@@ -79,10 +89,10 @@ namespace ILGPU.OptiX
 
         /// <summary>
         /// Writes payload register <paramref name="index"/> (0..<see cref="MaxCount"/>-1).
-        /// See <see cref="Get(int)"/> for when to prefer this over the named
-        /// Payload0/Payload1/... properties.
+        /// See <see cref="Get(int)"/>'s remarks - <paramref name="index"/> must be a
+        /// compile-time constant here too.
         /// </summary>
-        /// <param name="index">The payload register index.</param>
+        /// <param name="index">The payload register index; must be a compile-time constant.</param>
         /// <param name="value">The raw 32-bit payload value.</param>
         public static void Set(int index, uint value)
         {
@@ -112,33 +122,77 @@ namespace ILGPU.OptiX
         /// <param name="value">The float value to write (stored bit-for-bit, not converted).</param>
         public static void SetFloat(int index, float value) => Set(index, ILGPU.Interop.FloatAsInt(value));
 
+        // SetRange/GetRange (a runtime for-loop calling Set(startIndex+i, ...)/
+        // Get(startIndex+i)) used to live here, "for bulk payload access when the
+        // register count is not a compile-time constant." That premise is impossible
+        // to satisfy correctly - see Get(int)'s remarks - so they were deleted rather
+        // than left as a working-in-ILGPU, failing-in-OptiX trap for the next caller.
+        // Use Read{T}/Write{T} (a whole struct at once, literal index per register) or
+        // the individually named Payload0/Payload1/... properties instead.
+
         /// <summary>
-        /// Writes a span of payload values starting at <paramref name="startIndex"/>.
-        /// Used for bulk payload initialization when the register count is not a
-        /// compile-time constant (e.g., loop-based payload setup from arrays).
+        /// Reads payload registers 0..(sizeof(T)/4 - 1) into a single struct, so a hit
+        /// or miss program never needs to unpack registers by hand (or convert floats
+        /// via <see cref="ILGPU.Interop.IntAsFloat(uint)"/> one field at a time). Use
+        /// together with <see cref="OptixTrace.Trace{T}"/> on the raygen side, which
+        /// carries exactly the registers this reads. <typeparamref name="T"/>'s field
+        /// layout must contain only float/int/uint fields (or structs composed of
+        /// them, e.g. <see cref="System.Numerics.Vector3"/>) with no padding - see
+        /// <see cref="OptixPayloadLayout.CountOf{T}"/>, which validates this host-side
+        /// at pipeline setup time.
         /// </summary>
-        /// <param name="startIndex">The starting payload register index.</param>
-        /// <param name="values">The values to write (length must not exceed MaxCount - startIndex).</param>
-        public static void SetRange(uint startIndex, ReadOnlySpan<uint> values)
+        /// <remarks>
+        /// Dispatches on <c>sizeof(T)/4</c> to one of the cases below, each of which
+        /// calls <see cref="Get(int)"/> with a literal constant index per register -
+        /// OptiX's own compiler requires the index argument to
+        /// <c>optixGetPayload</c>/<c>optixSetPayload</c> to be a genuine compile-time
+        /// constant at each call site ("payload index operator isn't a constant
+        /// integer" otherwise). A single runtime loop calling <c>Get(i)</c> with a
+        /// loop-variable <c>i</c> does NOT satisfy this - confirmed by an actual
+        /// OptiX module compile failure - regardless of whether ILGPU's own optimizer
+        /// unrolls the loop, since every call site would still share one non-constant
+        /// index value; unrolling at the C# source level instead (one literal call per
+        /// register, per case) guarantees each call site's index is a literal in the
+        /// generated PTX.
+        /// </remarks>
+        public static unsafe T Read<T>() where T : unmanaged
         {
-            for (uint i = 0; i < (uint)values.Length; i++)
+            T result = default;
+            uint* words = (uint*)&result;
+            int count = sizeof(T) / 4;
+            switch (count)
             {
-                Set((int)(startIndex + i), values[(int)i]);
+<#
+    for (int paramIdx = 0; paramIdx <= MaxAchievablePayloadValues; paramIdx++) {
+        var getCalls = string.Concat(Enumerable.Range(0, paramIdx).Select(i => $" words[{i}] = Get({i});"));
+#>
+                case <#= paramIdx #>:<#= getCalls #> break;
+<#  } #>
             }
+            return result;
         }
 
         /// <summary>
-        /// Reads a span of payload values starting at <paramref name="startIndex"/>.
-        /// Used for bulk payload extraction when the register count is not a
-        /// compile-time constant (e.g., loop-based payload reads).
+        /// Writes <paramref name="payload"/>'s fields into payload registers
+        /// 0..(sizeof(T)/4 - 1) - the write-side counterpart of <see cref="Read{T}"/>.
+        /// See <see cref="Read{T}"/>'s remarks for why this dispatches to a literal
+        /// per-register call per case instead of a runtime loop.
         /// </summary>
-        /// <param name="startIndex">The starting payload register index.</param>
-        /// <param name="values">The span to fill with payload values (length must not exceed MaxCount - startIndex).</param>
-        public static void GetRange(uint startIndex, Span<uint> values)
+        public static unsafe void Write<T>(in T payload) where T : unmanaged
         {
-            for (uint i = 0; i < (uint)values.Length; i++)
+            fixed (T* p = &payload)
             {
-                values[(int)i] = Get((int)(startIndex + i));
+                uint* words = (uint*)p;
+                int count = sizeof(T) / 4;
+                switch (count)
+                {
+<#
+    for (int paramIdx = 0; paramIdx <= MaxAchievablePayloadValues; paramIdx++) {
+        var setCalls = string.Concat(Enumerable.Range(0, paramIdx).Select(i => $" Set({i}, words[{i}]);"));
+#>
+                    case <#= paramIdx #>:<#= setCalls #> break;
+<#  } #>
+                }
             }
         }
 

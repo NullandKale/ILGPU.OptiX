@@ -129,6 +129,8 @@ namespace ILGPU.OptiX
                 {
                     OptixAPI.Current.DeviceContextDestroy(DeviceContextPtr);
                     DeviceContextPtr = IntPtr.Zero;
+                    // Balances the Init() call made by OptixContext.CreateDeviceContext.
+                    OptixAPI.Current.Uninit();
                 }
             }
             base.Dispose(disposing);

@@ -11,6 +11,7 @@
 
 using ILGPU;
 using ILGPU.OptiX;
+using ILGPU.OptiX.Device;
 using ILGPU.OptiX.Interop;
 using ILGPU.OptiX.Pipeline;
 using ILGPU.OptiX.AccelStructures;
@@ -101,11 +102,11 @@ namespace Sample07
         BuiltAccelStructure builtAccel;
         IntPtr traversable;
 
-        public unsafe SampleRenderer(int width, int height, MainWindow window)
+        public SampleRenderer(int width, int height, MainWindow window)
         {
             this.window = window;
 
-            context = Context.Create(b => b.Cuda().InitOptiX());
+            context = Context.Create(b => b.Cuda());
             accelerator = context.CreateCudaAccelerator(0);
             deviceContext = accelerator.CreateDeviceContext()
                 .WithModuleCompileOptions(new OptixModuleCompileOptions()
@@ -241,7 +242,7 @@ namespace Sample07
             context.Dispose();
         }
 
-        public unsafe void resize(int width, int height)
+        public void resize(int width, int height)
         {
             if (width != 0 && height != 0)
             {
@@ -256,13 +257,13 @@ namespace Sample07
                 colorArray = new byte[colorBuffer0.Length];
                 launchParams = new LaunchParams()
                 {
-                    ColorBuffer = (uint*)colorBuffer0.NativePtr,
+                    ColorBuffer = OptixDeviceView<uint>.FromBytes(colorBuffer0),
                     camera = this.camera,
                     traversable = unchecked((ulong)this.traversable.ToInt64()),
-                    Vertices = (Vec3*)d_vertices.NativePtr,
-                    Normals = (Vec3*)d_normals.NativePtr,
-                    TexCoords = (Vec2*)d_texCoords.NativePtr,
-                    Indices = (Vec3i*)d_indices.NativePtr
+                    Vertices = OptixDeviceView<Vec3>.From(d_vertices),
+                    Normals = OptixDeviceView<Vec3>.From(d_normals),
+                    TexCoords = OptixDeviceView<Vec2>.From(d_texCoords),
+                    Indices = OptixDeviceView<Vec3i>.From(d_indices)
                 };
             }
         }

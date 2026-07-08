@@ -150,7 +150,7 @@ namespace Sample15
                         // compared to the geometry" with the flip in place, and no
                         // other place in the pipeline touches V (SampleAlbedo/
                         // SampleAlpha/SampleOrm/ApplyNormalMap all use the interpolated
-                        // uv.y as-is - see ShadingHelpers.cs), so the flip itself was
+                        // uv.y as-is - see MaterialShading.cs), so the flip itself was
                         // the bug. If a *different* OBJ asset is ever added that
                         // genuinely does follow the spec's bottom-left convention, it
                         // will need its own per-asset flip instead of a global one here.

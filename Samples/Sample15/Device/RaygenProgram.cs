@@ -1,6 +1,7 @@
 using ILGPU;
 using ILGPU.Algorithms;
 using ILGPU.OptiX;
+using ILGPU.OptiX.Device;
 using System.Numerics;
 
 namespace Sample15
@@ -32,7 +33,7 @@ namespace Sample15
         private const float MinSurvivalProbability = 0.05f;
         private const float MaxSurvivalProbability = 0.95f;
 
-        public unsafe static void __raygen__renderFrame(LaunchParams launchParams)
+        public static void __raygen__renderFrame(LaunchParams launchParams)
         {
             var ix = OptixGetLaunchIndex.X;
             var iy = OptixGetLaunchIndex.Y;
@@ -69,60 +70,51 @@ namespace Sample15
 
                 for (int bounce = 0; bounce < MaxTotalBounces; bounce++)
                 {
-                    uint p0 = 0, p1 = 0, p2 = 0, p3 = 0, p4 = 0, p5 = 0, p6 = 0, p7 = 0, p8 = 0, p9 = 0, p10 = 0, p11 = 0, p12 = 0;
-                    uint p13 = 0, p14 = 0, p15 = 0, p16 = 0, p17 = 0, p18 = 0, p19 = rng.State, p20 = Interop.FloatAsInt(bsdfPdf);
-                    uint p21 = 0, p22 = 0, p23 = 0;
+                    var payload = new Payloads.RadiancePayload
+                    {
+                        RngState = rng.State,
+                        BsdfPdf = bsdfPdf,
+                    };
+
+                    Vector3 origin = new Vector3(rayOrigin.x, rayOrigin.y, rayOrigin.z);
+                    Vector3 direction = new Vector3(rayDir.x, rayDir.y, rayDir.z);
+
                     OptixTrace.Trace(
                         launchParams.traversable,
-                        (rayOrigin.x, rayOrigin.y, rayOrigin.z),
-                        (rayDir.x, rayDir.y, rayDir.z),
+                        origin,
+                        direction,
                         1e-3f,
                         1e20f,
-                        0.0f,
-                        0xff,
+                        ref payload,
                         // Any-hit must run on radiance rays now that alpha-cutout
                         // materials exist (Sponza's leaf geometry) - __anyhit__radiance
                         // is what actually ignores the intersection for a
                         // below-threshold-alpha sample. DISABLE_ANYHIT (the old value
                         // here, from before alpha-cutout existed) would silently skip
                         // that test and shade the nearest triangle regardless of alpha.
-                        OptixRayFlags.OPTIX_RAY_FLAG_NONE,
-                        Payloads.RADIANCE_RAY_TYPE,
-                        Payloads.RAY_TYPE_COUNT,
-                        Payloads.RADIANCE_RAY_TYPE,
-                        ref p0, ref p1, ref p2, ref p3, ref p4, ref p5, ref p6, ref p7, ref p8, ref p9, ref p10, ref p11, ref p12,
-                        ref p13, ref p14, ref p15, ref p16, ref p17, ref p18, ref p19, ref p20, ref p21, ref p22, ref p23);
+                        rayFlags: OptixRayFlags.OPTIX_RAY_FLAG_NONE,
+                        sbtOffset: Payloads.RADIANCE_RAY_TYPE,
+                        sbtStride: Payloads.RAY_TYPE_COUNT,
+                        missSbtIndex: Payloads.RADIANCE_RAY_TYPE);
 
-                    // Payload results come back through the ref-parameters passed to
+                    // Payload results come back through the struct passed by ref to
                     // Trace() above, not through OptixPayloadInterop/GetVec3Registers -
                     // those call the optixGetPayload device intrinsic, which is only
                     // legal inside the hit/miss/anyhit programs that ran during this
                     // trace, not here in raygen after Trace() has already returned.
-                    Vec3 radianceVec = new Vec3(
-                        ILGPU.Interop.IntAsFloat(p0),
-                        ILGPU.Interop.IntAsFloat(p1),
-                        ILGPU.Interop.IntAsFloat(p2));
+                    Vec3 radianceVec = new Vec3(payload.RadianceX, payload.RadianceY, payload.RadianceZ);
                     sampleRadiance += throughput * radianceVec;
 
                     // AOV guide buffers only ever reflect the primary ray's own hit
                     // (bounce 0), matching Sample11/12's convention - a mirror/glass
                     // primary hit still contributes its own normal/tint here, which is
                     // exactly what the denoiser needs to recognize that surface.
-                    uint flag = p3;
+                    uint flag = payload.Flag;
                     if (bounce == 0)
                     {
-                        sampleNormal = new Vec3(
-                            ILGPU.Interop.IntAsFloat(p13),
-                            ILGPU.Interop.IntAsFloat(p14),
-                            ILGPU.Interop.IntAsFloat(p15));
-                        sampleAlbedo = new Vec3(
-                            ILGPU.Interop.IntAsFloat(p16),
-                            ILGPU.Interop.IntAsFloat(p17),
-                            ILGPU.Interop.IntAsFloat(p18));
-                        sampleHitPos = new Vec3(
-                            ILGPU.Interop.IntAsFloat(p21),
-                            ILGPU.Interop.IntAsFloat(p22),
-                            ILGPU.Interop.IntAsFloat(p23));
+                        sampleNormal = new Vec3(payload.NormalX, payload.NormalY, payload.NormalZ);
+                        sampleAlbedo = new Vec3(payload.AlbedoX, payload.AlbedoY, payload.AlbedoZ);
+                        sampleHitPos = new Vec3(payload.HitPosX, payload.HitPosY, payload.HitPosZ);
                         // Mirror/glass reflections and refractions have apparent motion
                         // that doesn't match the reflecting/refracting surface's own
                         // geometric motion - position-based reprojection is simply
@@ -142,21 +134,12 @@ namespace Sample15
                     // sampling left it (docs/SAMPLE15_PLAN.md Milestone M3) - a single
                     // continuous stream shared between raygen's own draws (pixel
                     // jitter, Russian roulette below) and every shading call.
-                    rng.State = p19;
-                    bsdfPdf = ILGPU.Interop.IntAsFloat(p20);
+                    rng.State = payload.RngState;
+                    bsdfPdf = payload.BsdfPdf;
 
-                    throughput *= new Vec3(
-                        ILGPU.Interop.IntAsFloat(p10),
-                        ILGPU.Interop.IntAsFloat(p11),
-                        ILGPU.Interop.IntAsFloat(p12));
-                    rayOrigin = new Vec3(
-                        ILGPU.Interop.IntAsFloat(p4),
-                        ILGPU.Interop.IntAsFloat(p5),
-                        ILGPU.Interop.IntAsFloat(p6));
-                    rayDir = new Vec3(
-                        ILGPU.Interop.IntAsFloat(p7),
-                        ILGPU.Interop.IntAsFloat(p8),
-                        ILGPU.Interop.IntAsFloat(p9));
+                    throughput *= new Vec3(payload.TintX, payload.TintY, payload.TintZ);
+                    rayOrigin = new Vec3(payload.NewOriginX, payload.NewOriginY, payload.NewOriginZ);
+                    rayDir = new Vec3(payload.NewDirX, payload.NewDirY, payload.NewDirZ);
 
                     if (bounce + 1 >= launchParams.MaxBounces)
                         break;
@@ -200,13 +183,12 @@ namespace Sample15
 
             // Reproject this pixel's primary-hit world position against the *previous*
             // frame's camera - the inverse of how this method's own screenX/screenY ->
-            // rayDir construction above works. Single source of truth reused below for
-            // both the new per-pixel reprojected color/count accumulation (replacing
-            // the old FrameID-keyed running mean) and the Flow/FlowTrustworthiness
-            // guide buffers for the OptiX temporal denoiser. A near-zero pixelNormal
-            // means the primary ray missed all geometry (the miss program's own
-            // normal=(0,0,0) sentinel, averaged across samples) - background pixels
-            // have no world position to reproject, so they're always untrustworthy.
+            // rayDir construction above works. Feeds the per-pixel reprojected
+            // color/count accumulation TaaResolveKernel.cs finishes (replacing the old
+            // FrameID-keyed running mean). A near-zero pixelNormal means the primary ray
+            // missed all geometry (the miss program's own normal=(0,0,0) sentinel,
+            // averaged across samples) - background pixels have no world position to
+            // reproject, so they're always untrustworthy.
             bool primaryHit = pixelNormal.lengthSquared() > 1e-6f;
 
             // This frame's own view-space depth (distance along the camera's forward
@@ -270,19 +252,18 @@ namespace Sample15
                     trustHistory = false;
             }
 
-            // Per-pixel reprojected accumulation (bounded/capped incremental mean -
-            // "SMA-then-EMA", the standard production-TAA convergence technique):
-            // history keeps growing (and the new-sample weight keeps shrinking) up to
-            // MaxHistoryFrames, then holds at a fixed small blend-in rate forever -
-            // unlike the old unbounded running mean, this never needs a hard reset on
-            // camera motion, since untrustworthy pixels just reset their own count to 1
-            // individually instead of the whole frame reverting to raw noise.
-            Vec3 blendedColor = pixelColor;
-            float newCount = 1f;
+            // Disocclusion rejection resolves trustHistory the rest of the way here
+            // (needs this pixel's own reprojection math above plus the previous
+            // frame's stored depth), but the actual color blend - and the neighborhood
+            // clamp that guards it - is deferred to TaaResolveKernel.cs, run as a
+            // separate pass once every pixel in this frame has finished writing below.
+            // OptiX raygen threads have no ordering/synchronization guarantee across
+            // pixels in the same launch, so reading a neighbor's *this-frame* color
+            // here (which the clamp needs) would be a race; TaaResolveKernel.cs runs
+            // only after this whole launch has completed, when that read is safe.
             if (trustHistory)
             {
                 Vec4 prevSample = SampleBilinearColor(launchParams.PrevColorBuffer, camera.width, camera.height, prevPixelX, prevPixelY);
-                float prevCount = SampleNearestScalar(launchParams.PrevAccumCountBuffer, camera.width, camera.height, prevPixelX, prevPixelY);
 
                 // Disocclusion rejection: the reprojected screen location used to show
                 // a surface at prevSample.w's depth - if that's very different from
@@ -295,30 +276,12 @@ namespace Sample15
                 float depthThreshold = launchParams.DepthRejectionThreshold * XMath.Max(currentDepth, prevSample.w);
                 if (depthDiff > depthThreshold)
                     trustHistory = false;
-
-                if (trustHistory)
-                {
-                    Vec3 prevColor = new Vec3(prevSample.x, prevSample.y, prevSample.z);
-
-                    // Real-time decay (see LaunchParams.HistoryDecayHalfLifeSeconds's
-                    // own doc comment) - ages the effective count down every frame on a
-                    // wall-clock schedule, so even a static/well-reprojected pixel keeps
-                    // slowly forgetting old contributions instead of freezing at a
-                    // fixed weight once it hits MaxHistoryFrames.
-                    if (launchParams.HistoryDecayHalfLifeSeconds > 0f)
-                        prevCount *= XMath.Pow(0.5f, launchParams.DeltaTimeSeconds / launchParams.HistoryDecayHalfLifeSeconds);
-
-                    newCount = XMath.Min(prevCount + 1f, (float)launchParams.MaxHistoryFrames);
-                    blendedColor = prevColor + ((pixelColor - prevColor) / newCount);
-                }
             }
 
-            launchParams.ColorBuffer[fbIndex] = new Vec4(blendedColor.x, blendedColor.y, blendedColor.z, currentDepth);
-            launchParams.AccumCountBuffer[fbIndex] = newCount;
-
-            Vec2 flow = trustHistory ? new Vec2(ix - prevPixelX, iy - prevPixelY) : new Vec2(0f, 0f);
-            launchParams.FlowBuffer[fbIndex] = flow;
-            launchParams.FlowTrustworthinessBuffer[fbIndex] = trustHistory ? 1f : 0f;
+            launchParams.RawColorBuffer[fbIndex] = new Vec4(pixelColor.x, pixelColor.y, pixelColor.z, currentDepth);
+            launchParams.ReprojCoordBuffer[fbIndex] = trustHistory
+                ? new Vec2(prevPixelX, prevPixelY)
+                : new Vec2(TaaResolveKernel.NoHistorySentinel, TaaResolveKernel.NoHistorySentinel);
         }
 
         // 4-tap bilinear sample of the color+depth history at a (generally fractional)
@@ -335,7 +298,7 @@ namespace Sample15
         // not being cancelled, not bilinear filtering itself. Vec4/float have no
         // operator overloads in this sample, so this is written component-by-component
         // rather than via a generic lerp.
-        static unsafe Vec4 SampleBilinearColor(Vec4* buffer, int width, int height, float px, float py)
+        static Vec4 SampleBilinearColor(OptixDeviceView<Vec4> buffer, int width, int height, float px, float py)
         {
             float cx = XMath.Clamp(px, 0f, width - 1f);
             float cy = XMath.Clamp(py, 0f, height - 1f);
@@ -354,16 +317,6 @@ namespace Sample15
             float b = ((c00.z * (1f - fx)) + (c10.z * fx)) * (1f - fy) + (((c01.z * (1f - fx)) + (c11.z * fx)) * fy);
             float a = ((c00.w * (1f - fx)) + (c10.w * fx)) * (1f - fy) + (((c01.w * (1f - fx)) + (c11.w * fx)) * fy);
             return new Vec4(r, g, b, a);
-        }
-
-        // Nearest-neighbor sample for AccumCount - a confidence/history-length scalar,
-        // not visible color, so there's no moire concern; kept simple rather than
-        // blending "how many frames" across a boundary.
-        static unsafe float SampleNearestScalar(float* buffer, int width, int height, float px, float py)
-        {
-            int x = XMath.Clamp((int)XMath.Round(px), 0, width - 1);
-            int y = XMath.Clamp((int)XMath.Round(py), 0, height - 1);
-            return buffer[x + (y * width)];
         }
     }
 }

@@ -9,12 +9,14 @@
 // Source License. See LICENSE.txt for details.
 // ---------------------------------------------------------------------------------------
 
+using ILGPU.OptiX.Device;
+
 namespace Sample03
 {
-    public unsafe struct LaunchParams
+    public struct LaunchParams
     {
         public int FrameID;
-        public uint* ColorBuffer;
+        public OptixDeviceView<uint> ColorBuffer;
         public int FbSizeX;
         public int FbSizeY;
     }

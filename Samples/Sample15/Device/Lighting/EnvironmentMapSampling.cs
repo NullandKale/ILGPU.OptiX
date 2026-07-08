@@ -5,8 +5,9 @@ namespace Sample15
     /// <summary>
     /// Device-side importance sampling and evaluation for the HDRI environment map
     /// (docs/SAMPLE15_PLAN.md Milestone M5) - shared by NextEventEstimation.cs (picking
-    /// a direction toward the environment) and MissAndShadowPrograms.cs (evaluating the
-    /// environment's radiance/pdf in a BSDF-sampled ray's own miss direction). Both
+    /// a direction toward the environment) and Rays/RadianceRay.cs's __miss__radiance
+    /// (evaluating the environment's radiance/pdf in a BSDF-sampled ray's own miss
+    /// direction). Both
     /// sides use the same equirectangular direction&lt;-&gt;uv mapping and the same
     /// texel-quantized pdf lookup, which is what makes their MIS weights consistent.
     /// </summary>

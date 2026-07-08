@@ -12,6 +12,7 @@
 using ILGPU;
 using ILGPU.OptiX;
 using ILGPU.OptiX.AccelStructures;
+using ILGPU.OptiX.Device;
 using ILGPU.OptiX.Interop;
 using ILGPU.OptiX.Pipeline;
 using ILGPU.Runtime;
@@ -93,12 +94,12 @@ namespace Sample04
         BuiltAccelStructure builtAccel;
         IntPtr traversable;
 
-        public unsafe SampleRenderer(int width, int height, MainWindow window)
+        public SampleRenderer(int width, int height, MainWindow window)
         {
             this.window = window;
 
             //init optix
-            context = Context.Create(b => b.Cuda().InitOptiX());
+            context = Context.Create(b => b.Cuda());
             accelerator = context.CreateCudaAccelerator(0);
             deviceContext = accelerator.CreateDeviceContext()
                 .WithModuleCompileOptions(new OptixModuleCompileOptions()
@@ -197,7 +198,7 @@ namespace Sample04
             context.Dispose();
         }
 
-        public unsafe void resize(int width, int height)
+        public void resize(int width, int height)
         {
             if (width != 0 && height != 0)
             {
@@ -212,7 +213,7 @@ namespace Sample04
                 colorArray = new byte[colorBuffer0.Length];
                 launchParams = new LaunchParams()
                 {
-                    ColorBuffer = (uint*)colorBuffer0.NativePtr,
+                    ColorBuffer = OptixDeviceView<uint>.FromBytes(colorBuffer0),
                     camera = this.camera,
                     traversable = unchecked((ulong)this.traversable.ToInt64())
                 };

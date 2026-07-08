@@ -32,11 +32,6 @@ namespace Sample15
         public static MaterialSbtData Glass(float ior, Vec3 transmissionColor) =>
             new MaterialSbtData { BaseColor = new Vec3(1f, 1f, 1f), Transmission = 1f, IOR = ior, TransmissionColor = transmissionColor, MaterialKind = MaterialSbtData.Solid };
 
-        public static MaterialSbtData ClearGlass() => Glass(1.5f, new Vec3(1f, 1f, 1f));
-
-        public static MaterialSbtData Emissive(Vec3 emission) =>
-            new MaterialSbtData { Emission = emission, EmissionStrength = 1f, Roughness = 1f, MaterialKind = MaterialSbtData.Solid };
-
         public static MaterialSbtData Checker(Vec3 colorA, Vec3 colorB, float scale, float roughness = 1f) =>
             new MaterialSbtData { BaseColor = colorA, Roughness = roughness, MaterialKind = MaterialSbtData.Checker, CheckerColorB = colorB, CheckerScale = scale };
 

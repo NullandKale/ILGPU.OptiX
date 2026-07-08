@@ -9,12 +9,14 @@
 // Source License. See LICENSE.txt for details.
 // ---------------------------------------------------------------------------------------
 
+using ILGPU.OptiX.Device;
+
 namespace Sample06
 {
-    public unsafe struct LaunchParams
+    public struct LaunchParams
     {
         public int FrameID;
-        public uint* ColorBuffer;
+        public OptixDeviceView<uint> ColorBuffer;
         public Camera camera;
         public ulong traversable;
 
@@ -29,13 +31,13 @@ namespace Sample06
         // specifically (isolated `typeof(T**)` reflection works fine - this appears to
         // be a narrower quirk in how field types get resolved) - so this sample is
         // capped at two meshes with directly-named fields instead, keeping everything
-        // at the single-pointer level that's already proven to work (Sample05).
-        public Vec3* mesh0Vertices;
-        public Vec3i* mesh0Indices;
+        // at the single-view level that's already proven to work (Sample05).
+        public OptixDeviceView<Vec3> mesh0Vertices;
+        public OptixDeviceView<Vec3i> mesh0Indices;
         public Vec3 mesh0Color;
 
-        public Vec3* mesh1Vertices;
-        public Vec3i* mesh1Indices;
+        public OptixDeviceView<Vec3> mesh1Vertices;
+        public OptixDeviceView<Vec3i> mesh1Indices;
         public Vec3 mesh1Color;
     }
 }

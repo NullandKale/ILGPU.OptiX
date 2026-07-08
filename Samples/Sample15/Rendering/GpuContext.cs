@@ -1,6 +1,7 @@
 using ILGPU;
 using ILGPU.Algorithms;
 using ILGPU.OptiX;
+using ILGPU.OptiX.Pipeline;
 using ILGPU.Runtime.Cuda;
 using System;
 using System.Runtime.InteropServices;
@@ -9,14 +10,21 @@ namespace Sample15
 {
     /// <summary>
     /// Owns the process-lifetime GPU objects: the ILGPU context/accelerator and the
-    /// OptiX device context (with validation + log callback). Created first, disposed
-    /// last.
+    /// OptiX ray tracer (device context, with validation + log callback). Created
+    /// first, disposed last.
     /// </summary>
     public sealed class GpuContext : IDisposable
     {
         public Context Context { get; }
         public CudaAccelerator Accelerator { get; }
-        public OptixDeviceContext DeviceContext { get; }
+        public OptixRayTracer RayTracer { get; }
+
+        /// <summary>
+        /// Escape hatch for consumers that still talk to the raw device context
+        /// directly (acceleration structures, the denoiser) - <see cref="RayTracer"/>
+        /// only wraps pipeline/SBT/launch, not every OptiX surface.
+        /// </summary>
+        public OptixDeviceContext DeviceContext => RayTracer.DeviceContext;
 
         // accelerator.DefaultStream is declared as the base AcceleratorStream type; the
         // denoiser API needs the raw CUstream pointer, which only CudaStream exposes.
@@ -32,8 +40,8 @@ namespace Sample15
             // sample's kernels (GGX sampling, sRGB decode, equirect env-map mapping)
             // only needs the precision fast-math trades away, not the exactness, and
             // the visual result is unchanged at this sample's tolerances.
-            Context = Context.Create(b => b.Cuda().InitOptiX().EnableAlgorithms()
-                                           .Optimize(OptimizationLevel.O2).Math(MathMode.Default).Inlining(InliningMode.Aggressive));
+            Context = Context.Create(b => b.Cuda().EnableAlgorithms()
+                                           .Optimize(OptimizationLevel.O2).Math(MathMode.Default).Inlining(InliningMode.Aggressive).LibDevice());
             Accelerator = Context.CreateCudaAccelerator(0);
 
             // Validation mode ALL + a log callback surfaces OptiX's own descriptive
@@ -44,7 +52,7 @@ namespace Sample15
             // the driver.
             logCallback = (level, tag, message, _) =>
                 Console.Error.WriteLine($"[OptiX][{level}][{Marshal.PtrToStringAnsi(tag)}] {Marshal.PtrToStringAnsi(message)}");
-            DeviceContext = Accelerator.CreateDeviceContext(new OptixDeviceContextOptions
+            RayTracer = OptixRayTracer.Create(Accelerator, new OptixDeviceContextOptions
             {
                 LogCallbackFunction = Marshal.GetFunctionPointerForDelegate(logCallback),
                 LogCallbackLevel = 4,
@@ -54,7 +62,7 @@ namespace Sample15
 
         public void Dispose()
         {
-            DeviceContext.Dispose();
+            RayTracer.Dispose();
             Accelerator.Dispose();
             Context.Dispose();
         }

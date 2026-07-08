@@ -81,7 +81,7 @@ namespace Sample15
 
         // Optional, index-aligned with Materials - a relative path (under the output
         // directory, e.g. "models/sponza/textures/x.png") to load into a
-        // CudaTextureObject and assign to that material's HitgroupRecord.BaseColorTexture
+        // CudaTextureObject and assign to that material's MaterialSbtData.BaseColorTexture
         // (see SbtBuilder.cs's Build/FillMaterialRecords). Shorter than Materials or an empty/
         // null entry means "no texture" for that material index - matches Sample08's
         // TextureObject==0 convention.

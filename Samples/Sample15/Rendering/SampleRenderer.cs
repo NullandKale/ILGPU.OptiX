@@ -1,6 +1,7 @@
 using ILGPU;
 using ILGPU.OptiX;
-using ILGPU.OptiX.Interop;
+using ILGPU.OptiX.Device;
+using ILGPU.OptiX.Pipeline;
 using ILGPU.Runtime;
 using MeshRange = ILGPU.OptiX.Pipeline.OptixMeshRange;
 using System;
@@ -13,7 +14,7 @@ namespace Sample15
     /// <summary>
     /// The renderer coordinator: owns the launch params, the camera, the scene
     /// switcher, and the render loop, wiring together the components that do the
-    /// actual work - <see cref="GpuContext"/>, <see cref="RendererPipeline"/>,
+    /// actual work - <see cref="GpuContext"/>, <see cref="RayTracingPipeline{TLaunchParams}"/>,
     /// <see cref="SceneGpuBuffers"/>, <see cref="SbtBuilder"/>,
     /// <see cref="AccelStructureBuilder"/>, <see cref="TextureCache"/>,
     /// <see cref="FrameOutput"/>, <see cref="SceneAnimator"/>.
@@ -30,7 +31,7 @@ namespace Sample15
         int height;
 
         readonly GpuContext gpu;
-        readonly RendererPipeline pipeline;
+        readonly RayTracingPipeline<LaunchParams> pipeline;
         readonly SceneGpuBuffers buffers;
         readonly TextureCache textures;
         readonly SbtBuilder sbtBuilder;
@@ -80,7 +81,6 @@ namespace Sample15
             return data;
         }
 
-        OptixShaderBindingTable sbt;
         IntPtr traversable;
         LaunchParams launchParams;
 
@@ -90,14 +90,14 @@ namespace Sample15
         public int NumPixelSamples { get; set; } = 1;
         // Per-pixel reprojected accumulation (ColorBuffer/AccumCountBuffer,
         // RaygenProgram.cs) - converges the image toward a noise-free ground truth over
-        // many frames, whether the camera is static OR moving (reprojected via the same
-        // Flow data used by the temporal denoiser below), unlike the old global
+        // many frames, whether the camera is static OR moving, unlike the old global
         // FrameID-keyed running mean this replaced (which could only blend by pixel
         // index and so had to hard-reset on any camera move). Toggling this off (or an
         // animated scene, which changes *lighting* our purely-geometric reprojection
         // can't compensate for) sets MaxHistoryFrames down to 1 each frame (see
-        // render()) - always a fresh single sample, no blending. Independent of
-        // TemporalDenoiseEnabled below - that's a separate, secondary smoothing pass.
+        // render()) - always a fresh single sample, no blending. This is the sample's
+        // only temporal integrator - FrameOutput's OptiX denoiser runs in HDR (not
+        // TEMPORAL) model kind and does purely spatial cleanup on top of this.
         public bool Accumulate { get; set; } = true;
         // The cap on AccumCountBuffer's per-pixel history length when Accumulate is on
         // (see LaunchParams.MaxHistoryFrames's own doc comment) - once a pixel's history
@@ -126,17 +126,6 @@ namespace Sample15
         // and thus noise reduction - more readily), larger tolerates more before
         // rejecting (smoother but more prone to smearing at disocclusions).
         public float DepthRejectionThreshold { get; set; } = 0.05f;
-        // Motion-vector-guided temporal denoising (OPTIX_DENOISER_MODEL_KIND_TEMPORAL,
-        // FrameOutput.cs) - lets the denoiser reuse the *previous* frame's own
-        // denoised output, reprojected via RaygenProgram's per-pixel Flow buffer, as a
-        // secondary smoothing pass on top of Accumulate's own reprojected history
-        // (mainly useful on freshly-disoccluded/reset pixels, which are still raw noise
-        // before Accumulate's own history has had a chance to build back up).
-        // Independent of Accumulate - this only gates whether the denoiser is told to
-        // trust that history (TemporalModeUsePreviousLayers); RaygenProgram still
-        // computes Flow every frame either way (cheap, and needed again the instant
-        // this is re-enabled).
-        public bool TemporalDenoiseEnabled { get; set; } = true;
         // Unified bounce budget (docs/SAMPLE15_PLAN.md Milestone M3) - Russian
         // roulette (RaygenProgram.cs) terminates most paths well before this ceiling.
         public int MaxBounces { get; set; } = 8;
@@ -195,6 +184,21 @@ namespace Sample15
         const float AutoScaleMaxStepPerCheck = 0.15f;
         int framesSinceAutoScaleCheck;
 
+        // Averaged (not single-frame) GPU work over the current check window - path
+        // tracing's own frame-to-frame cost variance (Russian roulette bounce counts,
+        // mixed diffuse/metal/glass materials with very different average path
+        // lengths) means whichever single frame happens to land on a
+        // AutoScaleCheckIntervalFrames boundary is not a reliable sample of "the"
+        // cost at this resolution - it can spuriously cross AutoScaleDeadbandFraction
+        // on its own and trigger a resize() that isn't actually warranted. Every such
+        // resize fully resets the per-pixel TAA/temporal-accumulation history (see
+        // resize()'s own comment), so a falsely-triggered one is not just wasted GPU
+        // work rebuilding buffers/denoiser - it also restarts convergence from
+        // scratch. Accumulated every frame regardless of AutoScaleEnabled (cheap) so
+        // toggling it on mid-session doesn't start from a stale/empty window.
+        double autoScaleGpuWorkAccumMs;
+        int autoScaleGpuWorkSampleCount;
+
         // Tonemap controls (docs/SAMPLE15_PLAN.md Milestone M8). ExposureStops
         // defaults to -1 (2^-1 = 0.5x) to reproduce the previous hardcoded-Exposure
         // constant's default look exactly - the UI/keyboard can move it from there.
@@ -242,16 +246,6 @@ namespace Sample15
         Camera previousRenderedCamera;
         bool hasValidPreviousFrame;
 
-        // Whether the OptiX temporal denoiser actually ran last frame - the ping-ponged
-        // denoisedColorBuffers/currentDenoisedIndex in FrameOutput.cs (its
-        // PreviousOutput history) is only written to when DenoiserOn is true, so a
-        // DenoiserOn transition false->true must not tell the denoiser to trust that
-        // history on its first frame back (it would be reprojecting whatever stale
-        // frame/camera/scene state existed the last time the denoiser ran, producing a
-        // one-frame ghost). Reset alongside hasValidPreviousFrame for the same reasons
-        // (scene switch/resize).
-        bool wasDenoiserOnLastFrame;
-
         // Guards every access to launchParams, traversable, and the scene GPU buffers.
         // Kept even though Sample14 is single-threaded (unlike Sample13, where this
         // lock exists specifically to protect against a dedicated render thread racing
@@ -260,13 +254,32 @@ namespace Sample15
         // (see docs/SAMPLE14_PLAN.md's note on this).
         readonly object gpuLock = new object();
 
-        public unsafe SampleRenderer(int windowWidth, int windowHeight)
+        public SampleRenderer(int windowWidth, int windowHeight)
         {
             gpu = new GpuContext();
-            pipeline = new RendererPipeline(gpu);
+
+            // No module/pipeline compile options, no SetStackSize magic numbers, no
+            // hand-rolled SBT record structs - see docs/API_USABILITY_PLAN.md. Ray
+            // type declaration order (radiance, then shadow) fixes their SBT index at
+            // 0/1, matching Payloads.RADIANCE_RAY_TYPE/SHADOW_RAY_TYPE, which every
+            // OptixTrace.Trace(...) call site (RaygenProgram.cs, Rays/ShadowRay.cs)
+            // still addresses directly - migrating those off raw payload registers is
+            // a separate, GPU-verification-gated change.
+            pipeline = gpu.RayTracer.CreatePipeline<LaunchParams>(b => b
+                .Raygen(RaygenProgram.__raygen__renderFrame)
+                .RayType("radiance", r => r
+                    .Payload<Payloads.RadiancePayload>()
+                    .Miss(RadianceRay.__miss__radiance)
+                    .HitGroup<MaterialSbtData>(RadianceRay.__closest__radiance, RadianceRay.__anyhit__radiance))
+                .RayType("shadow", r => r
+                    .Payload<Payloads.ShadowPayload>()
+                    .Miss(ShadowRay.__miss__shadow)
+                    .HitGroup<MaterialSbtData>(ShadowRay.__closesthit__shadow, ShadowRay.__anyhit__shadow))
+                .MaxTraceDepth(2));
+
             buffers = new SceneGpuBuffers(gpu.Accelerator);
             textures = new TextureCache();
-            sbtBuilder = new SbtBuilder(gpu.Accelerator, pipeline, textures);
+            sbtBuilder = new SbtBuilder(textures);
             accel = new AccelStructureBuilder(gpu.Accelerator, gpu.DeviceContext, buffers);
             animator = new SceneAnimator(buffers);
             frameOutput = new FrameOutput(gpu);
@@ -285,6 +298,20 @@ namespace Sample15
 
         public void RebuildCurrentScene() => SwitchToScene(currentSceneIndex);
 
+        // Finds a scene's index in the roster by its builder method's name (e.g.
+        // nameof(MeshScenes.BuildSponzaScene)) - reads Func<>.Method, which never
+        // invokes the delegate, so searching never triggers an unwanted scene build
+        // (several of these load large OBJ models) just to compare names. Used by
+        // BenchmarkRunner (--bench) to reliably locate the Sponza scene regardless of
+        // SceneTable.Build()'s current ordering.
+        public int FindSceneIndexByBuilderName(string builderMethodName)
+        {
+            for (int i = 0; i < sceneBuilders.Length; i++)
+                if (sceneBuilders[i].Method.Name == builderMethodName)
+                    return i;
+            return -1;
+        }
+
         string BuildAccelStructureSummary(SceneData scene, bool hasTriangles)
         {
             if (!hasTriangles)
@@ -294,7 +321,7 @@ namespace Sample15
             return $"1 GAS[Triangles: {triangleMeshCount} input(s), {scene.Indices.Length} tris]";
         }
 
-        public unsafe void SwitchToScene(int index)
+        public void SwitchToScene(int index)
         {
             lock (gpuLock)
             {
@@ -319,13 +346,15 @@ namespace Sample15
 
                 textures.Clear();
                 accel.DisposeBuffers();
-                sbtBuilder.DisposeBuffers();
                 buffers.DisposeAll();
 
                 buffers.Upload(scene);
 
                 MeshRange[] triangleMeshRanges = SbtLayout.GetTriangleMeshRanges(scene, UseMergedTrianglesGas);
-                sbt = sbtBuilder.Build(scene, triangleMeshRanges);
+                // SetHitRecords (inside sbtBuilder.Apply) synchronizes the accelerator
+                // and disposes the previous scene's hitgroup buffer itself - no
+                // separate DisposeBuffers() call needed before this.
+                sbtBuilder.Apply(pipeline, scene, triangleMeshRanges);
                 traversable = accel.Build(scene, triangleMeshRanges);
 
                 // Cross-checks that the accel structure's NumSbtRecords values (per
@@ -333,8 +362,8 @@ namespace Sample15
                 // record count - see Sample13's identical assert for the bug class this
                 // guards against.
                 Debug.Assert(
-                    sbt.HitgroupRecordCount == accel.TotalHitgroupRecordsUsed,
-                    $"SBT hitgroup record count ({sbt.HitgroupRecordCount}) doesn't match " +
+                    pipeline.HitgroupRecordCount == accel.TotalHitgroupRecordsUsed,
+                    $"SBT hitgroup record count ({pipeline.HitgroupRecordCount}) doesn't match " +
                     $"what the accel structure's NumSbtRecords values imply " +
                     $"({accel.TotalHitgroupRecordsUsed}) - AccelStructureBuilder and SbtBuilder " +
                     "have drifted out of sync.");
@@ -351,20 +380,19 @@ namespace Sample15
 
                 launchParams.camera = camera;
                 launchParams.traversable = unchecked((ulong)traversable.ToInt64());
-                launchParams.Vertices = (Vec3*)SceneGpuBuffers.NativePtrOrZero(buffers.Vertices);
-                launchParams.Normals = (Vec3*)SceneGpuBuffers.NativePtrOrZero(buffers.Normals);
-                launchParams.TexCoords = (Vec2*)SceneGpuBuffers.NativePtrOrZero(buffers.TexCoords);
-                launchParams.Tangents = (Vec3*)SceneGpuBuffers.NativePtrOrZero(buffers.Tangents);
-                launchParams.Indices = (Vec3i*)SceneGpuBuffers.NativePtrOrZero(buffers.Indices);
-                launchParams.PointLights = (PointLightGpu*)SceneGpuBuffers.NativePtrOrZero(buffers.Lights);
-                launchParams.NumPointLights = scene.Lights.Length;
-                launchParams.NeeLights = (LightGpu*)SceneGpuBuffers.NativePtrOrZero(buffers.NeeLights);
-                launchParams.NeeLightCdf = (float*)SceneGpuBuffers.NativePtrOrZero(buffers.NeeLightCdf);
+                launchParams.Vertices = OptixDeviceView<Vec3>.From(buffers.Vertices);
+                launchParams.Normals = OptixDeviceView<Vec3>.From(buffers.Normals);
+                launchParams.TexCoords = OptixDeviceView<Vec2>.From(buffers.TexCoords);
+                launchParams.Tangents = OptixDeviceView<Vec3>.From(buffers.Tangents);
+                launchParams.Indices = OptixDeviceView<Vec3i>.From(buffers.Indices);
+                launchParams.PointLights = OptixDeviceView<PointLightGpu>.From(buffers.Lights);
+                launchParams.NeeLights = OptixDeviceView<LightGpu>.From(buffers.NeeLights);
+                launchParams.NeeLightCdf = OptixDeviceView<float>.From(buffers.NeeLightCdf);
                 launchParams.NumNeeLights = scene.NeeLights.Length;
-                launchParams.NeeLightAreaPdf = (float*)SceneGpuBuffers.NativePtrOrZero(buffers.NeeLightAreaPdf);
-                launchParams.EnvMapPixels = envMapData != null ? (Vec3*)envMapData.Pixels.NativePtr : null;
-                launchParams.EnvMapCdf = envMapData != null ? (float*)envMapData.Cdf.NativePtr : null;
-                launchParams.EnvMapPdfUv = envMapData != null ? (float*)envMapData.PdfUv.NativePtr : null;
+                launchParams.NeeLightAreaPdf = OptixDeviceView<float>.From(buffers.NeeLightAreaPdf);
+                launchParams.EnvMapPixels = OptixDeviceView<Vec3>.From(envMapData?.Pixels);
+                launchParams.EnvMapCdf = OptixDeviceView<float>.From(envMapData?.Cdf);
+                launchParams.EnvMapPdfUv = OptixDeviceView<float>.From(envMapData?.PdfUv);
                 launchParams.EnvMapWidth = envMapData?.Width ?? 0;
                 launchParams.EnvMapHeight = envMapData?.Height ?? 0;
                 launchParams.EnvMapIntensity = scene.EnvMapIntensity;
@@ -381,7 +409,6 @@ namespace Sample15
                 // one (see previousRenderedCamera's own doc comment).
                 hasValidPreviousFrame = false;
                 launchParams.PrevFrameValid = 0;
-                wasDenoiserOnLastFrame = false;
 
                 frameOutput.ResetAccumulation();
 
@@ -412,7 +439,6 @@ namespace Sample15
             {
                 textures.Clear();
                 accel.DisposeBuffers();
-                sbtBuilder.DisposeBuffers();
                 buffers.DisposeAll();
 
                 foreach (EnvMapGpuData envMapData in envMapCache.Values)
@@ -429,7 +455,7 @@ namespace Sample15
         // ApplyRenderResolution below (the normal path, window-size * RenderScale) and
         // by the constructor (before a scene/camera exists yet, see the currentScene
         // guard below).
-        public unsafe void resize(int width, int height)
+        public void resize(int width, int height)
         {
             if (width == 0 || height == 0)
                 return;
@@ -443,14 +469,16 @@ namespace Sample15
 
                 launchParams.NumPixelSamples = NumPixelSamples;
                 launchParams.MaxBounces = MaxBounces;
-                // ColorBuffer/AccumCountBuffer/PrevColorBuffer/PrevAccumCountBuffer are NOT
-                // wired here - which physical buffer is "current" vs "previous" flips every
-                // frame (FrameOutput.SwapColorHistory), so they're re-wired at the top of
-                // render() instead of once here.
-                launchParams.AlbedoBuffer = (Vec4*)frameOutput.AlbedoBuffer.NativePtr;
-                launchParams.NormalBuffer = (Vec4*)frameOutput.NormalBuffer.NativePtr;
-                launchParams.FlowBuffer = (Vec2*)frameOutput.FlowBuffer.NativePtr;
-                launchParams.FlowTrustworthinessBuffer = (float*)frameOutput.FlowTrustworthinessBuffer.NativePtr;
+                // PrevColorBuffer/PrevAccumCountBuffer are NOT wired here - which physical
+                // buffer is "previous" flips every frame (FrameOutput.SwapColorHistory), so
+                // they're re-wired at the top of render() instead of once here.
+                launchParams.AlbedoBuffer = OptixDeviceView<Vec4>.From(frameOutput.AlbedoBuffer);
+                launchParams.NormalBuffer = OptixDeviceView<Vec4>.From(frameOutput.NormalBuffer);
+                // Scratch (not ping-ponged, so wired once here rather than every frame
+                // in render() the way ColorBuffer/PrevColorBuffer's ping-pong is) - see
+                // LaunchParams.RawColorBuffer's own doc comment.
+                launchParams.RawColorBuffer = OptixDeviceView<Vec4>.From(frameOutput.RawColorBuffer);
+                launchParams.ReprojCoordBuffer = OptixDeviceView<Vec2>.From(frameOutput.ReprojCoordBuffer);
 
                 // Refresh the camera's own width/height (and therefore aspectRatio/
                 // reciprocalWidth/reciprocalHeight) to the new render resolution -
@@ -474,7 +502,6 @@ namespace Sample15
                 // previousRenderedCamera's own doc comment).
                 hasValidPreviousFrame = false;
                 launchParams.PrevFrameValid = 0;
-                wasDenoiserOnLastFrame = false;
             }
         }
 
@@ -536,7 +563,11 @@ namespace Sample15
                 return;
             framesSinceAutoScaleCheck = 0;
 
-            double gpuWorkMs = LastStats.TraceMs + LastStats.DenoiseMs + LastStats.TonemapMs;
+            double gpuWorkMs = autoScaleGpuWorkSampleCount > 0
+                ? autoScaleGpuWorkAccumMs / autoScaleGpuWorkSampleCount
+                : 0;
+            autoScaleGpuWorkAccumMs = 0;
+            autoScaleGpuWorkSampleCount = 0;
             if (gpuWorkMs <= 0 || TargetFrameRate <= 0)
                 return;
 
@@ -570,7 +601,7 @@ namespace Sample15
         // GL-owned interop texture (see FrameOutput.DenoiseAndTonemap/BlitToTexture) -
         // no CPU byte[] handoff, no second thread. Call BlitToTexture() (or draw the
         // fullscreen quad against GlTextureHandle) from the window after this returns.
-        public unsafe void render()
+        public void render()
         {
             lock (gpuLock)
             {
@@ -597,12 +628,15 @@ namespace Sample15
                 launchParams.MaxBounces = MaxBounces;
                 launchParams.EnvMapRotation = EnvMapRotation;
                 launchParams.EnvMapIntensity = currentScene.EnvMapIntensity * EnvMapIntensityMultiplier;
-                // See LaunchParams.MaxHistoryFrames's own doc comment - 1 means "always
+                // See SampleRenderer.MaxHistoryFrames's own doc comment - 1 means "always
                 // a fresh single sample, no blending", matching the old scenes' visual
-                // behavior exactly for the off/animated cases.
-                launchParams.MaxHistoryFrames = (Accumulate && !sceneIsAnimated) ? MaxHistoryFrames : 1;
-                launchParams.DeltaTimeSeconds = (float)(sinceLastFrameMs / 1000.0);
-                launchParams.HistoryDecayHalfLifeSeconds = HistoryDecayHalfLifeSeconds;
+                // behavior exactly for the off/animated cases. Passed straight to
+                // FrameOutput.ResolveTaa below, not through LaunchParams - only
+                // RaygenProgram's own DepthRejectionThreshold check needs to happen
+                // inside the OptiX launch itself (see LaunchParams.RawColorBuffer's own
+                // doc comment).
+                int effectiveMaxHistoryFrames = (Accumulate && !sceneIsAnimated) ? MaxHistoryFrames : 1;
+                float deltaTimeSeconds = (float)(sinceLastFrameMs / 1000.0);
                 launchParams.DepthRejectionThreshold = DepthRejectionThreshold;
 
                 // The camera used for the frame *before* this one - captured before
@@ -618,23 +652,16 @@ namespace Sample15
                 launchParams.PrevCameraAspectRatio = previousRenderedCamera.aspectRatio;
                 launchParams.PrevCameraPlaneDist = previousRenderedCamera.cameraPlaneDist;
 
-                // Which physical buffer is "current" (this frame's write target) vs
-                // "previous" (read-only history to reproject) flips every frame - see
+                // "Previous" (read-only history to reproject) flips every frame - see
                 // FrameOutput.SwapColorHistory, called after DenoiseAndTonemap below.
-                launchParams.ColorBuffer = (Vec4*)frameOutput.CurrentColorBuffer.NativePtr;
-                launchParams.AccumCountBuffer = (float*)frameOutput.CurrentAccumCountBuffer.NativePtr;
-                launchParams.PrevColorBuffer = (Vec4*)frameOutput.PreviousColorBuffer.NativePtr;
-                launchParams.PrevAccumCountBuffer = (float*)frameOutput.PreviousAccumCountBuffer.NativePtr;
+                // RawColorBuffer/ReprojCoordBuffer (this frame's own raw output) were
+                // already wired once in resize() - see their own doc comment there.
+                launchParams.PrevColorBuffer = OptixDeviceView<Vec4>.From(frameOutput.PreviousColorBuffer);
 
                 stepStopwatch.Restart();
-                gpu.Accelerator.OptixLaunch(
-                    gpu.Accelerator.DefaultStream,
-                    pipeline.Pipeline,
-                    launchParams,
-                    sbt,
-                    (uint)width,
-                    (uint)height,
-                    1);
+                // Persistent launch-params buffer, reused every frame - no per-call
+                // allocate/free (the leak OptixLaunchExtensions.OptixLaunch had).
+                pipeline.Launch(launchParams, width, height);
                 gpu.Accelerator.Synchronize();
                 double traceMs = stepStopwatch.Elapsed.TotalMilliseconds;
 
@@ -651,15 +678,13 @@ namespace Sample15
 
                 launchParams.FrameID++;
 
-                // wasDenoiserOnLastFrame guards against a DenoiserOn false->true toggle:
-                // without it, the very first frame back would tell the denoiser to
-                // trust denoisedColorBuffers' PreviousOutput history, which is stale
-                // (last written whenever the denoiser was last on, possibly a different
-                // camera position or scene) - see wasDenoiserOnLastFrame's own doc
-                // comment.
-                bool useTemporalHistory = trustPreviousFrame && TemporalDenoiseEnabled && wasDenoiserOnLastFrame;
-                frameOutput.DenoiseAndTonemap(DenoiserOn, Accumulate, launchParams.FrameID, useTemporalHistory, ExposureStops, TonemapOperator, out double denoiseMs, out double tonemapMs);
-                wasDenoiserOnLastFrame = DenoiserOn;
+                // Neighborhood-clamped reprojection/blend - must run after the OptiX
+                // launch above has finished writing RawColorBuffer/ReprojCoordBuffer for
+                // every pixel (see FrameOutput.ResolveTaa's own doc comment), and before
+                // DenoiseAndTonemap below, which reads its output (CurrentColorBuffer).
+                frameOutput.ResolveTaa(effectiveMaxHistoryFrames, HistoryDecayHalfLifeSeconds, deltaTimeSeconds);
+
+                frameOutput.DenoiseAndTonemap(DenoiserOn, Accumulate, launchParams.FrameID, ExposureStops, TonemapOperator, out double denoiseMs, out double tonemapMs);
 
                 // Flip current/previous for next frame's reprojection - must happen
                 // after DenoiseAndTonemap above, which reads CurrentColorBuffer as its
@@ -667,6 +692,13 @@ namespace Sample15
                 frameOutput.SwapColorHistory();
 
                 int samplesAccumulated = launchParams.FrameID;
+
+                // Accumulated for UpdateAutoScale's own averaged read (see
+                // autoScaleGpuWorkAccumMs's own doc comment) - unconditional
+                // (not gated on AutoScaleEnabled) so re-enabling it mid-session
+                // doesn't start from an empty window.
+                autoScaleGpuWorkAccumMs += traceMs + denoiseMs + tonemapMs;
+                autoScaleGpuWorkSampleCount++;
 
                 LastStats = new FrameStats
                 {
@@ -676,7 +708,6 @@ namespace Sample15
                     TotalFrameMs = smoothedFrameMs,
                     Fps = 1000.0 / smoothedFrameMs,
                     SamplesAccumulated = samplesAccumulated,
-                    RaysPerSecond = MeasuredRaysPerSecond,
                 };
             }
         }

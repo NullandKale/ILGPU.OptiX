@@ -17,29 +17,10 @@ namespace ILGPU.OptiX
     public static class OptixContext
     {
         /// <summary>
-        /// Initializes OptiX library.
-        /// </summary>
-        /// <param name="builder">The context builder.</param>
-        /// <returns>The context builder.</returns>
-        public static Context.Builder InitOptiX(this Context.Builder builder)
-        {
-            OptixException.ThrowIfFailed(OptixAPI.Current.Init());
-            return builder;
-        }
-
-        /// <summary>
-        /// Uniinitializes OptiX library.
-        /// </summary>
-        /// <param name="accelerator">The CUDA accelerator</param>
-        /// <returns>The CUDA accelerator.</returns>
-        public static CudaAccelerator UninitOptiX(this CudaAccelerator accelerator)
-        {
-            OptixException.ThrowIfFailed(OptixAPI.Current.Uninit());
-            return accelerator;
-        }
-
-        /// <summary>
-        /// Creates a new OptiX device context.
+        /// Creates a new OptiX device context. Transparently ref-counts global OptiX
+        /// library init/uninit against the returned context's lifetime - the consumer
+        /// never needs to call an explicit init or uninit method; disposing every
+        /// <see cref="OptixDeviceContext"/> that was created balances it automatically.
         /// </summary>
         /// <param name="accelerator">The CUDA accelerator.</param>
         /// <param name="options">The device context options.</param>
@@ -51,12 +32,22 @@ namespace ILGPU.OptiX
         {
             if (accelerator == null)
                 throw new ArgumentNullException(nameof(accelerator));
-            OptixException.ThrowIfFailed(
-                OptixAPI.Current.DeviceContextCreate(
-                    accelerator.NativePtr,
-                    options,
-                    out var deviceContext));
-            return new OptixDeviceContext(accelerator, deviceContext);
+
+            OptixException.ThrowIfFailed(OptixAPI.Current.Init());
+            try
+            {
+                OptixException.ThrowIfFailed(
+                    OptixAPI.Current.DeviceContextCreate(
+                        accelerator.NativePtr,
+                        options,
+                        out var deviceContext));
+                return new OptixDeviceContext(accelerator, deviceContext);
+            }
+            catch
+            {
+                OptixAPI.Current.Uninit();
+                throw;
+            }
         }
     }
 }

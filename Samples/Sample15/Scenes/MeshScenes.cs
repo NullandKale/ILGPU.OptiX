@@ -42,7 +42,7 @@ namespace Sample15
                 TexCoords = mesh.TexCoords,
                 // This builder constructs SceneData directly rather than going through
                 // SceneBuilder (docs/SAMPLE15_PLAN.md Milestone M6) - Tangents must be
-                // wired in explicitly here too, or ClosestHitProgram.cs's unconditional
+                // wired in explicitly here too, or Rays/RadianceRay.cs's unconditional
                 // launchParams.Tangents[tri.x] read (every triangle hit, no NumNeeLights-
                 // style empty-buffer guard) reads through a null device pointer the
                 // moment this scene has any Vertices at all.
@@ -81,13 +81,18 @@ namespace Sample15
             MaterialPresets.Solid(new Vec3(0.6f, 0.05f, 0.08f)),
             new Vec3(1f, 0.95f, 0.85f), new Vec3(0.6f, 0.7f, 1f));
 
-        // Mirror (Reflectivity >= 0.9) rather than diffuse - exercises the M2 bounce
-        // loop against a real high-poly mesh, matching the reference's own
-        // sapphire-mirror dragon.
+        // Mirror (delta lobe, Roughness < Bsdf.DeltaRoughnessThreshold) rather than
+        // diffuse - exercises the M2 bounce loop against a real high-poly mesh,
+        // matching the reference's own sapphire-mirror dragon. Roughness must be passed
+        // explicitly: MaterialPresets.Solid's own default (1f, fully rough) is what a
+        // "diffuse" material wants, and since M2's GGX rewrite it's Roughness - not
+        // Metallic - that actually selects the mirror/delta lobe (the old
+        // Metallic >= 0.9 threshold this comment used to describe was retired), so
+        // Metallic alone here rendered a rough metal, not a mirror.
         public static SceneData BuildDragonScene() => BuildMeshScene(
             "Mesh: XYZRGB Dragon (mirror)",
             "xyzrgb_dragon.obj",
-            MaterialPresets.Solid(new Vec3(0.85f, 0.9f, 0.95f), 0.95f),
+            MaterialPresets.Solid(new Vec3(0.85f, 0.9f, 0.95f), 0.95f, roughness: 0f),
             new Vec3(1f, 0.95f, 0.85f), new Vec3(0.6f, 0.7f, 1f));
 
         // Direct port of the reference's MeshScenes.BuildAllMeshesScene() - all four
@@ -115,7 +120,7 @@ namespace Sample15
             uint cow = (uint)b.AddMaterial(MaterialPresets.Solid(new Vec3(0.80f, 0.45f, 0.25f)));           // copper
             uint bunny = (uint)b.AddMaterial(MaterialPresets.Solid(new Vec3(0.0f, 0.5f, 0.5f)));            // jade
             uint teapot = (uint)b.AddMaterial(MaterialPresets.Solid(new Vec3(0.9f, 0.9f, 0.0f), 0.06f));    // gold
-            uint dragon = (uint)b.AddMaterial(MaterialPresets.Solid(new Vec3(0.88f, 0.0f, 0.88f), 0.65f));  // amethyst (below the 0.9 mirror threshold - renders diffuse)
+            uint dragon = (uint)b.AddMaterial(MaterialPresets.Solid(new Vec3(0.88f, 0.0f, 0.88f), 0.65f));  // amethyst (Roughness left at Solid's default of 1 - renders as a rough, not mirror-like, metal)
             uint floor = (uint)b.AddMaterial(MaterialPresets.Checker(new Vec3(0.82f, 0.82f, 0.82f), new Vec3(0.15f, 0.15f, 0.15f), 0.7f));
 
             b.AddMesh("cow.obj", new Vec3(-3.2f, 0f, -4.0f), cow);
@@ -155,13 +160,12 @@ namespace Sample15
             var b = new SceneBuilder
             {
                 Name = "Sponza",
-                // Lower than the other mesh scenes' ambient - Sponza is an enclosed
-                // building (most of the scene is indoors/shadowed), so a bright uniform
-                // ambient floor washes out the shadowed interior instead of just filling
-                // in outdoor sky-facing surfaces the way it does for a single object on
-                // an open floor.
-                AmbientColor = new Vec3(0.3f, 0.3f, 0.35f),
-                AmbientIntensity = 0.025f,
+                // Flat ambient is a pre-HDRI fill hack (see MaterialShading.ShadeSurface) -
+                // left non-zero here it would double-count diffuse illumination on top of
+                // the HDRI's own GI below, so it's zeroed the same way PbrShowcaseScene.cs
+                // does for its HDRI-lit scene.
+                AmbientColor = new Vec3(0f, 0f, 0f),
+                AmbientIntensity = 0f,
                 BackgroundTop = new Vec3(0.15f, 0.15f, 0.2f),
                 BackgroundBottom = new Vec3(0.05f, 0.05f, 0.08f),
                 // HDRI environment map test case (docs/SAMPLE15_PLAN.md Milestone M5) -

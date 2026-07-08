@@ -75,14 +75,32 @@ namespace ILGPU.OptiX
                 backend,
                 entryFunctionName,
                 altKernelName);
-            var ptxAssembly = Regex.Replace(
-                ptx.PTXAssembly,
+            var ptxAssembly = StripLibDeviceVisibility(ptx.PTXAssembly);
+            ptxAssembly = Regex.Replace(
+                ptxAssembly,
                 $" .entry (.+)\\(",
                 $" .func {altKernelName}(");
 
             ptxAssembly += entryPointKernel;
             return ptxAssembly;
         }
+
+        // WORKAROUND: when Context.Create() enables LibDevice(), ILGPU compiles every
+        // transcendental call (sqrtf, sinf, ...) through NVVM, which emits the wrapper
+        // as "__ilgpu<name>" (e.g. "__ilgpu__nv_sqrtf") with .visible linkage - meaning
+        // externally visible outside its PTX module. Every OptiX program (raygen, each
+        // miss/hitgroup) is compiled to its own separate PTX module by GeneratePTX
+        // above, so a wrapper used by more than one program gets one .visible
+        // definition per module. optixPipelineCreate links all of a pipeline's modules
+        // together, and that link step rejects the repeated global symbol as
+        // "defined multiple times". These wrappers are only ever called from within
+        // the module that defines them, so dropping ".visible" makes each copy
+        // module-local and the cross-module name collision disappears.
+        static readonly Regex LibDeviceVisibleFunc =
+            new Regex(@"\.visible(\s+\.func\b[^{]*?\b__ilgpu\w*)", RegexOptions.Compiled);
+
+        internal static string StripLibDeviceVisibility(string ptxAssembly) =>
+            LibDeviceVisibleFunc.Replace(ptxAssembly, "$1");
 
         [SuppressMessage(
             "Globalization",

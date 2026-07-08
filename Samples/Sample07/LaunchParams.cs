@@ -9,6 +9,8 @@
 // Source License. See LICENSE.txt for details.
 // ---------------------------------------------------------------------------------------
 
+using ILGPU.OptiX.Device;
+
 namespace Sample07
 {
     // The whole model still shares one merged vertex/index buffer (one GAS build
@@ -19,16 +21,16 @@ namespace Sample07
     // SbtIndexOffsetBuffer is Model's per-triangle TriangleMaterialIds array, so OptiX
     // itself selects the right hitgroup record's custom data per triangle - no flat
     // MaterialColors[] lookup array needed in LaunchParams.
-    public unsafe struct LaunchParams
+    public struct LaunchParams
     {
         public int FrameID;
-        public uint* ColorBuffer;
+        public OptixDeviceView<uint> ColorBuffer;
         public Camera camera;
         public ulong traversable;
 
-        public Vec3* Vertices;
-        public Vec3* Normals;
-        public Vec2* TexCoords;
-        public Vec3i* Indices;
+        public OptixDeviceView<Vec3> Vertices;
+        public OptixDeviceView<Vec3> Normals;
+        public OptixDeviceView<Vec2> TexCoords;
+        public OptixDeviceView<Vec3i> Indices;
     }
 }

@@ -38,7 +38,7 @@ namespace Sample15
         public void Upload(SceneData scene)
         {
             // Defensive fallback (docs/SAMPLE15_PLAN.md Milestone M6 postmortem) -
-            // ClosestHitProgram.cs reads launchParams.Tangents[tri.x] unconditionally
+            // Rays/RadianceRay.cs reads launchParams.Tangents[tri.x] unconditionally
             // for every triangle hit, with no NumNeeLights-style empty-buffer guard
             // (tangents are structural per-vertex mesh data, not an optional feature
             // list). A scene that constructs SceneData directly instead of going
@@ -96,8 +96,5 @@ namespace Sample15
         // null instead of allocating.
         MemoryBuffer1D<T, Stride1D.Dense> AllocateOrNull<T>(T[] data) where T : unmanaged =>
             data.Length > 0 ? accelerator.Allocate1D(data) : null;
-
-        public static IntPtr NativePtrOrZero<T>(MemoryBuffer1D<T, Stride1D.Dense> buffer) where T : unmanaged =>
-            buffer?.NativePtr ?? IntPtr.Zero;
     }
 }

@@ -1,4 +1,4 @@
-﻿// ---------------------------------------------------------------------------------------
+// ---------------------------------------------------------------------------------------
 //                                     ILGPU OptiX
 //                        Copyright (c) 2020-2022 ILGPU Project
 //                                    www.ilgpu.net
@@ -13,6 +13,8 @@ using ILGPU.OptiX.Interop;
 using ILGPU.OptiX.Pipeline;
 using ILGPU.OptiX.Util;
 using ILGPU.Util;
+using ILGPU.OptiX.Denoising;
+using ILGPU.OptiX.CooperativeVectors;
 using System;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
@@ -21,7 +23,7 @@ using System.Text;
 // disable: max_line_length
 #pragma warning disable CA1707 // Identifiers should not contain underscores
 
-namespace ILGPU.OptiX
+namespace ILGPU.OptiX.Native
 {
     /// <summary>
     /// Wrapper for the OptiX library functions.
@@ -88,6 +90,10 @@ namespace ILGPU.OptiX
         private DeviceContextDestroy? cachedDeviceContextDestroy;
         private ModuleCreate? cachedModuleCreate;
         private ModuleDestroy? cachedModuleDestroy;
+        private ModuleCreateWithTasks? cachedModuleCreateWithTasks;
+        private ModuleGetCompilationState? cachedModuleGetCompilationState;
+        private TaskExecute? cachedTaskExecute;
+        private BuiltinISModuleGet? cachedBuiltinISModuleGet;
         private ProgramGroupCreate? cachedProgramGroupCreate;
         private ProgramGroupDestroy? cachedProgramGroupDestroy;
         private ProgramGroupGetStackSize? cachedProgramGroupGetStackSize;
@@ -99,6 +105,13 @@ namespace ILGPU.OptiX
         private AccelComputeMemoryUsage? cachedAccelComputeMemoryUsage;
         private AccelBuild? cachedAccelBuild;
         private AccelCompact? cachedAccelCompact;
+        private AccelGetRelocationInfo? cachedAccelGetRelocationInfo;
+        private CheckRelocationCompatibility? cachedCheckRelocationCompatibility;
+        private AccelRelocate? cachedAccelRelocate;
+        private AccelEmitProperty? cachedAccelEmitProperty;
+        private ConvertPointerToTraversableHandle? cachedConvertPointerToTraversableHandle;
+        private OpacityMicromapArrayComputeMemoryUsage? cachedOpacityMicromapArrayComputeMemoryUsage;
+        private OpacityMicromapArrayBuild? cachedOpacityMicromapArrayBuild;
         private DenoiserCreate? cachedDenoiserCreate;
         private DenoiserDestroy? cachedDenoiserDestroy;
         private DenoiserComputeMemoryResources? cachedDenoiserComputeMemoryResources;
@@ -106,6 +119,8 @@ namespace ILGPU.OptiX
         private DenoiserInvoke? cachedDenoiserInvoke;
         private DenoiserComputeIntensity? cachedDenoiserComputeIntensity;
         private DenoiserComputeAverageColor? cachedDenoiserComputeAverageColor;
+        private CoopVecMatrixConvert? cachedCoopVecMatrixConvert;
+        private CoopVecMatrixComputeSize? cachedCoopVecMatrixComputeSize;
 
         private void ClearDelegateCache()
         {
@@ -113,6 +128,10 @@ namespace ILGPU.OptiX
             cachedDeviceContextDestroy = null;
             cachedModuleCreate = null;
             cachedModuleDestroy = null;
+            cachedModuleCreateWithTasks = null;
+            cachedModuleGetCompilationState = null;
+            cachedTaskExecute = null;
+            cachedBuiltinISModuleGet = null;
             cachedProgramGroupCreate = null;
             cachedProgramGroupDestroy = null;
             cachedProgramGroupGetStackSize = null;
@@ -124,6 +143,13 @@ namespace ILGPU.OptiX
             cachedAccelComputeMemoryUsage = null;
             cachedAccelBuild = null;
             cachedAccelCompact = null;
+            cachedAccelGetRelocationInfo = null;
+            cachedCheckRelocationCompatibility = null;
+            cachedAccelRelocate = null;
+            cachedAccelEmitProperty = null;
+            cachedConvertPointerToTraversableHandle = null;
+            cachedOpacityMicromapArrayComputeMemoryUsage = null;
+            cachedOpacityMicromapArrayBuild = null;
             cachedDenoiserCreate = null;
             cachedDenoiserDestroy = null;
             cachedDenoiserComputeMemoryResources = null;
@@ -131,6 +157,8 @@ namespace ILGPU.OptiX
             cachedDenoiserInvoke = null;
             cachedDenoiserComputeIntensity = null;
             cachedDenoiserComputeAverageColor = null;
+            cachedCoopVecMatrixConvert = null;
+            cachedCoopVecMatrixComputeSize = null;
         }
 
         #endregion
@@ -226,6 +254,129 @@ namespace ILGPU.OptiX
         {
             var func = GetOrCreateDelegate(ref cachedModuleDestroy, functionTable.OptixModuleDestroy);
             return func(module);
+        }
+
+        /// <summary>
+        /// Creates a new OptiX module using task-based (parallelizable) compilation -
+        /// returns immediately with a first OptixTask; the caller must drive that task
+        /// graph via <see cref="TaskExecute"/> until <see cref="ModuleGetCompilationState"/>
+        /// reports Completed or Failed before the module is usable.
+        /// </summary>
+        /// <param name="deviceContext">The OptiX device context.</param>
+        /// <param name="moduleCompileOptions">The module compile options.</param>
+        /// <param name="pipelineCompileOptions">The pipeline compile options.</param>
+        /// <param name="ptxString">The module PTX code.</param>
+        /// <param name="module">Filled in with the new module.</param>
+        /// <param name="firstTask">Filled in with the first task to execute.</param>
+        /// <param name="logString">Filled in with the log string.</param>
+        /// <returns>The OptiX result.</returns>
+        [CLSCompliant(false)]
+        public unsafe OptixResult ModuleCreateWithTasks(
+            IntPtr deviceContext,
+            OptixModuleCompileOptions moduleCompileOptions,
+            OptixPipelineCompileOptions pipelineCompileOptions,
+            string ptxString,
+            out IntPtr module,
+            out IntPtr firstTask,
+            out string logString)
+        {
+            var func = GetOrCreateDelegate(ref cachedModuleCreateWithTasks, functionTable.OptixModuleCreateWithTasks);
+
+            using var moduleCompileOptionsPtr = SafeHGlobal.AllocFrom(moduleCompileOptions);
+            using var pipelineCompileOptionsPtr = SafeHGlobal.AllocFrom(pipelineCompileOptions);
+
+            var ptxStringBytes = Encoding.UTF8.GetBytes(ptxString);
+            var logBytes = new byte[DEFAULT_LOG_SIZE];
+            fixed (byte* ptxStringPtr = ptxStringBytes)
+            fixed (byte* logPtr = logBytes)
+            {
+                ulong logLength = (ulong)logBytes.Length;
+                var result = func(
+                    deviceContext,
+                    moduleCompileOptionsPtr,
+                    pipelineCompileOptionsPtr,
+                    new IntPtr(ptxStringPtr),
+                    (ulong)ptxStringBytes.Length,
+                    new IntPtr(logPtr),
+                    ref logLength,
+                    out module,
+                    out firstTask
+                );
+                logString = result != OptixResult.OPTIX_SUCCESS
+                    ? ReadLog(logPtr, logLength, logBytes.Length)
+                    : string.Empty;
+                return result;
+            }
+        }
+
+        /// <summary>
+        /// Queries the compilation state of a module created via
+        /// <see cref="ModuleCreateWithTasks"/>.
+        /// </summary>
+        /// <param name="module">The OptiX module.</param>
+        /// <param name="state">Filled in with the current compilation state.</param>
+        /// <returns>The OptiX result.</returns>
+        [CLSCompliant(false)]
+        public OptixResult ModuleGetCompilationState(IntPtr module, out OptixModuleCompileState state)
+        {
+            var func = GetOrCreateDelegate(ref cachedModuleGetCompilationState, functionTable.OptixModuleGetCompilationState);
+            return func(module, out state);
+        }
+
+        /// <summary>
+        /// Executes a single OptixTask from a task graph started by
+        /// <see cref="ModuleCreateWithTasks"/>. May produce more tasks (written into
+        /// <paramref name="additionalTasks"/>, up to its length) that must themselves be
+        /// executed before compilation is complete - see optix_host.h's doc comment on
+        /// optixTaskExecute: "Each task can be executed in parallel and in any order."
+        /// </summary>
+        /// <param name="task">The task to execute.</param>
+        /// <param name="additionalTasks">Buffer to receive any additional tasks produced.</param>
+        /// <param name="maxNumAdditionalTasks">The capacity of <paramref name="additionalTasks"/>.</param>
+        /// <param name="numAdditionalTasksCreated">Filled in with how many additional tasks were produced.</param>
+        /// <returns>The OptiX result.</returns>
+        [CLSCompliant(false)]
+        public OptixResult TaskExecute(
+            IntPtr task,
+            IntPtr[] additionalTasks,
+            uint maxNumAdditionalTasks,
+            out uint numAdditionalTasksCreated)
+        {
+            var func = GetOrCreateDelegate(ref cachedTaskExecute, functionTable.OptixTaskExecute);
+            return func(task, additionalTasks, maxNumAdditionalTasks, out numAdditionalTasksCreated);
+        }
+
+        /// <summary>
+        /// Retrieves OptiX's own built-in intersection program module for a non-custom
+        /// primitive type (curves, spheres) - there is no user-supplied intersection
+        /// program for these types.
+        /// </summary>
+        /// <param name="context">The OptiX device context.</param>
+        /// <param name="moduleCompileOptions">The module compile options.</param>
+        /// <param name="pipelineCompileOptions">The pipeline compile options.</param>
+        /// <param name="builtinISOptions">The built-in primitive type + curve/motion options.</param>
+        /// <param name="builtinModule">Filled in with the built-in module.</param>
+        /// <returns>The OptiX result.</returns>
+        [CLSCompliant(false)]
+        public OptixResult BuiltinISModuleGet(
+            IntPtr context,
+            OptixModuleCompileOptions moduleCompileOptions,
+            OptixPipelineCompileOptions pipelineCompileOptions,
+            OptixBuiltinISOptions builtinISOptions,
+            out IntPtr builtinModule)
+        {
+            var func = GetOrCreateDelegate(ref cachedBuiltinISModuleGet, functionTable.OptixBuiltinISModuleGet);
+
+            using var moduleCompileOptionsPtr = SafeHGlobal.AllocFrom(moduleCompileOptions);
+            using var pipelineCompileOptionsPtr = SafeHGlobal.AllocFrom(pipelineCompileOptions);
+            using var builtinISOptionsPtr = SafeHGlobal.AllocFrom(builtinISOptions);
+
+            return func(
+                context,
+                moduleCompileOptionsPtr,
+                pipelineCompileOptionsPtr,
+                builtinISOptionsPtr,
+                out builtinModule);
         }
 
         /// <summary>
@@ -534,7 +685,7 @@ namespace ILGPU.OptiX
         /// <summary>
         /// Compacts a previously built acceleration structure into a smaller output
         /// buffer. The input handle must have been built with
-        /// OPTIX_BUILD_FLAG_ALLOW_COMPACTION and an OPTIX_PROPERTY_TYPE_COMPACTED_SIZE
+        /// AllowCompaction and an CompactedSize
         /// emitted property (see AccelBuild's emittedProperties parameter).
         /// </summary>
         /// <param name="context">The OptiX device context.</param>
@@ -562,6 +713,158 @@ namespace ILGPU.OptiX
                 outputBuffer,
                 outputBufferSizeInBytes,
                 outputHandle);
+        }
+
+        /// <summary>
+        /// Retrieves relocation info for a previously built acceleration structure, to be
+        /// passed to CheckRelocationCompatibility/AccelRelocate.
+        /// </summary>
+        /// <param name="context">The OptiX device context.</param>
+        /// <param name="handle">The traversable handle of the built acceleration structure.</param>
+        /// <param name="info">Pointer to an OptixRelocationInfo to fill in.</param>
+        /// <returns>The OptiX result.</returns>
+        [CLSCompliant(false)]
+        public OptixResult AccelGetRelocationInfo(
+            IntPtr context,
+            ulong handle,
+            IntPtr info)
+        {
+            var func = GetOrCreateDelegate(ref cachedAccelGetRelocationInfo, functionTable.OptixAccelGetRelocationInfo);
+            return func(context, handle, info);
+        }
+
+        /// <summary>
+        /// Checks whether an acceleration structure described by relocation info can be
+        /// relocated on this device context.
+        /// </summary>
+        /// <param name="context">The OptiX device context.</param>
+        /// <param name="info">Pointer to the OptixRelocationInfo from AccelGetRelocationInfo.</param>
+        /// <param name="compatible">Filled in with non-zero if compatible.</param>
+        /// <returns>The OptiX result.</returns>
+        [CLSCompliant(false)]
+        public OptixResult CheckRelocationCompatibility(
+            IntPtr context,
+            IntPtr info,
+            out int compatible)
+        {
+            var func = GetOrCreateDelegate(ref cachedCheckRelocationCompatibility, functionTable.OptixCheckRelocationCompatibility);
+            return func(context, info, out compatible);
+        }
+
+        /// <summary>
+        /// Relocates a previously built acceleration structure into a new target buffer.
+        /// </summary>
+        /// <param name="context">The OptiX device context.</param>
+        /// <param name="stream">The CUDA stream.</param>
+        /// <param name="info">Pointer to the OptixRelocationInfo from AccelGetRelocationInfo.</param>
+        /// <param name="relocateInputs">Pointer to an array of OptixRelocateInput, one per original build input.</param>
+        /// <param name="numRelocateInputs">Number of relocate inputs.</param>
+        /// <param name="targetAccel">The target device buffer to relocate into.</param>
+        /// <param name="targetAccelSizeInBytes">The target buffer size (must match the source's size).</param>
+        /// <param name="targetHandle">The OptixTraversableHandle pointer, filled in with the relocated handle.</param>
+        /// <returns>The OptiX result.</returns>
+        [CLSCompliant(false)]
+        public OptixResult AccelRelocate(
+            IntPtr context,
+            IntPtr stream,
+            IntPtr info,
+            IntPtr relocateInputs,
+            ulong numRelocateInputs,
+            IntPtr targetAccel,
+            ulong targetAccelSizeInBytes,
+            IntPtr targetHandle)
+        {
+            var func = GetOrCreateDelegate(ref cachedAccelRelocate, functionTable.OptixAccelRelocate);
+            return func(
+                context,
+                stream,
+                info,
+                relocateInputs,
+                numRelocateInputs,
+                targetAccel,
+                targetAccelSizeInBytes,
+                targetHandle);
+        }
+
+        /// <summary>
+        /// Emits a single post-build property (e.g. Aabbs) for a previously built
+        /// acceleration structure, outside of the emittedProperties list passed to
+        /// AccelBuild itself.
+        /// </summary>
+        /// <param name="context">The OptiX device context.</param>
+        /// <param name="stream">The CUDA stream.</param>
+        /// <param name="handle">The traversable handle of the built acceleration structure.</param>
+        /// <param name="emittedProperty">Pointer to a single OptixAccelEmitDesc.</param>
+        /// <returns>The OptiX result.</returns>
+        [CLSCompliant(false)]
+        public OptixResult AccelEmitProperty(
+            IntPtr context,
+            IntPtr stream,
+            ulong handle,
+            IntPtr emittedProperty)
+        {
+            var func = GetOrCreateDelegate(ref cachedAccelEmitProperty, functionTable.OptixAccelEmitProperty);
+            return func(context, stream, handle, emittedProperty);
+        }
+
+        /// <summary>
+        /// Converts a raw device pointer to a static/motion transform struct into a
+        /// traversable handle, for use as an OptixInstance's or another transform
+        /// node's child traversable.
+        /// </summary>
+        /// <param name="onDevice">The OptiX device context.</param>
+        /// <param name="pointer">Device pointer to the transform struct (must be OPTIX_TRANSFORM_BYTE_ALIGNMENT-aligned).</param>
+        /// <param name="traversableType">The kind of transform struct at <paramref name="pointer"/>.</param>
+        /// <param name="traversableHandle">Filled in with the resulting traversable handle.</param>
+        /// <returns>The OptiX result.</returns>
+        [CLSCompliant(false)]
+        public OptixResult ConvertPointerToTraversableHandle(
+            IntPtr onDevice,
+            ulong pointer,
+            AccelStructures.OptixTraversableType traversableType,
+            out ulong traversableHandle)
+        {
+            var func = GetOrCreateDelegate(ref cachedConvertPointerToTraversableHandle, functionTable.OptixConvertPointerToTraversableHandle);
+            return func(onDevice, pointer, traversableType, out traversableHandle);
+        }
+
+        /// <summary>
+        /// Computes memory requirements for building an opacity micromap array.
+        /// </summary>
+        /// <param name="context">The OptiX device context.</param>
+        /// <param name="buildInput">The opacity micromap array build input.</param>
+        /// <param name="bufferSizes">Filled in with the required buffer sizes.</param>
+        /// <returns>The OptiX result.</returns>
+        [CLSCompliant(false)]
+        public OptixResult OpacityMicromapArrayComputeMemoryUsage(
+            IntPtr context,
+            AccelStructures.OptixOpacityMicromapArrayBuildInput buildInput,
+            out AccelStructures.OptixMicromapBufferSizes bufferSizes)
+        {
+            var func = GetOrCreateDelegate(ref cachedOpacityMicromapArrayComputeMemoryUsage, functionTable.OptixOpacityMicromapArrayComputeMemoryUsage);
+            using var buildInputPtr = SafeHGlobal.AllocFrom(buildInput);
+            return func(context, buildInputPtr, out bufferSizes);
+        }
+
+        /// <summary>
+        /// Builds an opacity micromap array.
+        /// </summary>
+        /// <param name="context">The OptiX device context.</param>
+        /// <param name="stream">The CUDA stream.</param>
+        /// <param name="buildInput">The opacity micromap array build input.</param>
+        /// <param name="buffers">The output/temp buffers.</param>
+        /// <returns>The OptiX result.</returns>
+        [CLSCompliant(false)]
+        public OptixResult OpacityMicromapArrayBuild(
+            IntPtr context,
+            IntPtr stream,
+            AccelStructures.OptixOpacityMicromapArrayBuildInput buildInput,
+            AccelStructures.OptixMicromapBuffers buffers)
+        {
+            var func = GetOrCreateDelegate(ref cachedOpacityMicromapArrayBuild, functionTable.OptixOpacityMicromapArrayBuild);
+            using var buildInputPtr = SafeHGlobal.AllocFrom(buildInput);
+            using var buffersPtr = SafeHGlobal.AllocFrom(buffers);
+            return func(context, stream, buildInputPtr, buffersPtr);
         }
 
         /// <summary>
@@ -819,6 +1122,75 @@ namespace ILGPU.OptiX
             var func = GetOrCreateDelegate(ref cachedDenoiserComputeAverageColor, functionTable.OptixDenoiserComputeAverageColor);
             using var inputImagePtr = SafeHGlobal.AllocFrom(inputImage);
             return func(denoiser, stream, inputImagePtr, outputAverageColor, scratch, scratchSizeInBytes);
+        }
+
+        /// <summary>
+        /// Computes the required size, in bytes, of a cooperative-vector matrix with
+        /// the given shape/type/layout. Results are
+        /// rounded up to a multiple of 64 bytes by the driver.
+        /// </summary>
+        /// <param name="context">The OptiX device context.</param>
+        /// <param name="N">Matrix row count.</param>
+        /// <param name="K">Matrix column count.</param>
+        /// <param name="elementType">The matrix element type.</param>
+        /// <param name="layout">The matrix layout.</param>
+        /// <param name="rowColumnStrideInBytes">Ignored for the two "optimal" layouts.</param>
+        /// <param name="sizeInBytes">Filled in with the required size in bytes.</param>
+        /// <returns>The OptiX result.</returns>
+        [CLSCompliant(false)]
+        public OptixResult CoopVecMatrixComputeSize(
+            IntPtr context,
+            uint N,
+            uint K,
+            CooperativeVectors.OptixCoopVecElemType elementType,
+            CooperativeVectors.OptixCoopVecMatrixLayout layout,
+            ulong rowColumnStrideInBytes,
+            out ulong sizeInBytes)
+        {
+            var func = GetOrCreateDelegate(ref cachedCoopVecMatrixComputeSize, functionTable.OptixCoopVecMatrixComputeSize);
+            return func(context, N, K, elementType, layout, rowColumnStrideInBytes, out sizeInBytes);
+        }
+
+        /// <summary>
+        /// Converts cooperative-vector matrices from one layout/element type to another
+        /// - typically row-major (as uploaded by the
+        /// host) into InferencingOptimal (as consumed by <c>optixCoopVecMatMul</c>).
+        /// Prefer <see cref="CooperativeVectors.OptixCoopVecMatrixBuilder.ConvertMatrix"/>
+        /// over calling this directly.
+        /// </summary>
+        /// <param name="context">The OptiX device context.</param>
+        /// <param name="stream">The CUDA stream.</param>
+        /// <param name="numNetworks">Number of networks to convert (matrices per network described by the descriptions below).</param>
+        /// <param name="inputNetworkDescription">Pointer to a marshaled OptixNetworkDescription describing the input topology.</param>
+        /// <param name="inputNetworks">Device pointer to the input matrix data.</param>
+        /// <param name="inputNetworkStrideInBytes">Stride between input networks; ignored if numNetworks is 1.</param>
+        /// <param name="outputNetworkDescription">Pointer to a marshaled OptixNetworkDescription describing the output topology.</param>
+        /// <param name="outputNetworks">Device pointer to the output matrix data.</param>
+        /// <param name="outputNetworkStrideInBytes">Stride between output networks; ignored if numNetworks is 1.</param>
+        /// <returns>The OptiX result.</returns>
+        [CLSCompliant(false)]
+        public OptixResult CoopVecMatrixConvert(
+            IntPtr context,
+            IntPtr stream,
+            uint numNetworks,
+            IntPtr inputNetworkDescription,
+            ulong inputNetworks,
+            ulong inputNetworkStrideInBytes,
+            IntPtr outputNetworkDescription,
+            ulong outputNetworks,
+            ulong outputNetworkStrideInBytes)
+        {
+            var func = GetOrCreateDelegate(ref cachedCoopVecMatrixConvert, functionTable.OptixCoopVecMatrixConvert);
+            return func(
+                context,
+                stream,
+                numNetworks,
+                inputNetworkDescription,
+                inputNetworks,
+                inputNetworkStrideInBytes,
+                outputNetworkDescription,
+                outputNetworks,
+                outputNetworkStrideInBytes);
         }
 
         #endregion

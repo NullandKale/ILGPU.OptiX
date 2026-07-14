@@ -2,6 +2,7 @@ using ILGPU;
 using ILGPU.OptiX;
 using ILGPU.OptiX.AccelStructures;
 using ILGPU.OptiX.Interop;
+using ILGPU.OptiX.Pipeline;
 using ILGPU.Runtime;
 using ILGPU.Runtime.Cuda;
 using MeshRange = ILGPU.OptiX.Pipeline.OptixMeshRange;

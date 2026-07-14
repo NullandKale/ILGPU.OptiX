@@ -17,27 +17,27 @@ using System;
 #pragma warning disable CA1707 // Identifiers should not contain underscores
 #pragma warning disable CA1815 // Override equals and operator equals on value types
 
-namespace ILGPU.OptiX
+namespace ILGPU.OptiX.Denoising
 {
     public enum OptixDenoiserModelKind
     {
-        OPTIX_DENOISER_MODEL_KIND_AOV = 0x2324,
-        OPTIX_DENOISER_MODEL_KIND_TEMPORAL_AOV = 0x2326,
-        OPTIX_DENOISER_MODEL_KIND_UPSCALE2X = 0x2327,
-        OPTIX_DENOISER_MODEL_KIND_TEMPORAL_UPSCALE2X = 0x2328,
+        Aov = 0x2324,
+        TemporalAov = 0x2326,
+        Upscale2x = 0x2327,
+        TemporalUpscale2x = 0x2328,
 
-        // Deprecated by the SDK - internally mapped to OPTIX_DENOISER_MODEL_KIND_AOV -
+        // Deprecated by the SDK - internally mapped to OptixDenoiserModelKind.Aov -
         // but this is what the optix7course reference examples (built against an
         // older SDK) use, so it's kept here rather than only exposing the modern name.
-        OPTIX_DENOISER_MODEL_KIND_LDR = 0x2322,
-        OPTIX_DENOISER_MODEL_KIND_HDR = 0x2323,
-        OPTIX_DENOISER_MODEL_KIND_TEMPORAL = 0x2325,
+        Ldr = 0x2322,
+        Hdr = 0x2323,
+        Temporal = 0x2325,
     }
 
     public enum OptixDenoiserAlphaMode
     {
-        OPTIX_DENOISER_ALPHA_MODE_COPY = 0,
-        OPTIX_DENOISER_ALPHA_MODE_DENOISE = 1,
+        Copy = 0,
+        Denoise = 1,
     }
 
     [CLSCompliant(false)]
@@ -50,17 +50,17 @@ namespace ILGPU.OptiX
 
     public enum OptixPixelFormat
     {
-        OPTIX_PIXEL_FORMAT_HALF1 = 0x220a,
-        OPTIX_PIXEL_FORMAT_HALF2 = 0x2207,
-        OPTIX_PIXEL_FORMAT_HALF3 = 0x2201,
-        OPTIX_PIXEL_FORMAT_HALF4 = 0x2202,
-        OPTIX_PIXEL_FORMAT_FLOAT1 = 0x220b,
-        OPTIX_PIXEL_FORMAT_FLOAT2 = 0x2208,
-        OPTIX_PIXEL_FORMAT_FLOAT3 = 0x2203,
-        OPTIX_PIXEL_FORMAT_FLOAT4 = 0x2204,
-        OPTIX_PIXEL_FORMAT_UCHAR3 = 0x2205,
-        OPTIX_PIXEL_FORMAT_UCHAR4 = 0x2206,
-        OPTIX_PIXEL_FORMAT_INTERNAL_GUIDE_LAYER = 0x2209,
+        Half1 = 0x220a,
+        Half2 = 0x2207,
+        Half3 = 0x2201,
+        Half4 = 0x2202,
+        Float1 = 0x220b,
+        Float2 = 0x2208,
+        Float3 = 0x2203,
+        Float4 = 0x2204,
+        UChar3 = 0x2205,
+        UChar4 = 0x2206,
+        InternalGuideLayer = 0x2209,
     }
 
     /// <summary>
@@ -91,12 +91,12 @@ namespace ILGPU.OptiX
 
     public enum OptixDenoiserAOVType
     {
-        OPTIX_DENOISER_AOV_TYPE_NONE = 0,
-        OPTIX_DENOISER_AOV_TYPE_BEAUTY = 0x7000,
-        OPTIX_DENOISER_AOV_TYPE_SPECULAR = 0x7001,
-        OPTIX_DENOISER_AOV_TYPE_REFLECTION = 0x7002,
-        OPTIX_DENOISER_AOV_TYPE_REFRACTION = 0x7003,
-        OPTIX_DENOISER_AOV_TYPE_DIFFUSE = 0x7004,
+        None = 0,
+        Beauty = 0x7000,
+        Specular = 0x7001,
+        Reflection = 0x7002,
+        Refraction = 0x7003,
+        Diffuse = 0x7004,
     }
 
     [CLSCompliant(false)]

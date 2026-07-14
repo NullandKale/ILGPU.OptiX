@@ -11,13 +11,12 @@
 
 namespace Sample15
 {
-    // Milestone M9's dedicated validation scene (docs/SAMPLE15_PLAN.md Design
-    // Decision 10) - the one place every PBR subsystem built across M2-M8 gets
+    // A dedicated validation scene - the one place every PBR subsystem gets
     // exercised together in isolation from Sponza's asset limitations: a
     // roughness x metallic sphere grid, HDRI-only lighting (no point lights, no flat
     // ambient - AmbientIntensity is 0), a texture-mapped normal/ORM surface (the only
-    // one in this whole sample - Sponza has no real ORM/normal data, see M6's own
-    // Verified Facts), and a rough-glass object exercising M7's BTDF.
+    // one in this whole sample - Sponza has no real ORM/normal data), and a
+    // rough-glass object exercising the BTDF.
     public static class PbrShowcaseScene
     {
         public static SceneData BuildPbrShowcaseScene()
@@ -40,11 +39,11 @@ namespace Sample15
                 CameraWorldScale = 9f,
             };
 
-            // Textured floor - the sample's only real normal/ORM-mapped surface
-            // (docs/SAMPLE15_PLAN.md Milestone M6/M9). Roughness/Metallic scalars are
-            // pure multipliers against arm.png's G/B channels (the glTF convention -
-            // see MaterialShading.ShadeSurface's ORM block), so both stay at 1 here to
-            // reproduce the texture's own per-texel values unscaled.
+            // Textured floor - the sample's only real normal/ORM-mapped surface.
+            // Roughness/Metallic scalars are pure multipliers against arm.png's G/B
+            // channels (the glTF convention - see MaterialShading.ShadeSurface's ORM
+            // block), so both stay at 1 here to reproduce the texture's own
+            // per-texel values unscaled.
             uint texturedFloor = (uint)b.AddMaterial(
                 new MaterialSbtData
                 {
@@ -101,9 +100,8 @@ namespace Sample15
                 b.AddSphereMesh(new Vec3(x, 0.8f, -1f), 0.8f, conductor);
             }
 
-            // Rough-glass object (docs/SAMPLE15_PLAN.md Milestone M7) - front and
-            // center, where the HDRI's own sun disc gives it something distinctive to
-            // refract/frost.
+            // Rough-glass object - front and center, where the HDRI's own sun disc
+            // gives it something distinctive to refract/frost.
             uint roughGlass = (uint)b.AddMaterial(new MaterialSbtData
             {
                 BaseColor = new Vec3(1f, 1f, 1f),

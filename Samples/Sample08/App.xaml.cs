@@ -10,6 +10,7 @@
 // ---------------------------------------------------------------------------------------
 
 using ILGPU.OptiX;
+using ILGPU.OptiX.Native;
 using System;
 using System.Windows;
 using System.Windows.Threading;

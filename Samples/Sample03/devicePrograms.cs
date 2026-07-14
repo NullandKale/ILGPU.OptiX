@@ -1,4 +1,4 @@
-﻿// ---------------------------------------------------------------------------------------
+// ---------------------------------------------------------------------------------------
 //                                    ILGPU Samples
 //                        Copyright (c) 2020-2022 ILGPU Project
 //                                    www.ilgpu.net
@@ -11,6 +11,7 @@
 
 using ILGPU;
 using ILGPU.OptiX;
+using ILGPU.OptiX.DeviceApi;
 
 namespace Sample03
 {

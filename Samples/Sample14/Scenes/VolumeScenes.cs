@@ -10,7 +10,7 @@ namespace Sample14
         // 4 colored pillars, a checker dais, 4 "game object" placeholder cells (their
         // metaId is reference-only bookkeeping our engine doesn't use - the cells
         // themselves are real, rendered voxels), plus 4 pedestals+spheres and 1 clear
-        // glass sphere floating above the dais. docs/SAMPLE13_PLAN.md's own decision:
+        // glass sphere floating above the dais. Only
         // the DDA *technique* is ported, not the reference's procedural
         // WorldGenerator-driven BuildMinecraftLike (out of scope).
         public static SceneData BuildVolumeGridTestScene()

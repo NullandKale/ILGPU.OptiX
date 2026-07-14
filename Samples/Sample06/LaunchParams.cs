@@ -10,6 +10,7 @@
 // ---------------------------------------------------------------------------------------
 
 using ILGPU.OptiX.Device;
+using ILGPU.OptiX.DeviceApi;
 
 namespace Sample06
 {

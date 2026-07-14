@@ -1,0 +1,106 @@
+// ---------------------------------------------------------------------------------------
+//                                     ILGPU OptiX
+//                           Copyright (c) 2022 ILGPU Project
+//                                    www.ilgpu.net
+//
+// File: OptixHitObjectInvoke.tt/OptixHitObjectInvoke.cs
+//
+// This file is part of ILGPU and is distributed under the University of Illinois Open
+// Source License. See LICENSE.txt for details.
+// ---------------------------------------------------------------------------------------
+
+<#@ template debug="false" hostspecific="false" language="C#" #>
+<#@ assembly name="System.Core" #>
+<#@ import namespace="System.Linq" #>
+<#@ import namespace="System.Text" #>
+<#@ import namespace="System.Collections.Generic" #>
+<#@ output extension=".cs" #>
+
+using ILGPU.Runtime.Cuda;
+using System;
+
+namespace ILGPU.OptiX.DeviceApi
+{
+    /// <summary>
+    /// Provides the functionality of optixInvoke - the third step of the Shader
+    /// Execution Reordering (SER) 3-step pattern,
+    /// after <see cref="OptixHitObject.Traverse"/> and <see cref="OptixReorder"/>:
+    /// actually runs the hit/miss program the traversal found, exchanging payload
+    /// registers exactly like <see cref="OptixTrace"/> does. Same "mov.u32 literal
+    /// into a scratch register" technique OptixTrace.tt/OptixHitObjectTraverse.tt use
+    /// for the payload-type-ID and payload-count arguments - see OptixTrace.cs's own
+    /// class doc comment for why a plain EmitRef Input&lt;uint&gt; can't carry them.
+    /// </summary>
+    public static partial class OptixHitObject
+    {
+<#
+    const int MaxPayloadValues = 32;
+    const int NonPayloadArgCount = 1 + 1 + 1; // pad, type, count - no ray params
+    const int MaxEmitRefArguments = 44;
+    const int MaxAchievablePayloadValues = MaxEmitRefArguments - NonPayloadArgCount;
+    // Capped to match OptixHitObject.Traverse's own ceiling (26) for a consistent max
+    // payload count across the Traverse/Invoke pair, even though Invoke's simpler
+    // argument list would allow a few more.
+    const int TraverseCeiling = 26;
+    int effectiveMax = MaxAchievablePayloadValues < TraverseCeiling ? MaxAchievablePayloadValues : TraverseCeiling;
+
+    for (int paramIdx = 0; paramIdx <= effectiveMax; paramIdx++) {
+        int padArg = paramIdx;
+        int typeArg = paramIdx + 1;
+        int countArg = paramIdx + 2;
+
+        Func<int, int> payloadSlotArg = i => i < paramIdx ? i : padArg;
+        var outputArgs = Enumerable.Range(0, MaxPayloadValues).Select(payloadSlotArg);
+        var inputPayloadArgs = Enumerable.Range(0, MaxPayloadValues).Select(payloadSlotArg);
+
+        var bodyArgs = new List<string> { $"%{typeArg}", $"%{countArg}" };
+        bodyArgs.AddRange(inputPayloadArgs.Select(x => $"%{x}"));
+
+        string callInstruction =
+            $"mov.u32 %{typeArg}, 0; mov.u32 %{countArg}, {paramIdx}; call (";
+        callInstruction += string.Join(", ", outputArgs.Select(x => $"%{x}"));
+        callInstruction += "), _optix_hitobject_invoke, (";
+        callInstruction += string.Join(", ", bodyArgs);
+        callInstruction += ");";
+
+        string payloadRegisterSummary = paramIdx == 0
+            ? "carrying no payload registers"
+            : paramIdx == 1
+                ? "carrying 1 payload register (p0)"
+                : $"carrying {paramIdx} payload registers (p0..p{paramIdx - 1})";
+#>
+        /// <summary>
+        /// Runs the hit/miss program found by a matching-payload-count
+        /// <c>Traverse(...)</c> call, <#= payloadRegisterSummary #>.
+        /// </summary>
+        public static void Invoke(
+<#      for (int i = 0; i < paramIdx; i++) { #>
+              ref uint p<#= i #><#= i < paramIdx - 1 ? "," : "" #>
+<#      } #>
+            )
+        {
+<#      for (int i = 0; i < paramIdx; i++) { #>
+            Ref<uint> _p<#= i #> = p<#= i #>;
+<#      } #>
+            Ref<uint> _pad = 0u;
+            Output<uint> _type = default;
+            Output<uint> _count = default;
+
+            CudaAsm.EmitRef(
+                "<#= callInstruction #>"
+<#      for (int i = 0; i < paramIdx; i++) { #>
+                , ref _p<#= i #>
+<#      } #>
+                , ref _pad
+                , ref _type
+                , ref _count
+                );
+
+<#      for (int i = 0; i < paramIdx; i++) { #>
+            p<#= i #> = _p<#= i #>.Value;
+<#      } #>
+        }
+
+<# } #>
+    }
+}

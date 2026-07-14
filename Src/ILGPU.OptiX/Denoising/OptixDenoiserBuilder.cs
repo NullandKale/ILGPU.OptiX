@@ -12,6 +12,7 @@
 using ILGPU.Runtime;
 using ILGPU.Runtime.Cuda;
 using ILGPU.Util;
+using ILGPU.OptiX.Pipeline;
 using System;
 
 namespace ILGPU.OptiX.Denoising
@@ -26,7 +27,7 @@ namespace ILGPU.OptiX.Denoising
         private uint width;
         private uint height;
         private OptixDenoiserOptions? denoiserOptions;
-        private OptixDenoiserModelKind modelKind = OptixDenoiserModelKind.OPTIX_DENOISER_MODEL_KIND_LDR;
+        private OptixDenoiserModelKind modelKind = OptixDenoiserModelKind.Ldr;
 
         /// <summary>
         /// Sets the device context.
@@ -102,6 +103,8 @@ namespace ILGPU.OptiX.Denoising
             MemoryBuffer stateBuffer = null;
             MemoryBuffer scratchBuffer = null;
             MemoryBuffer guidanceBuffer = null;
+            MemoryBuffer internalGuideLayerA = null;
+            MemoryBuffer internalGuideLayerB = null;
 
             try
             {
@@ -117,6 +120,20 @@ namespace ILGPU.OptiX.Denoising
                 scratchBuffer = accelerator.Allocate1D<byte>((long)Math.Max(
                     sizes.WithoutOverlapScratchSizeInBytes,
                     sizes.WithOverlapScratchSizeInBytes));
+
+                // Temporal model kinds need two
+                // "internal guide layer" buffers - opaque, driver-defined-format
+                // per-pixel state ping-ponged frame to frame (this frame's "output"
+                // internal guide layer becomes next frame's "previous" one). Only
+                // temporal model kinds report a non-zero InternalGuideLayerPixelSizeInBytes,
+                // so this is a no-op (both stay null) for Ldr/Hdr/Aov/Upscale2x.
+                ulong internalGuideLayerSizeInBytes =
+                    sizes.InternalGuideLayerPixelSizeInBytes * width * height;
+                if (internalGuideLayerSizeInBytes > 0)
+                {
+                    internalGuideLayerA = accelerator.Allocate1D<byte>((long)internalGuideLayerSizeInBytes);
+                    internalGuideLayerB = accelerator.Allocate1D<byte>((long)internalGuideLayerSizeInBytes);
+                }
 
                 // Get the stream for setup
                 CudaStream cudaStream;
@@ -149,7 +166,11 @@ namespace ILGPU.OptiX.Denoising
                     accelerator.Synchronize();
                 }
 
-                var built = new BuiltDenoiser(denoiser, stateBuffer, scratchBuffer, guidanceBuffer, accelerator, stream);
+                var built = new BuiltDenoiser(
+                    denoiser, stateBuffer, scratchBuffer, guidanceBuffer,
+                    internalGuideLayerA, internalGuideLayerB, width, height,
+                    sizes.InternalGuideLayerPixelSizeInBytes,
+                    accelerator, stream);
                 return built;
             }
             catch
@@ -157,6 +178,8 @@ namespace ILGPU.OptiX.Denoising
                 stateBuffer?.Dispose();
                 scratchBuffer?.Dispose();
                 guidanceBuffer?.Dispose();
+                internalGuideLayerA?.Dispose();
+                internalGuideLayerB?.Dispose();
                 throw;
             }
         }
@@ -173,21 +196,46 @@ namespace ILGPU.OptiX.Denoising
     public sealed class BuiltDenoiser : IDisposable
     {
         private bool disposed;
+        private readonly MemoryBuffer internalGuideLayerA;
+        private readonly MemoryBuffer internalGuideLayerB;
+        private readonly uint width;
+        private readonly uint height;
+        private readonly ulong internalGuideLayerPixelSizeInBytes;
+
+        // Which buffer is "previous" vs "output" this call - flips every call to
+        // PrepareTemporalGuideLayer so each frame's freshly-written internal guide
+        // layer becomes next frame's "previous" one, and vice versa.
+        private bool useAAsOutput = true;
 
         public OptixDenoiser Denoiser { get; }
         public MemoryBuffer StateBuffer { get; }
         public MemoryBuffer ScratchBuffer { get; }
         public MemoryBuffer GuidanceBuffer { get; }
+
+        /// <summary>
+        /// True if this denoiser was built with a temporal model kind (non-zero
+        /// <see cref="OptixDenoiserSizes.InternalGuideLayerPixelSizeInBytes"/>) - i.e.
+        /// whether <see cref="PrepareTemporalGuideLayer"/> is usable.
+        /// </summary>
+        public bool SupportsTemporalGuideLayer => internalGuideLayerA != null;
+
         private readonly CudaAccelerator accelerator;
 
         internal BuiltDenoiser(OptixDenoiser denoiser, MemoryBuffer stateBuffer,
             MemoryBuffer scratchBuffer, MemoryBuffer guidanceBuffer,
+            MemoryBuffer internalGuideLayerA, MemoryBuffer internalGuideLayerB,
+            uint width, uint height, ulong internalGuideLayerPixelSizeInBytes,
             CudaAccelerator accelerator, CudaStream stream)
         {
             Denoiser = denoiser;
             StateBuffer = stateBuffer;
             ScratchBuffer = scratchBuffer;
             GuidanceBuffer = guidanceBuffer;
+            this.internalGuideLayerA = internalGuideLayerA;
+            this.internalGuideLayerB = internalGuideLayerB;
+            this.width = width;
+            this.height = height;
+            this.internalGuideLayerPixelSizeInBytes = internalGuideLayerPixelSizeInBytes;
             this.accelerator = accelerator;
 
             // If stream is null, synchronize device
@@ -197,6 +245,48 @@ namespace ILGPU.OptiX.Denoising
             }
         }
 
+        /// <summary>
+        /// Fills in <paramref name="guideLayer"/>'s <see cref="OptixDenoiserGuideLayer.Flow"/>,
+        /// <see cref="OptixDenoiserGuideLayer.PreviousOutputInternalGuideLayer"/>, and
+        /// <see cref="OptixDenoiserGuideLayer.OutputInternalGuideLayer"/> fields for a
+        /// temporal model kind - the two internal
+        /// guide layer images are opaque, driver-defined-format per-pixel state this
+        /// library ping-pongs automatically between calls; only <paramref name="flow"/>
+        /// (screen-space motion vectors) is the caller's responsibility to supply,
+        /// since it depends on the caller's own camera/scene motion. Call once per
+        /// frame, immediately before <see cref="OptixDenoiser.Invoke"/> - each call
+        /// flips which buffer is "previous" vs "output" for the next call.
+        /// </summary>
+        /// <param name="guideLayer">The guide layer to fill in (Albedo/Normal already set by the caller, if used).</param>
+        /// <param name="flow">Screen-space motion vectors (Float2 format), or a zeroed image if unavailable/static.</param>
+        [CLSCompliant(false)]
+        public OptixDenoiserGuideLayer PrepareTemporalGuideLayer(OptixDenoiserGuideLayer guideLayer, OptixImage2D flow)
+        {
+            if (!SupportsTemporalGuideLayer)
+                throw new InvalidOperationException(
+                    "This denoiser was not built with a temporal model kind - " +
+                    "PrepareTemporalGuideLayer() has no internal guide layer buffers to use.");
+
+            var outputBuffer = useAAsOutput ? internalGuideLayerA : internalGuideLayerB;
+            var previousBuffer = useAAsOutput ? internalGuideLayerB : internalGuideLayerA;
+            useAAsOutput = !useAAsOutput;
+
+            guideLayer.Flow = flow;
+            guideLayer.OutputInternalGuideLayer = MakeInternalGuideLayerImage(outputBuffer);
+            guideLayer.PreviousOutputInternalGuideLayer = MakeInternalGuideLayerImage(previousBuffer);
+            return guideLayer;
+        }
+
+        private OptixImage2D MakeInternalGuideLayerImage(MemoryBuffer buffer) => new OptixImage2D
+        {
+            Data = unchecked((ulong)buffer.NativePtr.ToInt64()),
+            Width = width,
+            Height = height,
+            RowStrideInBytes = (uint)(width * internalGuideLayerPixelSizeInBytes),
+            PixelStrideInBytes = (uint)internalGuideLayerPixelSizeInBytes,
+            Format = OptixPixelFormat.InternalGuideLayer,
+        };
+
         public void Dispose()
         {
             if (!disposed)
@@ -205,6 +295,8 @@ namespace ILGPU.OptiX.Denoising
                 GuidanceBuffer?.Dispose();
                 ScratchBuffer?.Dispose();
                 StateBuffer?.Dispose();
+                internalGuideLayerA?.Dispose();
+                internalGuideLayerB?.Dispose();
                 Denoiser?.Dispose();
                 GC.SuppressFinalize(this);
             }

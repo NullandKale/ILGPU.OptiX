@@ -11,6 +11,8 @@
 
 using MeshRange = ILGPU.OptiX.Pipeline.OptixMeshRange;
 using System;
+using ILGPU.OptiX.AccelStructures;
+using ILGPU.OptiX.Cuda;
 
 namespace Sample14
 {
@@ -55,8 +57,7 @@ namespace Sample14
 
     // Host-side POCO a Scenes.cs builder method returns; SampleRenderer.SwitchToScene
     // consumes it to (re)allocate device buffers, rebuild the GAS/SBT, and reset FrameID -
-    // mirrors the reference's own lazy-built, cached-per-index Scene objects
-    // (docs/SAMPLE13_PLAN.md, "Where scene-build logic lives"). Grows a field per
+    // mirrors the reference's own lazy-built, cached-per-index Scene objects. Grows a field per
     // milestone as new primitive kinds/volume grid/mesh support come online; unused
     // fields on a given scene are left null/default.
     public class SceneData
@@ -130,7 +131,7 @@ namespace Sample14
 
         // Per-frame animation (museum/radial-museum scenes only) - see
         // SampleRenderer.ApplyAnimation. BobbingSpheres requires refitting the custom-
-        // primitives GAS every frame (OPTIX_BUILD_OPERATION_UPDATE), so its presence
+        // primitives GAS every frame (OptixBuildOperation.Update), so its presence
         // also drives BuildOrUpdateCustomPrimitivesGas's ALLOW_UPDATE flag and forces
         // progressive accumulation off for the scene (see HasAnimatedGeometry/render()).
         public OrbitingLightAnim[] OrbitingLights = Array.Empty<OrbitingLightAnim>();

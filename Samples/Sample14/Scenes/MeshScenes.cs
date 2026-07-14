@@ -11,7 +11,7 @@ namespace Sample14
         // Shared by every single-mesh scene (M6) - reuses the existing triangle GAS
         // pipeline as-is (meshes are pure triangle geometry, no new subsystem needed),
         // auto-fits the camera/lights to each mesh's own bounding box since these 4 OBJs
-        // (cow, stanford-bunny, teapot, xyzrgb_dragon - see docs/SAMPLE13_PLAN.md) are at
+        // (cow, stanford-bunny, teapot, xyzrgb_dragon) are at
         // very different real-world scales. Keeps the mesh's own vertex arrays directly
         // (no SceneBuilder re-accumulation needed for a single unmodified mesh).
         private static SceneData BuildMeshScene(string name, string objFileName, MaterialSbtData material, Vec3 lightColorA, Vec3 lightColorB)

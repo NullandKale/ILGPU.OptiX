@@ -2,6 +2,7 @@ using MeshRange = ILGPU.OptiX.Pipeline.OptixMeshRange;
 using System;
 using System.Collections.Generic;
 using System.IO;
+using ILGPU.OptiX.Cuda;
 
 namespace Sample15
 {
@@ -103,10 +104,9 @@ namespace Sample15
             triangleMaterialIds.Add(materialId);
         }
 
-        // Direct-geometry counterpart to Model.cs's ComputeTangents (docs/
-        // SAMPLE15_PLAN.md Milestone M6) - AddQuad/AddTriangle already know their own
-        // UVs and normal up front, so a real per-call tangent solve (not an arbitrary
-        // fallback) is just as cheap here.
+        // Direct-geometry counterpart to Model.cs's ComputeTangents - AddQuad/
+        // AddTriangle already know their own UVs and normal up front, so a real
+        // per-call tangent solve (not an arbitrary fallback) is just as cheap here.
         static Vec3 TangentFromTriangle(Vec3 a, Vec3 b, Vec3 c, Vec2 uvA, Vec2 uvB, Vec2 uvC, Vec3 normal)
         {
             Vec3 e1 = b - a, e2 = c - a;
@@ -438,8 +438,8 @@ namespace Sample15
 
         // NeeLights/NeeLightCdf/NeeLightAreaPdf are deliberately left at their
         // SceneData defaults here, not computed inline - Scenes/LightList.cs needs the
-        // shared environment map's total power (docs/SAMPLE15_PLAN.md Milestone M5),
-        // which is scene-independent and only known to SampleRenderer (loaded once at
+        // shared environment map's total power, which is scene-independent and only
+        // known to SampleRenderer (loaded once at
         // startup), not to a scene builder function. SampleRenderer.SwitchToScene
         // calls LightList.Build itself, once per scene switch, right after this
         // returns.

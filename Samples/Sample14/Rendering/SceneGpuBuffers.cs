@@ -3,6 +3,7 @@ using ILGPU.OptiX;
 using ILGPU.OptiX.Interop;
 using ILGPU.Runtime;
 using ILGPU.Runtime.Cuda;
+using ILGPU.OptiX.AccelStructures;
 using System;
 
 namespace Sample14

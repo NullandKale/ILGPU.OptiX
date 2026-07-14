@@ -3,6 +3,7 @@ using ILGPU.OptiX;
 using ILGPU.OptiX.Device;
 using ILGPU.OptiX.Pipeline;
 using ILGPU.Runtime;
+using ILGPU.OptiX.DeviceApi;
 using MeshRange = ILGPU.OptiX.Pipeline.OptixMeshRange;
 using System;
 using System.Collections.Generic;
@@ -20,9 +21,8 @@ namespace Sample15
     /// <see cref="FrameOutput"/>, <see cref="SceneAnimator"/>.
     ///
     /// Unlike Sample13's SampleRenderer, there is no MainWindow coupling and no
-    /// PresentQueue - render() runs entirely on the single GL/compute thread (see
-    /// docs/SAMPLE14_PLAN.md's threading-model section) and DenoiseAndTonemap's
-    /// Map/tonemap/Unmap sequence (see FrameOutput.cs) is the last GPU-touching step,
+    /// PresentQueue - render() runs entirely on the single GL/compute thread and
+    /// DenoiseAndTonemap's Map/tonemap/Unmap sequence (see FrameOutput.cs) is the last GPU-touching step,
     /// with no further cross-thread handoff needed.
     /// </summary>
     public class SampleRenderer
@@ -39,7 +39,7 @@ namespace Sample15
         readonly SceneAnimator animator;
         readonly FrameOutput frameOutput;
 
-        // HDRI environment maps (docs/SAMPLE15_PLAN.md Milestone M5) - scene-dependent
+        // HDRI environment maps - scene-dependent
         // (SceneData.EnvMapPath), cached per unique path so scenes sharing the same
         // HDRI don't reload/reupload it on every switch (unlike SceneGpuBuffers, whose
         // per-scene buffers are torn down and rebuilt on every SwitchToScene call).
@@ -99,13 +99,18 @@ namespace Sample15
         // only temporal integrator - FrameOutput's OptiX denoiser runs in HDR (not
         // TEMPORAL) model kind and does purely spatial cleanup on top of this.
         public bool Accumulate { get; set; } = true;
-        // The cap on AccumCountBuffer's per-pixel history length when Accumulate is on
-        // (see LaunchParams.MaxHistoryFrames's own doc comment) - once a pixel's history
-        // reaches this, the blend settles into a small new-sample weight
-        // (1/MaxHistoryFrames, further aged by HistoryDecayHalfLifeSeconds below) rather
-        // than continuing to shrink like an unbounded running mean would. Not "how many
-        // frames until it looks perfect" - just where the bounded-EMA steady-state
-        // noise floor gets set.
+        // The cap on AccumCountBuffer's per-pixel history length **while the camera is
+        // actually moving** - once a pixel's history reaches this, the blend settles
+        // into a small new-sample weight (1/MaxHistoryFrames, further aged by
+        // HistoryDecayHalfLifeSeconds below) rather than continuing to shrink like an
+        // unbounded running mean would, so the image stays responsive to motion
+        // instead of getting sluggish as history piles up. **Does not apply once the
+        // camera has been stationary for a full frame** - render() detects that (via
+        // CamerasEqual against previousRenderedCamera) and switches to true unbounded
+        // accumulation (no cap, no decay) so a static view actually converges to a
+        // clean image over time instead of plateauing at this cap's noise floor
+        // forever (see render()'s own comment - this was a real bug, reported and
+        // fixed 2026-07-09).
         // Kept well below the old default of 256 - a long-lived history survives many
         // small per-frame reprojection resamples during gradual camera motion (each
         // individually correct, but a very long chain of them can still soften fine
@@ -113,12 +118,15 @@ namespace Sample15
         // many times a pixel's color can be recursively resampled before it's forced
         // to refresh from a fully fresh sample.
         public int MaxHistoryFrames { get; set; } = 96;
-        // Real-time half-life for AccumCount's decay (see LaunchParams.
-        // HistoryDecayHalfLifeSeconds's own doc comment) - even a static, perfectly
-        // reprojected pixel keeps slowly forgetting old contributions on this
-        // wall-clock schedule instead of freezing once it hits MaxHistoryFrames.
+        // Real-time half-life for AccumCount's decay **while the camera is actually
+        // moving** - even a static-relative-to-last-frame, perfectly reprojected pixel
+        // keeps slowly forgetting old contributions on this wall-clock schedule during
+        // continuous motion, instead of freezing once it hits MaxHistoryFrames.
         // Smaller = adapts to subtle scene changes faster but noisier at steady state;
         // 0 or negative disables decay entirely (the old "freeze at the cap" behavior).
+        // Same static-camera exception as MaxHistoryFrames above: render() passes 0
+        // here once the camera has been stationary for a full frame, disabling decay
+        // entirely so history can grow unbounded and actually converge.
         public float HistoryDecayHalfLifeSeconds { get; set; } = 3f;
         // Disocclusion rejection threshold (see LaunchParams.DepthRejectionThreshold's
         // own doc comment) - a relative depth-difference fraction; smaller rejects more
@@ -126,7 +134,7 @@ namespace Sample15
         // and thus noise reduction - more readily), larger tolerates more before
         // rejecting (smoother but more prone to smearing at disocclusions).
         public float DepthRejectionThreshold { get; set; } = 0.05f;
-        // Unified bounce budget (docs/SAMPLE15_PLAN.md Milestone M3) - Russian
+        // Unified bounce budget - Russian
         // roulette (RaygenProgram.cs) terminates most paths well before this ceiling.
         public int MaxBounces { get; set; } = 8;
 
@@ -199,13 +207,13 @@ namespace Sample15
         double autoScaleGpuWorkAccumMs;
         int autoScaleGpuWorkSampleCount;
 
-        // Tonemap controls (docs/SAMPLE15_PLAN.md Milestone M8). ExposureStops
+        // Tonemap controls. ExposureStops
         // defaults to -1 (2^-1 = 0.5x) to reproduce the previous hardcoded-Exposure
         // constant's default look exactly - the UI/keyboard can move it from there.
         public float ExposureStops { get; set; } = -1f;
         public int TonemapOperator { get; set; } = TonemapKernel.OperatorReinhard;
 
-        // Env-map controls (docs/SAMPLE15_PLAN.md Milestone M8) - Rotation is in
+        // Env-map controls - Rotation is in
         // radians, applied uniformly by EnvironmentMapSampling's direction<->uv
         // conversion (both the NEE-sampling and miss-program-evaluation sides, so
         // they stay consistent for MIS). IntensityMultiplier is applied on top of
@@ -250,8 +258,7 @@ namespace Sample15
         // Kept even though Sample14 is single-threaded (unlike Sample13, where this
         // lock exists specifically to protect against a dedicated render thread racing
         // scene-switch/camera-move calls from the UI thread) - cheap insurance when
-        // uncontended, and removing it isn't a meaningful simplification on its own
-        // (see docs/SAMPLE14_PLAN.md's note on this).
+        // uncontended, and removing it isn't a meaningful simplification on its own.
         readonly object gpuLock = new object();
 
         public SampleRenderer(int windowWidth, int windowHeight)
@@ -259,7 +266,7 @@ namespace Sample15
             gpu = new GpuContext();
 
             // No module/pipeline compile options, no SetStackSize magic numbers, no
-            // hand-rolled SBT record structs - see docs/API_USABILITY_PLAN.md. Ray
+            // hand-rolled SBT record structs. Ray
             // type declaration order (radiance, then shadow) fixes their SBT index at
             // 0/1, matching Payloads.RADIANCE_RAY_TYPE/SHADOW_RAY_TYPE, which every
             // OptixTrace.Trace(...) call site (RaygenProgram.cs, Rays/ShadowRay.cs)
@@ -335,8 +342,7 @@ namespace Sample15
                 currentScene = scene;
                 animator.OnSceneSwitched(scene);
 
-                // Scene-dependent HDRI environment map (docs/SAMPLE15_PLAN.md
-                // Milestone M5) - null/empty EnvMapPath means this scene keeps the
+                // Scene-dependent HDRI environment map - null/empty EnvMapPath means this scene keeps the
                 // flat BackgroundTop/Bottom gradient sky instead. Must happen before
                 // buffers.Upload(scene) below, which reads scene.NeeLights/
                 // NeeLightCdf/NeeLightAreaPdf.
@@ -581,6 +587,17 @@ namespace Sample15
             RenderScale = renderScaleField + step;
         }
 
+        // Bit-exact comparison, not epsilon-based - reliable here because launchParams.camera
+        // only ever changes via setCamera(), which is only called in response to actual user
+        // input (see RenderWindow.cs's ApplyCameraLook/UpdateWasdMovement); with no input this
+        // frame, launchParams.camera is the literal same struct value as last frame's, not a
+        // recomputation that could drift by a rounding error. Used by render() to decide
+        // whether to fall back to unbounded TAA accumulation - see its own comment.
+        static bool CamerasEqual(Camera a, Camera b) =>
+            a.origin.x == b.origin.x && a.origin.y == b.origin.y && a.origin.z == b.origin.z &&
+            a.lookAt.x == b.lookAt.x && a.lookAt.y == b.lookAt.y && a.lookAt.z == b.lookAt.z &&
+            a.up.x == b.up.x && a.up.y == b.up.y && a.up.z == b.up.z;
+
         public void setCamera(Camera camera)
         {
             lock (gpuLock)
@@ -628,6 +645,13 @@ namespace Sample15
                 launchParams.MaxBounces = MaxBounces;
                 launchParams.EnvMapRotation = EnvMapRotation;
                 launchParams.EnvMapIntensity = currentScene.EnvMapIntensity * EnvMapIntensityMultiplier;
+                // The camera used for the frame *before* this one - captured before
+                // overwriting below, so a camera move this frame still reprojects
+                // correctly against where the camera actually was last frame (see
+                // previousRenderedCamera's own doc comment).
+                bool trustPreviousFrame = hasValidPreviousFrame;
+                launchParams.PrevFrameValid = trustPreviousFrame ? 1 : 0;
+
                 // See SampleRenderer.MaxHistoryFrames's own doc comment - 1 means "always
                 // a fresh single sample, no blending", matching the old scenes' visual
                 // behavior exactly for the off/animated cases. Passed straight to
@@ -635,16 +659,41 @@ namespace Sample15
                 // RaygenProgram's own DepthRejectionThreshold check needs to happen
                 // inside the OptiX launch itself (see LaunchParams.RawColorBuffer's own
                 // doc comment).
-                int effectiveMaxHistoryFrames = (Accumulate && !sceneIsAnimated) ? MaxHistoryFrames : 1;
+                //
+                // Bounded-EMA vs. unbounded convergence: MaxHistoryFrames/
+                // HistoryDecayHalfLifeSeconds define a steady-state noise floor that
+                // never fully clears, by design, so a *moving* camera keeps converging
+                // responsively without an ever-growing divisor making it sluggish to
+                // adapt. But that same floor applied to a perfectly static camera means
+                // the image plateaus at ~MaxHistoryFrames-worth of noise forever, no
+                // matter how long it sits still - not what "let it accumulate" should
+                // mean. So once the camera has been unchanged for a full frame (compared
+                // against previousRenderedCamera, which is bit-identical unless setCamera
+                // was actually called since - see its own doc comment), drop back to true
+                // unbounded accumulation (no cap, no decay) so a static view keeps
+                // converging toward a clean image indefinitely, exactly like Sample11-14's
+                // progressive accumulation. Any camera move reactivates the bounded/decayed
+                // scheme for the frame(s) where reprojection actually needs it.
+                bool cameraUnchangedSinceLastFrame = trustPreviousFrame && CamerasEqual(launchParams.camera, previousRenderedCamera);
+                int effectiveMaxHistoryFrames;
+                float effectiveHistoryDecayHalfLifeSeconds;
+                if (!Accumulate || sceneIsAnimated)
+                {
+                    effectiveMaxHistoryFrames = 1;
+                    effectiveHistoryDecayHalfLifeSeconds = HistoryDecayHalfLifeSeconds;
+                }
+                else if (cameraUnchangedSinceLastFrame)
+                {
+                    effectiveMaxHistoryFrames = int.MaxValue;
+                    effectiveHistoryDecayHalfLifeSeconds = 0f;
+                }
+                else
+                {
+                    effectiveMaxHistoryFrames = MaxHistoryFrames;
+                    effectiveHistoryDecayHalfLifeSeconds = HistoryDecayHalfLifeSeconds;
+                }
                 float deltaTimeSeconds = (float)(sinceLastFrameMs / 1000.0);
                 launchParams.DepthRejectionThreshold = DepthRejectionThreshold;
-
-                // The camera used for the frame *before* this one - captured before
-                // overwriting below, so a camera move this frame still reprojects
-                // correctly against where the camera actually was last frame (see
-                // previousRenderedCamera's own doc comment).
-                bool trustPreviousFrame = hasValidPreviousFrame;
-                launchParams.PrevFrameValid = trustPreviousFrame ? 1 : 0;
                 launchParams.PrevCameraOrigin = previousRenderedCamera.origin;
                 launchParams.PrevCameraAxisX = previousRenderedCamera.axis.x;
                 launchParams.PrevCameraAxisY = previousRenderedCamera.axis.y;
@@ -682,7 +731,7 @@ namespace Sample15
                 // launch above has finished writing RawColorBuffer/ReprojCoordBuffer for
                 // every pixel (see FrameOutput.ResolveTaa's own doc comment), and before
                 // DenoiseAndTonemap below, which reads its output (CurrentColorBuffer).
-                frameOutput.ResolveTaa(effectiveMaxHistoryFrames, HistoryDecayHalfLifeSeconds, deltaTimeSeconds);
+                frameOutput.ResolveTaa(effectiveMaxHistoryFrames, effectiveHistoryDecayHalfLifeSeconds, deltaTimeSeconds);
 
                 frameOutput.DenoiseAndTonemap(DenoiserOn, Accumulate, launchParams.FrameID, ExposureStops, TonemapOperator, out double denoiseMs, out double tonemapMs);
 

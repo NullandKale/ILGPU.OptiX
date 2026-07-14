@@ -4,8 +4,8 @@ using System.Numerics;
 namespace Sample14.UI
 {
     /// <summary>
-    /// The ImGui control panel replacing Sample13's WPF button panel (see
-    /// docs/SAMPLE14_PLAN.md's M7 milestone) - same four sections (SCENE, RENDER
+    /// The ImGui control panel replacing Sample13's WPF button panel -
+    /// same four sections (SCENE, RENDER
     /// SETTINGS, OPTIONS, CONTROLS) plus a stats readout, laid out top-left over the
     /// rendered frame. Every control here has a keyboard equivalent too (see
     /// RenderWindow's UpdateOneShotKeys) - this panel is a visual/mouse-driven

@@ -12,7 +12,7 @@
 using ILGPU.Runtime.Cuda;
 using System;
 
-namespace ILGPU.OptiX
+namespace ILGPU.OptiX.Cuda
 {
     // Samples a bindless CUDA texture object (cudaTextureObject_t, created host-side by
     // CudaTextureObject) from device code, equivalent to CUDA's tex2D<float4>(). Not an

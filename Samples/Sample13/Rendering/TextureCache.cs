@@ -1,4 +1,5 @@
 using ILGPU.OptiX;
+using ILGPU.OptiX.Cuda;
 using System;
 using System.Collections.Generic;
 using System.IO;

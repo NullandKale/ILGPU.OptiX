@@ -12,7 +12,7 @@
 using ILGPU.Runtime.Cuda;
 using System;
 
-namespace ILGPU.OptiX
+namespace ILGPU.OptiX.DeviceApi
 {
     /// <summary>
     /// Provides the functionality of the optixGetSbtDataPointer built-in function -

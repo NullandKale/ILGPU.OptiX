@@ -10,6 +10,7 @@
 // ---------------------------------------------------------------------------------------
 
 using ILGPU.OptiX;
+using ILGPU.OptiX.Cuda;
 using System;
 
 namespace Sample13

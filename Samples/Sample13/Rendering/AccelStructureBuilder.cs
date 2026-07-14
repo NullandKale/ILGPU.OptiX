@@ -2,6 +2,7 @@ using ILGPU;
 using ILGPU.OptiX;
 using ILGPU.OptiX.AccelStructures;
 using ILGPU.OptiX.Interop;
+using ILGPU.OptiX.Pipeline;
 using ILGPU.Runtime;
 using ILGPU.Runtime.Cuda;
 using MeshRange = ILGPU.OptiX.Pipeline.OptixMeshRange;
@@ -31,8 +32,8 @@ namespace Sample13
         // actual HitgroupRecordCount after building both; a mismatch means the accel
         // structure and the SBT no longer agree on the hitgroup record layout, which is
         // exactly the bug class that made every triangle/primitive silently resolve to
-        // hitgroup record 0 regardless of its actual material (see this file's own fix
-        // history in docs/API_BUILDER_PLAN.md's 2026-07-04 notes).
+        // hitgroup record 0 regardless of its actual material - this file has already
+        // been fixed for that once before.
         public uint TotalHitgroupRecordsUsed { get; private set; }
 
         // Kept alive across frames (unlike triangleBuilder/iasBuilder, which really are
@@ -114,25 +115,38 @@ namespace Sample13
             if (hasTriangles) trianglesGas = triangleBuilder.Build();
             if (hasCustomPrimitives) customPrimitivesGas = customPrimitivesBuilder.Build();
 
-            // Combine via IAS if both present
-            if (hasTriangles && hasCustomPrimitives)
+            // Always combine via IAS, even when only one GAS is present. The pipeline
+            // is compiled with only ALLOW_SINGLE_LEVEL_INSTANCING (not ALLOW_SINGLE_GAS
+            // - see RendererPipeline.cs), so optixTrace requires an IAS traversable;
+            // handing it a bare GAS handle (the previous behavior for triangle-only or
+            // custom-primitive-only scenes) fails OptiX's validation layer with
+            // UNSUPPORTED_SINGLE_LEVEL_BLAS and takes the whole CUDA context down with
+            // it (CUDA error 719). Matches Sample14's AccelStructureBuilder, which
+            // already carries this fix.
+            int triangleMeshCount = hasTriangles ? triangleMeshRanges.Length : 0;
+
+            var handles = new List<IntPtr>();
+            var offsets = new List<uint>();
+            if (hasTriangles)
             {
-                int triangleMeshCount = triangleMeshRanges.Length;
-                uint customSbtOffset = (uint)(triangleMeshCount * scene.Materials.Length) * Payloads.RAY_TYPE_COUNT;
-
-                var iasBuilder = new OptixAccelBuilder()
-                    .WithDeviceContext(deviceContext)
-                    .WithAccelerator(accelerator);
-
-                ias = iasBuilder.BuildInstanceAccelFromHandles(
-                    new[] { trianglesGas.TraversableHandle, customPrimitivesGas.TraversableHandle },
-                    new[] { 0u, customSbtOffset });
-
-                return ias.TraversableHandle;
+                handles.Add(trianglesGas.TraversableHandle);
+                offsets.Add(0u);
+            }
+            if (hasCustomPrimitives)
+            {
+                uint customSbtOffset = hasTriangles
+                    ? (uint)(triangleMeshCount * scene.Materials.Length) * Payloads.RAY_TYPE_COUNT
+                    : 0u;
+                handles.Add(customPrimitivesGas.TraversableHandle);
+                offsets.Add(customSbtOffset);
             }
 
-            // Return whichever structure exists
-            return hasTriangles ? trianglesGas.TraversableHandle : customPrimitivesGas.TraversableHandle;
+            var iasBuilder = new OptixAccelBuilder()
+                .WithDeviceContext(deviceContext)
+                .WithAccelerator(accelerator);
+
+            ias = iasBuilder.BuildInstanceAccelFromHandles(handles.ToArray(), offsets.ToArray());
+            return ias.TraversableHandle;
         }
 
         // Per-frame refit for animated custom primitives - the caller must have already

@@ -12,6 +12,7 @@
 using System;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
+using ILGPU.OptiX.Native;
 
 #pragma warning disable CA1051 // Do not declare visible instance fields
 #pragma warning disable CA1815 // Override equals and operator equals on value types

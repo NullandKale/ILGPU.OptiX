@@ -3,6 +3,7 @@ using ILGPU.Algorithms;
 using ILGPU.OptiX;
 using ILGPU.OptiX.Pipeline;
 using ILGPU.Runtime.Cuda;
+using ILGPU.OptiX.Native;
 using System;
 using System.Runtime.InteropServices;
 
@@ -41,7 +42,7 @@ namespace Sample15
             // only needs the precision fast-math trades away, not the exactness, and
             // the visual result is unchanged at this sample's tolerances.
             Context = Context.Create(b => b.Cuda().EnableAlgorithms()
-                                           .Optimize(OptimizationLevel.O2).Math(MathMode.Default).Inlining(InliningMode.Aggressive).LibDevice());
+                                           .Optimize(OptimizationLevel.O2).Math(MathMode.Fast32BitOnly).Inlining(InliningMode.Aggressive).LibDevice());
             Accelerator = Context.CreateCudaAccelerator(0);
 
             // Validation mode ALL + a log callback surfaces OptiX's own descriptive
@@ -56,7 +57,7 @@ namespace Sample15
             {
                 LogCallbackFunction = Marshal.GetFunctionPointerForDelegate(logCallback),
                 LogCallbackLevel = 4,
-                ValidationMode = OptixDeviceContextValidationMode.OPTIX_DEVICE_CONTEXT_VALIDATION_MODE_ALL,
+                ValidationMode = OptixDeviceContextValidationMode.All,
             });
         }
 

@@ -1,7 +1,9 @@
 using ILGPU;
 using ILGPU.OptiX;
 using ILGPU.OptiX.Interop;
+using ILGPU.OptiX.Pipeline;
 using ILGPU.Runtime;
+using ILGPU.OptiX.Denoising;
 using System;
 using System.Diagnostics;
 
@@ -37,12 +39,12 @@ namespace Sample13
         {
             this.gpu = gpu;
 
-            // Guide-layer denoiser (matches Sample12's OPTIX_DENOISER_MODEL_KIND_LDR +
+            // Guide-layer denoiser (matches Sample12's OptixDenoiserModelKind.Ldr +
             // GuideAlbedo/GuideNormal setup) - one denoiser instance works across every
             // scene switch since it only depends on width/height (set up in Resize),
             // not on scene content.
             denoiser = gpu.DeviceContext.CreateDenoiser(
-                OptixDenoiserModelKind.OPTIX_DENOISER_MODEL_KIND_LDR,
+                OptixDenoiserModelKind.Ldr,
                 new OptixDenoiserOptions { GuideAlbedo = 1, GuideNormal = 1 });
 
             tonemapAndFlip = gpu.Accelerator.LoadAutoGroupedStreamKernel<Index1D, int, int, ArrayView<Vec4>, ArrayView<byte>>(TonemapKernel.tonemapAndFlip);
@@ -99,7 +101,7 @@ namespace Sample13
                 Height = (uint)height,
                 RowStrideInBytes = (uint)(width * sizeof(Vec4)),
                 PixelStrideInBytes = (uint)sizeof(Vec4),
-                Format = OptixPixelFormat.OPTIX_PIXEL_FORMAT_FLOAT4
+                Format = OptixPixelFormat.Float4
             };
 
             MemoryBuffer1D<Vec4, Stride1D.Dense> tonemapSource;

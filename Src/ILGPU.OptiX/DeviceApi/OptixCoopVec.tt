@@ -1,0 +1,548 @@
+// ---------------------------------------------------------------------------------------
+//                                     ILGPU OptiX
+//                        Copyright (c) 2020-2022 ILGPU Project
+//                                    www.ilgpu.net
+//
+// File: OptixCoopVec.tt/OptixCoopVec.cs
+//
+// This file is part of ILGPU and is distributed under the University of Illinois Open
+// Source License. See LICENSE.txt for details.
+// ---------------------------------------------------------------------------------------
+
+<#@ template debug="false" hostspecific="false" language="C#" #>
+<#@ assembly name="System.Core" #>
+<#@ import namespace="System.Linq" #>
+<#@ import namespace="System.Text" #>
+<#@ import namespace="System.Collections.Generic" #>
+<#@ output extension=".cs" #>
+<#
+    // OptixCoopVecElemType (optix_types.h) - only Float16 is generated (see class doc
+    // comment for why: every other element type would multiply the already-large
+    // generated overload count further, and nothing in this codebase needs them yet).
+    const int Float16 = 0x2A01;
+    // OptixCoopVecMatrixLayout (optix_types.h).
+    const int InferencingOptimal = 0x2A42;
+    const int TrainingOptimal = 0x2A43;
+    // optix_internal::OptixCoopVecOp (internal/optix_device_impl_coop_vec.h).
+    const int OpExp2 = 0x2A21;
+    const int OpLog2 = 0x2A22;
+    const int OpTanh = 0x2A23;
+    const int OpMax = 0x2A24;
+    const int OpMin = 0x2A25;
+    const int OpFFma = 0x2A26;
+    const int OpMul = 0x2A27;
+    const int OpAdd = 0x2A28;
+    const int OpSub = 0x2A29;
+    const int OpStep = 0x2A2B;
+
+    // Sizes/matrix dimensions generated - bounded to [1, MaxSize] rather than the SDK's
+    // own ceiling (16 for the register-packed tier, irrelevant here; there is no upper
+    // bound at all for the "_ptr" convention's size operand). MatVecMul alone generates
+    // MaxSize^2 overloads, so this is kept small and covers realistic small-MLP layer
+    // widths (Sample24 uses 3 and 8); bump it if a future sample needs larger layers.
+    const int MaxSize = 8;
+
+    // Curated additions for Sample25 (NRC): a 64-wide, 5-hidden-layer MLP needs
+    // MatVecMul_N64_K64/N3_K64 and matching OuterProductAccumulate/elementwise overloads,
+    // but uniformly bumping MaxSize to 64 would explode MatVecMul/OuterProductAccumulate
+    // to 64x64 = 4096 overloads each (mostly unused). Instead these curated lists are
+    // generated *in addition to* the 1..MaxSize loops above - additive only, the existing
+    // Sample24 (_N8_K3/_S8/_S3) overloads are untouched.
+    var curatedMatVecMulDims = new[] { (N: 64, K: 64), (N: 3, K: 64) };
+    // Real optixCoopVecMatMul semantics: N/K describe the matrix's stored physical shape
+    // (rows/cols) regardless of transpose; only the actual input/output vector lengths
+    // swap when transpose is true (input becomes N-sized, output becomes K-sized).
+    var curatedMatVecMulVariants = new[] {
+        // Forward pass against the EMA/inference weight snapshot (composite, self-training
+        // target resolution) - InferencingOptimal layout, no transpose.
+        new { Layout = InferencingOptimal, Transpose = false, Suffix = "" },
+        // Forward pass against the live training weights during the fused gradient dispatch
+        // - TrainingOptimal layout (required alongside OuterProductAccumulate/transpose use
+        // on the same buffer), no transpose.
+        new { Layout = TrainingOptimal, Transpose = false, Suffix = "_Training" },
+        // Backward pass: propagates dOutput to dInput through a no-bias linear layer via
+        // W^T (reuses the same stored TrainingOptimal matrix, transpose = true - no separate
+        // transposed weight copy needed).
+        new { Layout = TrainingOptimal, Transpose = true, Suffix = "_TrainingTranspose" },
+    };
+    // Only 64 is new here - 3 is already covered by the 1..MaxSize loop below (MaxSize=8)
+    // and re-adding it would generate a duplicate method definition.
+    var curatedElementwiseSizes = new[] { 64 };
+    var curatedOuterProductDims = new[] { (A: 64, B: 64), (A: 3, B: 64) };
+#>
+using ILGPU.Runtime.Cuda;
+using System;
+
+namespace ILGPU.OptiX.DeviceApi
+{
+    /// <summary>
+    /// Provides the device-side cooperative-vector intrinsic surface: matrix-vector multiply, the elementwise ops,
+    /// and the two training primitives (reduce-sum-accumulate, outer-product-accumulate)
+    /// - the building blocks of an MLP evaluated inline in a hit/raygen program (e.g. a
+    /// neural material), forward and backward pass alike.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The OptiX SDK's own C++ header (internal/optix_device_impl_coop_vec.h) exposes
+    /// two calling conventions per op: a register-packed form (cooperative vectors held
+    /// in up to 64 PTX registers) and a pointer-passing fallback ("_ptr" suffixed
+    /// pseudo-calls, e.g. "_optix_matvecmul_ptr") where every vector/matrix/bias is a
+    /// device address + element type + count. This binding wraps the "_ptr" family - the
+    /// register-packed form needs 48-69 EmitRef arguments per call even at its smallest
+    /// (16-element) tier, which exceeds ILGPU's own 44-argument <c>CudaAsm.EmitRef</c>
+    /// ceiling (confirmed via reflection against the actual referenced ILGPU 1.5.3
+    /// package) for every
+    /// op with more than one vector operand (MatVecMul, the 2-input and 3-input
+    /// elementwise ops) - not implementable, not a convenience choice.
+    /// </para>
+    /// <para>
+    /// <b>Every non-pointer, non-byte-offset argument must be a genuine PTX compile-time
+    /// constant</b> - discovered via a real GPU compile failure ("vector op is not
+    /// constant" / "Output vector element type is not constant"), not assumed. This
+    /// mirrors the real C++ API exactly (every one of these is a template parameter in
+    /// <c>optix_device_impl_coop_vec.h</c>, e.g. <c>optixCoopVecMatMul&lt;VecTOut, VecTIn,
+    /// inputInterpretation, matrixLayout, transpose, N, K, matrixElementType,
+    /// biasElementType&gt;</c> - only the device pointers and byte offsets are ordinary
+    /// runtime function parameters there too). A plain <c>CudaAsm.EmitRef Input&lt;T&gt;</c>
+    /// round-trips its value through a local memory store+load (see
+    /// <see cref="OptixTrace"/>'s own class doc comment for the same finding on
+    /// optixTrace's payload-type/count arguments) rather than a direct "mov", so it does
+    /// not satisfy this. The fix is the same one <see cref="OptixTrace"/> already
+    /// established: every constant-typed operand gets an <c>Output&lt;uint&gt;</c> slot
+    /// (a fresh register, not memory-backed) whose value is assigned via a literal
+    /// "mov.u32 %N, IMMEDIATE;" instruction textually prefixed onto the call, where the
+    /// immediate is a genuine C# string literal baked in at this template's generation
+    /// time - which is why this file is T4-generated (one overload per required constant
+    /// combination) rather than hand-written with runtime parameters, unlike
+    /// <see cref="OptixReorder"/>/<see cref="OptixHitObjectQueries"/>'s single-combination
+    /// calls.
+    /// </para>
+    /// <para>
+    /// Only <see cref="OptixCoopVecElemType.Float16"/> element type is generated (every
+    /// other type would multiply the already-large generated overload count further, and
+    /// nothing in this codebase needs them yet); <c>MatVecMul</c> is generated for
+    /// row/column counts 1-<#= MaxSize #>, InferencingOptimal layout, no transpose (the
+    /// standard inference case); the elementwise ops for vector sizes 1-<#= MaxSize #>.
+    /// Bump <c>MaxSize</c> in the .tt template (and regenerate via <c>dotnet-t4</c>) if a
+    /// future consumer needs larger layers or other element types.
+    /// </para>
+    /// <para>
+    /// A curated set of additional overloads is generated on top of the 1-<#= MaxSize #>
+    /// loops above (additive - the loops' own output is unchanged) for Sample25's
+    /// 64-wide NRC MLP layers, since uniformly bumping <c>MaxSize</c> to 64 would explode
+    /// <c>MatVecMul</c>/<c>OuterProductAccumulate</c> to 64x64 = 4096 overloads each
+    /// (mostly unused): <c>MatVecMul_N64_K64</c>/<c>_N3_K64</c> (InferencingOptimal, no
+    /// transpose - inference against the EMA weight snapshot), <c>..._Training</c>
+    /// (TrainingOptimal, no transpose - forward pass against the live training weights),
+    /// and <c>..._TrainingTranspose</c> (TrainingOptimal, transpose = true - propagates a
+    /// gradient backward through the same layer's stored matrix without a separate
+    /// transposed copy); <c>OuterProductAccumulate_SA64_SB64</c>/<c>_SA3_SB64</c>; and
+    /// size-64 elementwise/<c>Load</c>/<c>ReduceSumAccumulate</c> overloads. See the
+    /// curated-dims variables declared alongside <c>MaxSize</c> above.
+    /// </para>
+    /// </remarks>
+    [CLSCompliant(false)]
+    public static class OptixCoopVec
+    {
+<#
+    for (int N = 1; N <= MaxSize; N++) {
+    for (int K = 1; K <= MaxSize; K++) {
+#>
+        /// <summary>
+        /// Computes <c>outputVector = matrix * inputVector + bias</c> for a
+        /// <#= N #>x<#= K #> Float16 weight matrix (InferencingOptimal layout, no
+        /// transpose) - a single fully connected layer. Wraps <c>_optix_matvecmul_ptr</c>.
+        /// </summary>
+        /// <param name="inputVector">Device address of the <#= K #>-element input vector.</param>
+        /// <param name="matrix">Device address of the weight matrix (64-byte aligned).</param>
+        /// <param name="matrixOffsetInBytes">Byte offset into <paramref name="matrix"/> (64-byte aligned).</param>
+        /// <param name="bias">Device address of the <#= N #>-element bias vector (16-byte aligned).</param>
+        /// <param name="biasOffsetInBytes">Byte offset into <paramref name="bias"/> (16-byte aligned).</param>
+        /// <param name="outputVector">Device address to write the <#= N #>-element result vector to.</param>
+        public static void MatVecMul_N<#= N #>_K<#= K #>(
+            ulong inputVector,
+            ulong matrix,
+            uint matrixOffsetInBytes,
+            ulong bias,
+            uint biasOffsetInBytes,
+            ulong outputVector)
+        {
+            Output<uint> _outputElementType = default;
+            Output<uint> _outputSize = default;
+            Output<uint> _inputElementType = default;
+            Output<uint> _inputSize = default;
+            Output<uint> _inputInterpretation = default;
+            Output<uint> _n = default;
+            Output<uint> _k = default;
+            Input<ulong> _matrix = matrix;
+            Input<uint> _matrixOffsetInBytes = matrixOffsetInBytes;
+            Input<uint> _rowColumnStrideInBytes = 0u;
+            Output<uint> _matrixLayout = default;
+            Output<uint> _transpose = default;
+            Output<uint> _matrixElementType = default;
+            Input<ulong> _bias = bias;
+            Input<uint> _biasOffsetInBytes = biasOffsetInBytes;
+            Output<uint> _biasElementType = default;
+            Input<ulong> _inputVector = inputVector;
+            Input<ulong> _outputVector = outputVector;
+
+            CudaAsm.EmitRef(
+                "mov.u32 %0, <#= Float16 #>; mov.u32 %1, <#= N #>; mov.u32 %2, <#= Float16 #>; " +
+                "mov.u32 %3, <#= K #>; mov.u32 %4, <#= Float16 #>; mov.u32 %5, <#= N #>; " +
+                "mov.u32 %6, <#= K #>; mov.u32 %10, <#= InferencingOptimal #>; mov.u32 %11, 0; " +
+                "mov.u32 %12, <#= Float16 #>; mov.u32 %15, <#= Float16 #>; " +
+                "call (), _optix_matvecmul_ptr, (%0,%1,%2,%3,%4,%5,%6,%7,%8,%9,%10,%11,%12,%13,%14,%15,%16,%17);",
+                ref _outputElementType,
+                ref _outputSize,
+                ref _inputElementType,
+                ref _inputSize,
+                ref _inputInterpretation,
+                ref _n,
+                ref _k,
+                ref _matrix,
+                ref _matrixOffsetInBytes,
+                ref _rowColumnStrideInBytes,
+                ref _matrixLayout,
+                ref _transpose,
+                ref _matrixElementType,
+                ref _bias,
+                ref _biasOffsetInBytes,
+                ref _biasElementType,
+                ref _inputVector,
+                ref _outputVector);
+        }
+
+<#
+    }
+    }
+
+    foreach (var dim in curatedMatVecMulDims) {
+    foreach (var variant in curatedMatVecMulVariants) {
+        int N = dim.N, K = dim.K;
+        int outSize = variant.Transpose ? K : N;
+        int inSize = variant.Transpose ? N : K;
+        string layoutName = variant.Layout == TrainingOptimal ? "TrainingOptimal" : "InferencingOptimal";
+#>
+        /// <summary>
+        /// Computes <c>outputVector = matrix * inputVector + bias</c> for a <#= N #>x<#= K #>
+        /// Float16 weight matrix (<#= layoutName #> layout<#= variant.Transpose ? ", transposed - propagates a gradient through a fully connected layer during backprop, reusing the same untransposed stored matrix" : "" #>).
+        /// Curated overload for Sample25 (NRC's 64-wide layers) - see the curated-dims
+        /// comment above <c>MaxSize</c>. Wraps <c>_optix_matvecmul_ptr</c>.
+        /// </summary>
+        /// <param name="inputVector">Device address of the <#= inSize #>-element input vector.</param>
+        /// <param name="matrix">Device address of the weight matrix (64-byte aligned).</param>
+        /// <param name="matrixOffsetInBytes">Byte offset into <paramref name="matrix"/> (64-byte aligned).</param>
+        /// <param name="bias">Device address of the <#= outSize #>-element bias vector (16-byte aligned) - point at a zero-filled buffer for a no-bias layer.</param>
+        /// <param name="biasOffsetInBytes">Byte offset into <paramref name="bias"/> (16-byte aligned).</param>
+        /// <param name="outputVector">Device address to write the <#= outSize #>-element result vector to.</param>
+        public static void MatVecMul_N<#= N #>_K<#= K #><#= variant.Suffix #>(
+            ulong inputVector,
+            ulong matrix,
+            uint matrixOffsetInBytes,
+            ulong bias,
+            uint biasOffsetInBytes,
+            ulong outputVector)
+        {
+            Output<uint> _outputElementType = default;
+            Output<uint> _outputSize = default;
+            Output<uint> _inputElementType = default;
+            Output<uint> _inputSize = default;
+            Output<uint> _inputInterpretation = default;
+            Output<uint> _n = default;
+            Output<uint> _k = default;
+            Input<ulong> _matrix = matrix;
+            Input<uint> _matrixOffsetInBytes = matrixOffsetInBytes;
+            Input<uint> _rowColumnStrideInBytes = 0u;
+            Output<uint> _matrixLayout = default;
+            Output<uint> _transpose = default;
+            Output<uint> _matrixElementType = default;
+            Input<ulong> _bias = bias;
+            Input<uint> _biasOffsetInBytes = biasOffsetInBytes;
+            Output<uint> _biasElementType = default;
+            Input<ulong> _inputVector = inputVector;
+            Input<ulong> _outputVector = outputVector;
+
+            CudaAsm.EmitRef(
+                "mov.u32 %0, <#= Float16 #>; mov.u32 %1, <#= outSize #>; mov.u32 %2, <#= Float16 #>; " +
+                "mov.u32 %3, <#= inSize #>; mov.u32 %4, <#= Float16 #>; mov.u32 %5, <#= N #>; " +
+                "mov.u32 %6, <#= K #>; mov.u32 %10, <#= variant.Layout #>; mov.u32 %11, <#= variant.Transpose ? 1 : 0 #>; " +
+                "mov.u32 %12, <#= Float16 #>; mov.u32 %15, <#= Float16 #>; " +
+                "call (), _optix_matvecmul_ptr, (%0,%1,%2,%3,%4,%5,%6,%7,%8,%9,%10,%11,%12,%13,%14,%15,%16,%17);",
+                ref _outputElementType,
+                ref _outputSize,
+                ref _inputElementType,
+                ref _inputSize,
+                ref _inputInterpretation,
+                ref _n,
+                ref _k,
+                ref _matrix,
+                ref _matrixOffsetInBytes,
+                ref _rowColumnStrideInBytes,
+                ref _matrixLayout,
+                ref _transpose,
+                ref _matrixElementType,
+                ref _bias,
+                ref _biasOffsetInBytes,
+                ref _biasElementType,
+                ref _inputVector,
+                ref _outputVector);
+        }
+
+<#
+    }
+    }
+
+    var op1s = new[] {
+        new { Name = "Exp2", Literal = OpExp2, Doc = "Elementwise 2^x." },
+        new { Name = "Log2", Literal = OpLog2, Doc = "Elementwise log2(x)." },
+        new { Name = "Tanh", Literal = OpTanh, Doc = "Elementwise hyperbolic tangent - the activation used between MLP layers." },
+    };
+    foreach (var op in op1s) {
+    foreach (var size in Enumerable.Range(1, MaxSize).Concat(curatedElementwiseSizes)) {
+#>
+        /// <summary><#= op.Doc #> (<#= size #>-element Float16 vectors.) Wraps <c>_optix_vector_op1_ptr</c>.</summary>
+        public static void <#= op.Name #>_S<#= size #>(ulong inputVector, ulong outputVector)
+        {
+            Output<uint> _op = default;
+            Output<uint> _outputElementType = default;
+            Output<uint> _outputSize = default;
+            Output<uint> _inputElementType = default;
+            Output<uint> _inputSize = default;
+            Input<ulong> _inputVector = inputVector;
+            Input<ulong> _outputVector = outputVector;
+
+            CudaAsm.EmitRef(
+                "mov.u32 %0, <#= op.Literal #>; mov.u32 %1, <#= Float16 #>; mov.u32 %2, <#= size #>; " +
+                "mov.u32 %3, <#= Float16 #>; mov.u32 %4, <#= size #>; " +
+                "call (), _optix_vector_op1_ptr, (%0,%1,%2,%3,%4,%5,%6);",
+                ref _op,
+                ref _outputElementType,
+                ref _outputSize,
+                ref _inputElementType,
+                ref _inputSize,
+                ref _inputVector,
+                ref _outputVector);
+        }
+
+<#
+    }
+    }
+
+    var op2s = new[] {
+        new { Name = "Max", Literal = OpMax, Doc = "Elementwise max(a, b) - e.g. ReLU via a zero-filled second vector." },
+        new { Name = "Min", Literal = OpMin, Doc = "Elementwise min(a, b)." },
+        new { Name = "Mul", Literal = OpMul, Doc = "Elementwise a * b." },
+        new { Name = "Add", Literal = OpAdd, Doc = "Elementwise a + b." },
+        new { Name = "Sub", Literal = OpSub, Doc = "Elementwise a - b." },
+        new { Name = "Step", Literal = OpStep, Doc = "Elementwise step(a, b) - 1 where b &gt;= a, 0 otherwise." },
+    };
+    foreach (var op in op2s) {
+    foreach (var size in Enumerable.Range(1, MaxSize).Concat(curatedElementwiseSizes)) {
+#>
+        /// <summary><#= op.Doc #> (<#= size #>-element Float16 vectors.) Wraps <c>_optix_vector_op2_ptr</c>.</summary>
+        public static void <#= op.Name #>_S<#= size #>(ulong inputVectorA, ulong inputVectorB, ulong outputVector)
+        {
+            Output<uint> _op = default;
+            Output<uint> _outputElementType = default;
+            Output<uint> _outputSize = default;
+            Output<uint> _inputElementType = default;
+            Output<uint> _inputSize = default;
+            Input<ulong> _inputVectorA = inputVectorA;
+            Input<ulong> _inputVectorB = inputVectorB;
+            Input<ulong> _outputVector = outputVector;
+
+            CudaAsm.EmitRef(
+                "mov.u32 %0, <#= op.Literal #>; mov.u32 %1, <#= Float16 #>; mov.u32 %2, <#= size #>; " +
+                "mov.u32 %3, <#= Float16 #>; mov.u32 %4, <#= size #>; " +
+                "call (), _optix_vector_op2_ptr, (%0,%1,%2,%3,%4,%5,%6,%7);",
+                ref _op,
+                ref _outputElementType,
+                ref _outputSize,
+                ref _inputElementType,
+                ref _inputSize,
+                ref _inputVectorA,
+                ref _inputVectorB,
+                ref _outputVector);
+        }
+
+<#
+    }
+    }
+
+    foreach (var size in Enumerable.Range(1, MaxSize).Concat(curatedElementwiseSizes)) {
+#>
+        /// <summary>Elementwise fused multiply-add: a * b + c (<#= size #>-element Float16 vectors). Wraps <c>_optix_vector_op3_ptr</c>.</summary>
+        public static void FFma_S<#= size #>(ulong inputVectorA, ulong inputVectorB, ulong inputVectorC, ulong outputVector)
+        {
+            Output<uint> _op = default;
+            Output<uint> _outputElementType = default;
+            Output<uint> _outputSize = default;
+            Output<uint> _inputElementType = default;
+            Output<uint> _inputSize = default;
+            Input<ulong> _inputVectorA = inputVectorA;
+            Input<ulong> _inputVectorB = inputVectorB;
+            Input<ulong> _inputVectorC = inputVectorC;
+            Input<ulong> _outputVector = outputVector;
+
+            CudaAsm.EmitRef(
+                "mov.u32 %0, <#= OpFFma #>; mov.u32 %1, <#= Float16 #>; mov.u32 %2, <#= size #>; " +
+                "mov.u32 %3, <#= Float16 #>; mov.u32 %4, <#= size #>; " +
+                "call (), _optix_vector_op3_ptr, (%0,%1,%2,%3,%4,%5,%6,%7,%8);",
+                ref _op,
+                ref _outputElementType,
+                ref _outputSize,
+                ref _inputElementType,
+                ref _inputSize,
+                ref _inputVectorA,
+                ref _inputVectorB,
+                ref _inputVectorC,
+                ref _outputVector);
+        }
+
+<#
+    }
+
+    foreach (var size in Enumerable.Range(1, MaxSize).Concat(curatedElementwiseSizes)) {
+#>
+        /// <summary>
+        /// Loads/copies raw device data at <paramref name="sourceAddress"/> into
+        /// <paramref name="destinationVector"/> (<#= size #>-element Float16). Wraps
+        /// <c>_optix_vector_load_ptr</c>.
+        /// </summary>
+        public static void Load_S<#= size #>(ulong sourceAddress, ulong destinationVector)
+        {
+            Output<uint> _elementType = default;
+            Output<uint> _size = default;
+            Input<ulong> _source = sourceAddress;
+            Input<ulong> _destination = destinationVector;
+
+            CudaAsm.EmitRef(
+                "mov.u32 %0, <#= Float16 #>; mov.u32 %1, <#= size #>; " +
+                "call (), _optix_vector_load_ptr, (%0,%1,%2,%3);",
+                ref _elementType,
+                ref _size,
+                ref _source,
+                ref _destination);
+        }
+
+<#
+    }
+
+    foreach (var size in Enumerable.Range(1, MaxSize).Concat(curatedElementwiseSizes)) {
+#>
+        /// <summary>
+        /// Accumulates (adds) the elementwise sum-reduction of <paramref name="inputVector"/>
+        /// (<#= size #>-element Float16) into <paramref name="outputVector"/> at
+        /// <paramref name="offsetInBytes"/> - the bias-gradient primitive of
+        /// backpropagation. Wraps <c>_optix_reduce_sum_accumulate_ptr</c>.
+        /// </summary>
+        public static void ReduceSumAccumulate_S<#= size #>(ulong inputVector, ulong outputVector, uint offsetInBytes)
+        {
+            Output<uint> _elementType = default;
+            Output<uint> _size = default;
+            Input<ulong> _outputVector = outputVector;
+            Input<uint> _offsetInBytes = offsetInBytes;
+            Input<ulong> _inputVector = inputVector;
+
+            CudaAsm.EmitRef(
+                "mov.u32 %0, <#= Float16 #>; mov.u32 %1, <#= size #>; " +
+                "call (), _optix_reduce_sum_accumulate_ptr, (%0,%1,%2,%3,%4);",
+                ref _elementType,
+                ref _size,
+                ref _outputVector,
+                ref _offsetInBytes,
+                ref _inputVector);
+        }
+
+<#
+    }
+
+    for (int sizeA = 1; sizeA <= MaxSize; sizeA++) {
+    for (int sizeB = 1; sizeB <= MaxSize; sizeB++) {
+#>
+        /// <summary>
+        /// Accumulates (adds) the outer product <c>vecA * vecB^T</c>
+        /// (<#= sizeA #>x<#= sizeB #>, Float16, TrainingOptimal layout) into the matrix
+        /// at <paramref name="outputMatrix"/> - the weight-gradient primitive of
+        /// backpropagation. Wraps <c>_optix_outer_product_accumulate_ptr</c>.
+        /// </summary>
+        public static void OuterProductAccumulate_SA<#= sizeA #>_SB<#= sizeB #>(
+            ulong inputVectorA, ulong inputVectorB, ulong outputMatrix, uint offsetInBytes)
+        {
+            Output<uint> _elementTypeA = default;
+            Output<uint> _sizeA = default;
+            Output<uint> _elementTypeB = default;
+            Output<uint> _sizeB = default;
+            Input<ulong> _outputMatrix = outputMatrix;
+            Input<uint> _offsetInBytes = offsetInBytes;
+            Output<uint> _matrixLayout = default;
+            Input<uint> _rowColumnStrideInBytes = 0u;
+            Input<ulong> _inputVectorA = inputVectorA;
+            Input<ulong> _inputVectorB = inputVectorB;
+
+            CudaAsm.EmitRef(
+                "mov.u32 %0, <#= Float16 #>; mov.u32 %1, <#= sizeA #>; mov.u32 %2, <#= Float16 #>; " +
+                "mov.u32 %3, <#= sizeB #>; mov.u32 %6, <#= TrainingOptimal #>; " +
+                "call (), _optix_outer_product_accumulate_ptr, (%0,%1,%2,%3,%4,%5,%6,%7,%8,%9);",
+                ref _elementTypeA,
+                ref _sizeA,
+                ref _elementTypeB,
+                ref _sizeB,
+                ref _outputMatrix,
+                ref _offsetInBytes,
+                ref _matrixLayout,
+                ref _rowColumnStrideInBytes,
+                ref _inputVectorA,
+                ref _inputVectorB);
+        }
+
+<#
+    }
+    }
+
+    foreach (var dim in curatedOuterProductDims) {
+        int sizeA = dim.A, sizeB = dim.B;
+#>
+        /// <summary>
+        /// Accumulates (adds) the outer product <c>vecA * vecB^T</c>
+        /// (<#= sizeA #>x<#= sizeB #>, Float16, TrainingOptimal layout) into the matrix
+        /// at <paramref name="outputMatrix"/> - the weight-gradient primitive of
+        /// backpropagation. Curated overload for Sample25 (NRC's 64-wide layers) - see the
+        /// curated-dims comment above <c>MaxSize</c>. Wraps
+        /// <c>_optix_outer_product_accumulate_ptr</c>.
+        /// </summary>
+        public static void OuterProductAccumulate_SA<#= sizeA #>_SB<#= sizeB #>(
+            ulong inputVectorA, ulong inputVectorB, ulong outputMatrix, uint offsetInBytes)
+        {
+            Output<uint> _elementTypeA = default;
+            Output<uint> _sizeA = default;
+            Output<uint> _elementTypeB = default;
+            Output<uint> _sizeB = default;
+            Input<ulong> _outputMatrix = outputMatrix;
+            Input<uint> _offsetInBytes = offsetInBytes;
+            Output<uint> _matrixLayout = default;
+            Input<uint> _rowColumnStrideInBytes = 0u;
+            Input<ulong> _inputVectorA = inputVectorA;
+            Input<ulong> _inputVectorB = inputVectorB;
+
+            CudaAsm.EmitRef(
+                "mov.u32 %0, <#= Float16 #>; mov.u32 %1, <#= sizeA #>; mov.u32 %2, <#= Float16 #>; " +
+                "mov.u32 %3, <#= sizeB #>; mov.u32 %6, <#= TrainingOptimal #>; " +
+                "call (), _optix_outer_product_accumulate_ptr, (%0,%1,%2,%3,%4,%5,%6,%7,%8,%9);",
+                ref _elementTypeA,
+                ref _sizeA,
+                ref _elementTypeB,
+                ref _sizeB,
+                ref _outputMatrix,
+                ref _offsetInBytes,
+                ref _matrixLayout,
+                ref _rowColumnStrideInBytes,
+                ref _inputVectorA,
+                ref _inputVectorB);
+        }
+
+<#
+    }
+#>
+    }
+}

@@ -1,8 +1,7 @@
 ﻿// Vendored from github.com/NogginBops/ImGui.NET_OpenTK_Sample (MIT License,
 // Copyright (c) 2025 Julius Häger), namespace renamed only - this is Dear ImGui's own
 // C++ imgui_impl_glfw platform backend ported to OpenTK's windowing/input events, not
-// something worth reimplementing from scratch (see docs/SAMPLE14_PLAN.md's M7
-// milestone).
+// something worth reimplementing from scratch.
 
 using ImGuiNET;
 using OpenTK.Mathematics;

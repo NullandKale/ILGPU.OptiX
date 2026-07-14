@@ -11,34 +11,34 @@
 
 #pragma warning disable CA1707 // Identifiers should not contain underscores
 
-namespace ILGPU.OptiX
+namespace ILGPU.OptiX.Pipeline
 {
     public enum OptixCompileOptimizationLevel
     {
         /// <summary>
         /// Default is to run all optimizations.
         /// </summary>
-        OPTIX_COMPILE_OPTIMIZATION_DEFAULT = 0,
+        Default = 0,
 
         /// <summary>
         /// No optimizations.
         /// </summary>
-        OPTIX_COMPILE_OPTIMIZATION_LEVEL_0 = 0x2340,
+        Level0 = 0x2340,
 
         /// <summary>
         /// Some optimizations.
         /// </summary>
-        OPTIX_COMPILE_OPTIMIZATION_LEVEL_1 = 0x2341,
+        Level1 = 0x2341,
 
         /// <summary>
         /// Most optimizations.
         /// </summary>
-        OPTIX_COMPILE_OPTIMIZATION_LEVEL_2 = 0x2342,
+        Level2 = 0x2342,
 
         /// <summary>
         /// All optimizations.
         /// </summary>
-        OPTIX_COMPILE_OPTIMIZATION_LEVEL_3 = 0x2343,
+        Level3 = 0x2343,
     }
 }
 

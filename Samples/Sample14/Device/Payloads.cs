@@ -1,6 +1,7 @@
 using ILGPU;
 using ILGPU.OptiX;
 using ILGPU.OptiX.Device;
+using ILGPU.OptiX.DeviceApi;
 using System.Numerics;
 
 namespace Sample14

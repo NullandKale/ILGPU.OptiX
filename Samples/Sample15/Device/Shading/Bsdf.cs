@@ -2,8 +2,8 @@ using ILGPU.Algorithms;
 
 namespace Sample15
 {
-    // Metallic-roughness GGX microfacet BSDF (docs/SAMPLE15_PLAN.md Design Decision 3):
-    // isotropic Trowbridge-Reitz/GGX normal distribution, Smith height-correlated joint
+    // Metallic-roughness GGX microfacet BSDF: isotropic Trowbridge-Reitz/GGX normal
+    // distribution, Smith height-correlated joint
     // masking-shadowing (Heitz 2014, "Understanding the Masking-Shadowing Function in
     // Microfacet-Based BRDFs"), Schlick Fresnel with F0 = lerp(0.04, baseColor, metallic)
     // (the glTF/Disney/UE4 metallic-roughness convention), and GGX VNDF importance
@@ -81,9 +81,9 @@ namespace Sample15
             return f0 + ((new Vec3(1f, 1f, 1f) - f0) * x5);
         }
 
-        // Full unpolarized dielectric Fresnel reflectance (docs/SAMPLE15_PLAN.md
-        // Design Decision 3/Milestone M7, ported from optixIntro_06) - replaces the
-        // Schlick approximation MaterialShading.ShadeDielectric used through M1-M6.
+        // Full unpolarized dielectric Fresnel reflectance (ported from optixIntro_06) -
+        // replaces the Schlick approximation MaterialShading.ShadeDielectric used
+        // through M1-M6.
         // etaFrom/etaTo are the refractive indices of the medium containing cosThetaI's
         // direction and the medium being entered, respectively (same convention as
         // MaterialShading.TryRefract's niOverNt). Returns 1 (full reflection) for total
@@ -157,7 +157,7 @@ namespace Sample15
         // the local shading frame (n, right, forward already orthonormal, v transformed
         // into that frame by the caller) so the algorithm's own z-up convention lines up
         // with the shading normal. Split out from the old SampleSpecularDirection
-        // (docs/SAMPLE15_PLAN.md Milestone M7) so the rough dielectric BTDF
+        // so the rough dielectric BTDF
         // (MaterialShading.ShadeDielectric) can sample the same microfacet distribution
         // and then reflect *or* refract about it, instead of only ever reflecting.
         internal static Vec3 SampleVisibleNormal(Vec3 n, Vec3 v, float roughness, ref LCG rng)
@@ -198,15 +198,14 @@ namespace Sample15
         }
 
         // Smith masking term for an arbitrary direction, exposed for the rough
-        // dielectric BTDF's VNDF-sampling weight (docs/SAMPLE15_PLAN.md Milestone M7) -
+        // dielectric BTDF's VNDF-sampling weight -
         // SmithG1 above is already this, just renamed/exposed at the class's public
         // internal surface rather than kept private.
         internal static float SmithG1Public(float NdotX, float roughness) => SmithG1(NdotX, RoughnessToAlpha(roughness));
 
         // Smith height-correlated joint masking-shadowing term (not divided by
         // 4*NdotL*NdotV, unlike VisibilitySmithGGXCorrelated above) - the "G2" a
-        // VNDF-sampled microfacet lobe's unbiased throughput weight (G2/G1) needs
-        // (docs/SAMPLE15_PLAN.md Milestone M7).
+        // VNDF-sampled microfacet lobe's unbiased throughput weight (G2/G1) needs.
         internal static float SmithG2(float NdotL, float NdotV, float roughness)
         {
             float alpha = RoughnessToAlpha(roughness);
@@ -218,11 +217,10 @@ namespace Sample15
 
         internal static float PdfDiffuse(Vec3 n, Vec3 l) => XMath.Max(0f, Vec3.dot(n, l)) * (1f / XMath.PI);
 
-        // Single-sample stochastic lobe-selection weight (docs/SAMPLE15_PLAN.md Design
-        // Decision 1/3) - shared by ShadeSurface's own indirect-bounce lobe pick and
-        // NextEventEstimation's direct-lighting BSDF evaluation, so both always agree
-        // on the same combined pdf for a given direction (required for MIS's power
-        // heuristic to be meaningful - docs/SAMPLE15_PLAN.md Milestone M4).
+        // Single-sample stochastic lobe-selection weight - shared by ShadeSurface's own
+        // indirect-bounce lobe pick and NextEventEstimation's direct-lighting BSDF
+        // evaluation, so both always agree on the same combined pdf for a given
+        // direction (required for MIS's power heuristic to be meaningful).
         internal static float SpecularLobeWeight(Vec3 f0) =>
             XMath.Clamp(XMath.Max(f0.x, XMath.Max(f0.y, f0.z)), 0.05f, 0.95f);
 

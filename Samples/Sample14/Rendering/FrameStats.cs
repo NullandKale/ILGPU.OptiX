@@ -2,7 +2,7 @@ namespace Sample14
 {
     // Per-frame timing/HUD data, produced once per SampleRenderer.render() call and
     // exposed via SampleRenderer.LastStats - logged to the console each frame (no
-    // in-viewport text renderer yet, see docs/SAMPLE14_PLAN.md's HUD deferral note).
+    // in-viewport text renderer yet).
     //
     // No ReadbackMs/PublishMs here unlike Sample13's version: those measured the CPU
     // readback + double-buffered handoff to a WPF UI thread, neither of which exist in

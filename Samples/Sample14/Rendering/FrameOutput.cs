@@ -2,6 +2,7 @@ using ILGPU;
 using ILGPU.OptiX;
 using ILGPU.OptiX.Denoising;
 using ILGPU.OptiX.Interop;
+using ILGPU.OptiX.Pipeline;
 using ILGPU.Runtime;
 using ILGPU.Runtime.Cuda;
 using System;
@@ -15,7 +16,7 @@ namespace Sample14
     /// the tonemap kernel - everything between "the trace wrote HDR pixels" and "a
     /// frame is drawable as a GL texture", with no CPU round-trip anywhere (unlike
     /// Sample13's FrameOutput, which reads the display buffer back to a CPU byte[] for
-    /// WPF - see docs/SAMPLE14_PLAN.md's FrameOutput/SampleRenderer changes section).
+    /// WPF).
     /// </summary>
     public sealed class FrameOutput : IDisposable
     {
@@ -90,7 +91,7 @@ namespace Sample14
                 Height = (uint)height,
                 RowStrideInBytes = (uint)(width * sizeof(Vec4)),
                 PixelStrideInBytes = (uint)sizeof(Vec4),
-                Format = OptixPixelFormat.OPTIX_PIXEL_FORMAT_FLOAT4
+                Format = OptixPixelFormat.Float4
             };
 
             MemoryBuffer1D<Vec4, Stride1D.Dense> tonemapSource;
@@ -147,7 +148,7 @@ namespace Sample14
             gpu.Accelerator.Synchronize();
             // Must not unmap while GPU work touching the resource is still in flight -
             // the Synchronize() above already guarantees that, so unmap can follow
-            // immediately (see docs/SAMPLE14_PLAN.md's note on this ordering).
+            // immediately.
             interopBuffer.UnmapCuda(stream);
             tonemapMs = stepStopwatch.Elapsed.TotalMilliseconds;
         }

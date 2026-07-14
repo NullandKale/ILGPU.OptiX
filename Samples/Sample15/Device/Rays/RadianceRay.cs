@@ -1,6 +1,7 @@
 using ILGPU;
 using ILGPU.Algorithms;
 using ILGPU.OptiX;
+using ILGPU.OptiX.DeviceApi;
 using System.Numerics;
 
 namespace Sample15
@@ -53,14 +54,13 @@ namespace Sample15
             var (dx, dy, dz) = OptixGetWorldRayDirection.Value;
             Vec3 rayDir = new Vec3(dx, dy, dz);
 
-            // RNG state carried in via Payload19 (docs/SAMPLE15_PLAN.md Milestone M3) -
-            // seeded once per sample by raygen and threaded continuously through every
-            // closest-hit call across all bounces, rather than each shading branch
-            // reseeding its own TEA hash from (pixel, frame, primitive).
+            // RNG state carried in via Payload19 - seeded once per sample by raygen and
+            // threaded continuously through every closest-hit call across all bounces,
+            // rather than each shading branch reseeding its own TEA hash from (pixel,
+            // frame, primitive).
             uint rngStateIn = Payloads.GetCarriedRngState();
 
-            // BSDF pdf carried in via Payload20 (docs/SAMPLE15_PLAN.md Milestone M4) -
-            // see Payloads.cs's own doc comment.
+            // BSDF pdf carried in via Payload20 - see Payloads.cs's own doc comment.
             float bsdfPdfIn = Payloads.GetCarriedBsdfPdf();
 
             uint primId = OptixGetPrimitiveIndex.Value;
@@ -116,8 +116,7 @@ namespace Sample15
             // Re-orthogonalize the (barycentric-interpolated, not necessarily unit or
             // exactly perpendicular) tangent against the final shadingNormal - same
             // Gram-Schmidt shape as Model.cs's own ComputeTangents, just done per-hit
-            // here since interpolation can nudge it slightly off (docs/SAMPLE15_PLAN.md
-            // Milestone M6).
+            // here since interpolation can nudge it slightly off.
             tangent -= shadingNormal * Vec3.dot(shadingNormal, tangent);
             tangent = tangent.lengthSquared() > 1e-12f
                 ? Vec3.unitVector(tangent)
@@ -125,7 +124,7 @@ namespace Sample15
 
             MaterialSbtData* sbtData = (MaterialSbtData*)OptixGetSbtDataPointer.Value;
 
-            // M2 dispatch (docs/SAMPLE15_PLAN.md Milestone M2): only the dielectric
+            // M2 dispatch: only the dielectric
             // (transmissive) branch is still a threshold cut - Transmission > 0 routes to
             // ShadeDielectric's perfect-specular Fresnel-Schlick glass path (unchanged
             // until M7's rough BTDF). Every other material, regardless of Metallic value,
@@ -150,8 +149,8 @@ namespace Sample15
         {
             var (dx, dy, dz) = OptixGetWorldRayDirection.Value;
 
-            // Scene-dependent HDRI environment map (docs/SAMPLE15_PLAN.md Milestone
-            // M5) - EnvMapWidth == 0 means this scene has none (SceneData.EnvMapPath
+            // Scene-dependent HDRI environment map - EnvMapWidth == 0 means this scene
+            // has none (SceneData.EnvMapPath
             // unset), keeping the original flat analytic gradient sky below.
             if (launchParams.EnvMapWidth > 0)
             {

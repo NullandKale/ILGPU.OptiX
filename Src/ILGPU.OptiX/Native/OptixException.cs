@@ -14,7 +14,7 @@ using System.Runtime.CompilerServices;
 using System.Runtime.Serialization;
 using System.Security.Permissions;
 
-namespace ILGPU.OptiX
+namespace ILGPU.OptiX.Native
 {
     /// <summary>
     /// Represents an OptixException exception that can be thrown by the OptiX runtime.

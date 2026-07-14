@@ -21,8 +21,8 @@ namespace ILGPU.OptiX.Pipeline
         /// </summary>
         public static readonly OptixModuleCompileOptions Debug = new OptixModuleCompileOptions
         {
-            OptimizationLevel = OptixCompileOptimizationLevel.OPTIX_COMPILE_OPTIMIZATION_LEVEL_0,
-            DebugLevel = OptixCompileDebugLevel.OPTIX_COMPILE_DEBUG_LEVEL_FULL,
+            OptimizationLevel = OptixCompileOptimizationLevel.Level0,
+            DebugLevel = OptixCompileDebugLevel.Full,
         };
 
         /// <summary>
@@ -30,8 +30,8 @@ namespace ILGPU.OptiX.Pipeline
         /// </summary>
         public static readonly OptixModuleCompileOptions Release = new OptixModuleCompileOptions
         {
-            OptimizationLevel = OptixCompileOptimizationLevel.OPTIX_COMPILE_OPTIMIZATION_DEFAULT,
-            DebugLevel = OptixCompileDebugLevel.OPTIX_COMPILE_DEBUG_LEVEL_NONE,
+            OptimizationLevel = OptixCompileOptimizationLevel.Default,
+            DebugLevel = OptixCompileDebugLevel.None,
         };
     }
 }

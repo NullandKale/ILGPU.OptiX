@@ -10,10 +10,11 @@
 // ---------------------------------------------------------------------------------------
 
 using ILGPU.Util;
+using ILGPU.OptiX.Native;
 using System;
 using System.Runtime.InteropServices;
 
-namespace ILGPU.OptiX
+namespace ILGPU.OptiX.Cuda
 {
     // Wraps a bindless CUDA texture object (cudaTextureObject_t) backed by a CUDA array,
     // for OptiX materials that sample a 2D RGBA8 texture. Device-side sampling goes

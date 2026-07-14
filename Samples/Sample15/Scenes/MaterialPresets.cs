@@ -11,13 +11,13 @@ namespace Sample15
     public static class MaterialPresets
     {
         // Roughness defaults to 1 (fully rough/matte) here, not MaterialSbtData's own
-        // struct-default 0 - Bsdf.ShadeSurface (docs/SAMPLE15_PLAN.md Milestone M2)
-        // treats Roughness < Bsdf.DeltaRoughnessThreshold as a perfect-mirror delta
-        // lobe, so an un-set Roughness silently made every "diffuse" Solid()/Checker()
-        // material in every scene render as a mirror - the M2 GGX dispatch replaced
-        // the old Metallic >= 0.9 threshold chain, but nothing updated these presets'
-        // *defaults* to match, until this was caught during M4 (docs/SAMPLE15_PLAN.md
-        // Milestone M4 - "all diffuse objects bounce like specular rays").
+        // struct-default 0 - Bsdf.ShadeSurface treats Roughness <
+        // Bsdf.DeltaRoughnessThreshold as a perfect-mirror delta lobe, so an un-set
+        // Roughness silently made every "diffuse" Solid()/Checker() material in every
+        // scene render as a mirror - the GGX dispatch replaced the old
+        // Metallic >= 0.9 threshold chain, but nothing updated these presets'
+        // *defaults* to match, until this was caught later ("all diffuse objects
+        // bounce like specular rays").
         public static MaterialSbtData Solid(Vec3 baseColor, float metallic = 0f, float roughness = 1f) =>
             new MaterialSbtData { BaseColor = baseColor, Metallic = metallic, Roughness = roughness, MaterialKind = MaterialSbtData.Solid };
 

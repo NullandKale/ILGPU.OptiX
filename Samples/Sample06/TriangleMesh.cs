@@ -11,6 +11,7 @@
 
 using ILGPU;
 using ILGPU.Runtime;
+using ILGPU.OptiX.AccelStructures;
 using System.Collections.Generic;
 
 namespace Sample06

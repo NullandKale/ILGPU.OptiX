@@ -17,7 +17,7 @@ using System.Text.RegularExpressions;
 
 // disable: max_line_length
 
-namespace ILGPU.OptiX
+namespace ILGPU.OptiX.Pipeline
 {
     /// <summary>
     /// Extension functions for OptixDeviceContext.

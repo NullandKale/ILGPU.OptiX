@@ -13,6 +13,7 @@ using ILGPU;
 using ILGPU.Runtime;
 using ILGPU.Runtime.Cuda;
 using ILGPU.Util;
+using ILGPU.OptiX.Pipeline;
 using System;
 using System.Collections.Generic;
 using static ILGPU.Stride1D;
@@ -35,6 +36,7 @@ namespace ILGPU.OptiX.AccelStructures
             public uint NumSbtRecords { get; set; }
             public long IndexStart { get; set; }
             public long IndexCount { get; set; }
+            public BuiltOpacityMicromapArray OpacityMicromapArray { get; set; }
         }
 
         private class CustomPrimitive
@@ -44,15 +46,26 @@ namespace ILGPU.OptiX.AccelStructures
             public uint NumSbtRecords { get; set; }
         }
 
+        private class Curve
+        {
+            public OptixPrimitiveType CurveType { get; set; }
+            public MemoryBuffer Vertices { get; set; }
+            public MemoryBuffer Widths { get; set; }
+            public MemoryBuffer Indices { get; set; }
+            public OptixCurveEndcapFlags EndcapFlags { get; set; }
+        }
+
         private OptixDeviceContext deviceContext;
         private CudaAccelerator accelerator;
         private readonly List<TriangleMesh> triangles = new List<TriangleMesh>();
         private readonly List<CustomPrimitive> customPrimitives = new List<CustomPrimitive>();
+        private readonly List<Curve> curves = new List<Curve>();
         private (MemoryBuffer buffer, uint count)? instances;
         private bool allowCompaction;
         private bool preferFastTrace;
         private bool preferFastBuild;
         private bool allowUpdate;
+        private bool emitAabbs;
 
         /// <summary>
         /// Sets the device context for acceleration structure building.
@@ -104,9 +117,18 @@ namespace ILGPU.OptiX.AccelStructures
         /// or -1 (default) to mean "the rest of the buffer from indexStart" - matches the
         /// old always-whole-buffer behavior when indexStart is also left at 0.
         /// </param>
+        /// <param name="opacityMicromapArray">
+        /// An opacity micromap array (<see cref="OptixOpacityMicromapBuilder.BuildUniformStateArray"/>) to attach
+        /// to this mesh in LINEAR indexing mode (triangle[i] uses the array's i-th
+        /// micromap) - lets the driver skip any-hit invocations on triangles marked
+        /// fully transparent/opaque. Must have exactly one entry per triangle in this
+        /// mesh (<paramref name="indexCount"/>) if supplied. Null (default) attaches no
+        /// opacity micromap - ordinary opaque triangle behavior.
+        /// </param>
         public OptixAccelBuilder AddTriangleMesh(MemoryBuffer vertices, MemoryBuffer indices,
             MemoryBuffer materialIds = null, uint numSbtRecords = 1,
-            long indexStart = 0, long indexCount = -1)
+            long indexStart = 0, long indexCount = -1,
+            BuiltOpacityMicromapArray opacityMicromapArray = null)
         {
             if (vertices == null || vertices.Length == 0)
                 throw new ArgumentException("Vertices buffer must not be null or empty.", nameof(vertices));
@@ -126,7 +148,8 @@ namespace ILGPU.OptiX.AccelStructures
                 MaterialIds = materialIds,
                 NumSbtRecords = numSbtRecords,
                 IndexStart = indexStart,
-                IndexCount = resolvedIndexCount
+                IndexCount = resolvedIndexCount,
+                OpacityMicromapArray = opacityMicromapArray
             });
             return this;
         }
@@ -159,6 +182,59 @@ namespace ILGPU.OptiX.AccelStructures
                 AabbBuffer = aabbBuffer,
                 MaterialIds = materialIds,
                 NumSbtRecords = numSbtRecords
+            });
+            return this;
+        }
+
+        /// <summary>
+        /// Adds a kind of curve ("strand") geometry as one build input within the
+        /// resulting GAS - call multiple times to
+        /// combine several curve kinds, same rule as <see cref="AddCustomPrimitives"/>.
+        /// Curves use OptiX's own built-in intersection program (there is no
+        /// user-suppliable one) - see <see cref="Pipeline.RayTracingPipelineBuilder{TLaunchParams}.HitGroupWithBuiltinIS"/>
+        /// (via <c>RayTypeBuilder.HitGroupWithBuiltinIS</c>) to wire the matching
+        /// hitgroup. Unlike triangles/custom-primitives, a curves build input always
+        /// has exactly one SBT record (OptiX's own limitation - "each curves build
+        /// input has only one SBT record"), so combine multiple materials via
+        /// multiple <see cref="AddCurves"/> calls (one build input per kind/material),
+        /// not a per-primitive material-ID buffer.
+        /// </summary>
+        /// <param name="curveType">
+        /// The curve basis/degree (must be one of the Round*/Flat* types, not
+        /// <see cref="OptixPrimitiveType.Custom"/>, <see cref="OptixPrimitiveType.Triangle"/>,
+        /// or <see cref="OptixPrimitiveType.Sphere"/>).
+        /// </param>
+        /// <param name="vertices">Curve control-point positions (one per vertex, shared across all segments).</param>
+        /// <param name="widths">Per-vertex curve radius - same length as <paramref name="vertices"/>.</param>
+        /// <param name="indices">
+        /// One entry per curve segment: the index into <paramref name="vertices"/>/<paramref name="widths"/>
+        /// of that segment's first of (degree+1) consecutive control points.
+        /// </param>
+        /// <param name="endcapFlags">Curve end cap flags - default has no end caps for quadratic/cubic curves.</param>
+        public OptixAccelBuilder AddCurves(
+            OptixPrimitiveType curveType,
+            MemoryBuffer vertices,
+            MemoryBuffer widths,
+            MemoryBuffer indices,
+            OptixCurveEndcapFlags endcapFlags = OptixCurveEndcapFlags.Default)
+        {
+            if (curveType == OptixPrimitiveType.Custom || curveType == OptixPrimitiveType.Triangle)
+                throw new ArgumentException(
+                    "curveType must be one of the Round*/Flat* curve types.", nameof(curveType));
+            if (vertices == null || vertices.Length == 0)
+                throw new ArgumentException("Vertices buffer must not be null or empty.", nameof(vertices));
+            if (widths == null || widths.Length != vertices.Length)
+                throw new ArgumentException("Widths buffer must have the same length as vertices.", nameof(widths));
+            if (indices == null || indices.Length == 0)
+                throw new ArgumentException("Indices buffer must not be null or empty.", nameof(indices));
+
+            curves.Add(new Curve
+            {
+                CurveType = curveType,
+                Vertices = vertices,
+                Widths = widths,
+                Indices = indices,
+                EndcapFlags = endcapFlags
             });
             return this;
         }
@@ -214,6 +290,19 @@ namespace ILGPU.OptiX.AccelStructures
         }
 
         /// <summary>
+        /// Requests that the built acceleration structure's world-space AABB(s) be
+        /// emitted and read back to the host, available afterwards via
+        /// <see cref="BuiltAccelStructure.Aabbs"/>. Forces a device synchronization
+        /// after the build (like AllowCompaction() already does) to read the result
+        /// back immediately.
+        /// </summary>
+        public OptixAccelBuilder EmitAabbs()
+        {
+            emitAabbs = true;
+            return this;
+        }
+
+        /// <summary>
         /// Builds the acceleration structure and returns the result with all GPU buffers owned.
         /// </summary>
         public unsafe BuiltAccelStructure Build(CudaStream stream = null)
@@ -225,27 +314,34 @@ namespace ILGPU.OptiX.AccelStructures
 
             bool hasTriangles = triangles.Count > 0;
             bool hasCustomPrimitives = customPrimitives.Count > 0;
+            bool hasCurves = curves.Count > 0;
             bool hasInstances = instances.HasValue;
 
-            if (!hasTriangles && !hasCustomPrimitives && !hasInstances)
+            if (!hasTriangles && !hasCustomPrimitives && !hasCurves && !hasInstances)
                 throw new InvalidOperationException(
-                    "At least one of AddTriangleMesh(), AddCustomPrimitives(), or AddInstances() must be called.");
+                    "At least one of AddTriangleMesh(), AddCustomPrimitives(), AddCurves(), or AddInstances() must be called.");
 
             // Cannot mix GAS and IAS types
-            int gasCount = (hasTriangles ? 1 : 0) + (hasCustomPrimitives ? 1 : 0);
+            int gasCount = (hasTriangles ? 1 : 0) + (hasCustomPrimitives ? 1 : 0) + (hasCurves ? 1 : 0);
             if (gasCount > 0 && hasInstances)
                 throw new InvalidOperationException(
-                    "Cannot mix geometry (triangles/custom-primitives) with instances; choose one type.");
+                    "Cannot mix geometry (triangles/custom-primitives/curves) with instances; choose one type.");
 
             MemoryBuffer1D<byte, Dense> tempBuffer = null;
             MemoryBuffer1D<byte, Dense> outputBuffer = null;
             MemoryBuffer1D<byte, Dense> compactedBuffer = null;
             MemoryBuffer1D<ulong, Dense> compactSizeBuffer = null;
+            MemoryBuffer1D<OptixAabb, Dense> aabbsBuffer = null;
 
             try
             {
                 // Build the list of OptixBuildInput structures
                 var buildInputList = new List<OptixBuildInput>();
+
+                // Parallel to buildInputList (same order, same count) - one relocation
+                // descriptor per build input, needed later if the caller relocates this
+                // structure via BuiltAccelStructure.Relocate().
+                var relocateInputList = new List<OptixRelocateInput>();
 
                 // Add triangle meshes
                 if (hasTriangles)
@@ -264,10 +360,10 @@ namespace ILGPU.OptiX.AccelStructures
 
                         var input = new OptixBuildInput
                         {
-                            Type = OptixBuildInputType.OPTIX_BUILD_INPUT_TYPE_TRIANGLES
+                            Type = OptixBuildInputType.Triangles
                         };
 
-                        input.TriangleArray.VertexFormat = OptixVertexFormat.OPTIX_VERTEX_FORMAT_FLOAT3;
+                        input.TriangleArray.VertexFormat = OptixVertexFormat.Float3;
                         input.TriangleArray.VertexStrideInBytes = sizeof(float) * 3;  // Vec3 = 3 floats
                         input.TriangleArray.NumVertices = (uint)mesh.Vertices.Length;
                         input.TriangleArray.VertexBuffers = new IntPtr(vertexBufferPtrs + meshIndex);
@@ -278,7 +374,7 @@ namespace ILGPU.OptiX.AccelStructures
                         // sub-range - IntPtr.Add with a 0 offset is a no-op, so this is
                         // exactly the old whole-buffer behavior when IndexStart is 0.
                         const int vec3iSizeInBytes = sizeof(uint) * 3;
-                        input.TriangleArray.IndexFormat = OptixIndicesFormat.OPTIX_INDICES_FORMAT_UNSIGNED_INT3;
+                        input.TriangleArray.IndexFormat = OptixIndicesFormat.UnsignedInt3;
                         input.TriangleArray.IndexStrideInBytes = vec3iSizeInBytes;
                         input.TriangleArray.NumIndexTriplets = (uint)mesh.IndexCount;
                         input.TriangleArray.IndexBuffer = IntPtr.Add(
@@ -301,7 +397,26 @@ namespace ILGPU.OptiX.AccelStructures
                         input.TriangleArray.SbtIndexOffsetSizeInBytes = sizeof(uint);
                         input.TriangleArray.SbtIndexOffsetStrideInBytes = 0;
 
+                        if (mesh.OpacityMicromapArray != null)
+                        {
+                            input.TriangleArray.OpacityMicromap = new OptixBuildInputOpacityMicromap
+                            {
+                                IndexingMode = OptixOpacityMicromapArrayIndexingMode.Linear,
+                                OpacityMicromapArray = mesh.OpacityMicromapArray.ArrayDevicePointer,
+                                NumMicromapUsageCounts = mesh.OpacityMicromapArray.NumUsageCounts,
+                                MicromapUsageCounts = mesh.OpacityMicromapArray.UsageCountsPtr
+                            };
+                        }
+
                         buildInputList.Add(input);
+                        relocateInputList.Add(new OptixRelocateInput
+                        {
+                            Type = OptixBuildInputType.Triangles,
+                            TriangleArray = new OptixRelocateInputTriangleArray
+                            {
+                                NumSbtRecords = mesh.NumSbtRecords
+                            }
+                        });
                     }
                 }
 
@@ -319,7 +434,7 @@ namespace ILGPU.OptiX.AccelStructures
 
                         var input = new OptixBuildInput
                         {
-                            Type = OptixBuildInputType.OPTIX_BUILD_INPUT_TYPE_CUSTOM_PRIMITIVES
+                            Type = OptixBuildInputType.CustomPrimitives
                         };
 
                         // One flag per SBT record (see the identical comment in the
@@ -339,6 +454,61 @@ namespace ILGPU.OptiX.AccelStructures
                         input.CustomPrimitiveArray.SbtIndexOffsetStrideInBytes = 0;
 
                         buildInputList.Add(input);
+                        // Custom-primitive inputs require no relocation data beyond the
+                        // Type tag (see OptixRelocateInput's doc comment).
+                        relocateInputList.Add(new OptixRelocateInput
+                        {
+                            Type = OptixBuildInputType.CustomPrimitives
+                        });
+                    }
+                }
+
+                // Add curves
+                if (hasCurves)
+                {
+                    // One pointer slot per curve kind for each of vertex/width buffers
+                    // - same "must outlive this whole method" reasoning as the
+                    // triangle/custom-primitive loops above. Curves have no per-motion-
+                    // key array here since this builder only builds single-key (static)
+                    // curve geometry - each slot is a 1-element "array of device
+                    // pointers" (vertexBuffers/widthBuffers are themselves arrays of
+                    // per-motion-key pointers per optix_types.h, size 1 for no motion).
+                    var vertexPtrs = stackalloc IntPtr[curves.Count];
+                    var widthPtrs = stackalloc IntPtr[curves.Count];
+
+                    for (int curveIndex = 0; curveIndex < curves.Count; curveIndex++)
+                    {
+                        var curve = curves[curveIndex];
+                        vertexPtrs[curveIndex] = curve.Vertices.NativePtr;
+                        widthPtrs[curveIndex] = curve.Widths.NativePtr;
+
+                        var input = new OptixBuildInput
+                        {
+                            Type = OptixBuildInputType.Curves
+                        };
+
+                        input.CurveArray.CurveType = curve.CurveType;
+                        input.CurveArray.NumPrimitives = (uint)curve.Indices.Length;
+                        input.CurveArray.VertexBuffers = new IntPtr(vertexPtrs + curveIndex);
+                        input.CurveArray.NumVertices = (uint)curve.Vertices.Length;
+                        input.CurveArray.VertexStrideInBytes = 0;
+                        input.CurveArray.WidthBuffers = new IntPtr(widthPtrs + curveIndex);
+                        input.CurveArray.WidthStrideInBytes = 0;
+                        input.CurveArray.NormalBuffers = IntPtr.Zero;
+                        input.CurveArray.NormalStrideInBytes = 0;
+                        input.CurveArray.IndexBuffer = curve.Indices.NativePtr;
+                        input.CurveArray.IndexStrideInBytes = 0;
+                        input.CurveArray.Flag = 0; // OPTIX_GEOMETRY_FLAG_NONE
+                        input.CurveArray.PrimitiveIndexOffset = 0;
+                        input.CurveArray.EndcapFlags = (uint)curve.EndcapFlags;
+
+                        buildInputList.Add(input);
+                        // Curves require no relocation data beyond the Type tag (same
+                        // as custom primitives - see OptixRelocateInput's doc comment).
+                        relocateInputList.Add(new OptixRelocateInput
+                        {
+                            Type = OptixBuildInputType.Curves
+                        });
                     }
                 }
 
@@ -348,30 +518,39 @@ namespace ILGPU.OptiX.AccelStructures
                     var (instanceBuffer, numInstances) = instances.Value;
                     var input = new OptixBuildInput
                     {
-                        Type = OptixBuildInputType.OPTIX_BUILD_INPUT_TYPE_INSTANCES
+                        Type = OptixBuildInputType.Instances
                     };
 
                     input.InstanceArray.Instances = instanceBuffer.NativePtr;
                     input.InstanceArray.NumInstances = numInstances;
 
                     buildInputList.Add(input);
+                    relocateInputList.Add(new OptixRelocateInput
+                    {
+                        Type = OptixBuildInputType.Instances,
+                        InstanceArray = new OptixRelocateInputInstanceArray
+                        {
+                            NumInstances = numInstances,
+                            TraversableHandles = IntPtr.Zero
+                        }
+                    });
                 }
 
                 // Set up build options
                 var buildOptions = new OptixAccelBuildOptions
                 {
-                    BuildFlags = OptixBuildFlags.OPTIX_BUILD_FLAG_NONE,
-                    Operation = OptixBuildOperation.OPTIX_BUILD_OPERATION_BUILD
+                    BuildFlags = OptixBuildFlags.None,
+                    Operation = OptixBuildOperation.Build
                 };
 
                 if (allowCompaction)
-                    buildOptions.BuildFlags |= OptixBuildFlags.OPTIX_BUILD_FLAG_ALLOW_COMPACTION;
+                    buildOptions.BuildFlags |= OptixBuildFlags.AllowCompaction;
                 if (preferFastTrace)
-                    buildOptions.BuildFlags |= OptixBuildFlags.OPTIX_BUILD_FLAG_PREFER_FAST_TRACE;
+                    buildOptions.BuildFlags |= OptixBuildFlags.PreferFastTrace;
                 if (preferFastBuild)
-                    buildOptions.BuildFlags |= OptixBuildFlags.OPTIX_BUILD_FLAG_PREFER_FAST_BUILD;
+                    buildOptions.BuildFlags |= OptixBuildFlags.PreferFastBuild;
                 if (allowUpdate)
-                    buildOptions.BuildFlags |= OptixBuildFlags.OPTIX_BUILD_FLAG_ALLOW_UPDATE;
+                    buildOptions.BuildFlags |= OptixBuildFlags.AllowUpdate;
 
                 buildOptions.MotionOptions.NumKeys = 1;
 
@@ -382,22 +561,33 @@ namespace ILGPU.OptiX.AccelStructures
                 tempBuffer = accelerator.Allocate1D<byte>((long)bufferSizes.TempSizeInBytes);
                 outputBuffer = accelerator.Allocate1D<byte>((long)bufferSizes.OutputSizeInBytes);
 
-                // Prepare emitted properties for compaction size if needed
-                OptixAccelEmitDesc[] emittedProps = System.Array.Empty<OptixAccelEmitDesc>();
+                // Prepare emitted properties for compaction size / AABBs if requested
+                var emittedPropsList = new List<OptixAccelEmitDesc>();
 
                 if (allowCompaction)
                 {
                     // Allocate a device buffer to hold the emitted compaction size
                     compactSizeBuffer = accelerator.Allocate1D<ulong>(1);
-                    emittedProps = new[]
+                    emittedPropsList.Add(new OptixAccelEmitDesc
                     {
-                        new OptixAccelEmitDesc
-                        {
-                            Type = OptixAccelPropertyType.OPTIX_PROPERTY_TYPE_COMPACTED_SIZE,
-                            Result = compactSizeBuffer.NativePtr
-                        }
-                    };
+                        Type = OptixAccelPropertyType.CompactedSize,
+                        Result = compactSizeBuffer.NativePtr
+                    });
                 }
+
+                if (emitAabbs)
+                {
+                    // One OptixAabb per motion key (always 1 here - see MotionOptions.NumKeys
+                    // below; this is not yet configurable).
+                    aabbsBuffer = accelerator.Allocate1D<OptixAabb>(1);
+                    emittedPropsList.Add(new OptixAccelEmitDesc
+                    {
+                        Type = OptixAccelPropertyType.Aabbs,
+                        Result = aabbsBuffer.NativePtr
+                    });
+                }
+
+                var emittedProps = emittedPropsList.ToArray();
 
                 var buildStream = stream ?? accelerator.DefaultStream;
 
@@ -413,6 +603,22 @@ namespace ILGPU.OptiX.AccelStructures
                 // Dispose temp buffer after build
                 tempBuffer?.Dispose();
                 tempBuffer = null;
+
+                // Emitted AABBs are only known once the build above has actually
+                // finished on the device - reading them back requires a sync point
+                // even if the caller supplied their own stream (same reasoning as the
+                // compaction-size readback below).
+                OptixAabb[] aabbsHost = null;
+                if (emitAabbs)
+                {
+                    accelerator.Synchronize();
+                    aabbsHost = new OptixAabb[1];
+                    aabbsBuffer.CopyToCPU(aabbsHost);
+                    aabbsBuffer.Dispose();
+                    aabbsBuffer = null;
+                }
+
+                var relocateInputs = relocateInputList.ToArray();
 
                 if (allowCompaction)
                 {
@@ -439,7 +645,11 @@ namespace ILGPU.OptiX.AccelStructures
                     outputBuffer.Dispose();
                     outputBuffer = null;
 
-                    var compactedResult = new BuiltAccelStructure(compactedHandle, compactedBuffer);
+                    var compactedResult = new BuiltAccelStructure(compactedHandle, compactedBuffer)
+                    {
+                        RelocateInputs = relocateInputs,
+                        Aabbs = aabbsHost
+                    };
                     compactedBuffer = null; // Result now owns it
                     return compactedResult;
                 }
@@ -451,7 +661,11 @@ namespace ILGPU.OptiX.AccelStructures
                 }
 
                 // Return result owning the output buffer
-                var result = new BuiltAccelStructure(asHandle, outputBuffer);
+                var result = new BuiltAccelStructure(asHandle, outputBuffer)
+                {
+                    RelocateInputs = relocateInputs,
+                    Aabbs = aabbsHost
+                };
                 outputBuffer = null; // Result now owns it
                 return result;
             }
@@ -462,6 +676,7 @@ namespace ILGPU.OptiX.AccelStructures
                 outputBuffer?.Dispose();
                 compactedBuffer?.Dispose();
                 compactSizeBuffer?.Dispose();
+                aabbsBuffer?.Dispose();
                 throw;
             }
         }
@@ -609,7 +824,7 @@ namespace ILGPU.OptiX.AccelStructures
                 // Build IAS
                 var instanceInput = new OptixBuildInput
                 {
-                    Type = OptixBuildInputType.OPTIX_BUILD_INPUT_TYPE_INSTANCES
+                    Type = OptixBuildInputType.Instances
                 };
                 instanceInput.InstanceArray.Instances = instancesBuffer.NativePtr;
                 instanceInput.InstanceArray.NumInstances = (uint)instances.Length;
@@ -617,8 +832,8 @@ namespace ILGPU.OptiX.AccelStructures
 
                 var accelOptions = new OptixAccelBuildOptions
                 {
-                    BuildFlags = OptixBuildFlags.OPTIX_BUILD_FLAG_NONE,
-                    Operation = OptixBuildOperation.OPTIX_BUILD_OPERATION_BUILD
+                    BuildFlags = OptixBuildFlags.None,
+                    Operation = OptixBuildOperation.Build
                 };
 
                 OptixAccelBufferSizes bufferSizes = deviceContext.AccelComputeMemoryUsage(accelOptions, new[] { instanceInput });
@@ -657,7 +872,7 @@ namespace ILGPU.OptiX.AccelStructures
         }
 
         /// <summary>
-        /// Refits (OPTIX_BUILD_OPERATION_UPDATE) an existing structure in place, reusing
+        /// Refits (OptixBuildOperation.Update) an existing structure in place, reusing
         /// its output buffer and a persistent update-temp buffer owned by it. The caller
         /// must have re-uploaded fresh contents into the SAME device buffers this builder
         /// was configured with (via AddTriangleMesh/AddCustomPrimitives on THIS instance) -
@@ -705,15 +920,15 @@ namespace ILGPU.OptiX.AccelStructures
                     var mesh = triangles[meshIndex];
                     vertexBufferPtrs[meshIndex] = mesh.Vertices.NativePtr;
 
-                    var input = new OptixBuildInput { Type = OptixBuildInputType.OPTIX_BUILD_INPUT_TYPE_TRIANGLES };
+                    var input = new OptixBuildInput { Type = OptixBuildInputType.Triangles };
 
-                    input.TriangleArray.VertexFormat = OptixVertexFormat.OPTIX_VERTEX_FORMAT_FLOAT3;
+                    input.TriangleArray.VertexFormat = OptixVertexFormat.Float3;
                     input.TriangleArray.VertexStrideInBytes = sizeof(float) * 3;
                     input.TriangleArray.NumVertices = (uint)mesh.Vertices.Length;
                     input.TriangleArray.VertexBuffers = new IntPtr(vertexBufferPtrs + meshIndex);
 
                     const int vec3iSizeInBytes = sizeof(uint) * 3;
-                    input.TriangleArray.IndexFormat = OptixIndicesFormat.OPTIX_INDICES_FORMAT_UNSIGNED_INT3;
+                    input.TriangleArray.IndexFormat = OptixIndicesFormat.UnsignedInt3;
                     input.TriangleArray.IndexStrideInBytes = vec3iSizeInBytes;
                     input.TriangleArray.NumIndexTriplets = (uint)mesh.IndexCount;
                     input.TriangleArray.IndexBuffer = IntPtr.Add(
@@ -744,7 +959,7 @@ namespace ILGPU.OptiX.AccelStructures
                     var prim = customPrimitives[primIndex];
                     aabbPtrs[primIndex] = prim.AabbBuffer.NativePtr;
 
-                    var input = new OptixBuildInput { Type = OptixBuildInputType.OPTIX_BUILD_INPUT_TYPE_CUSTOM_PRIMITIVES };
+                    var input = new OptixBuildInput { Type = OptixBuildInputType.CustomPrimitives };
 
                     var kindFlags = stackalloc uint[(int)prim.NumSbtRecords];
                     for (int flagIndex = 0; flagIndex < prim.NumSbtRecords; flagIndex++)
@@ -765,13 +980,13 @@ namespace ILGPU.OptiX.AccelStructures
 
             var buildOptions = new OptixAccelBuildOptions
             {
-                BuildFlags = OptixBuildFlags.OPTIX_BUILD_FLAG_ALLOW_UPDATE,
-                Operation = OptixBuildOperation.OPTIX_BUILD_OPERATION_UPDATE
+                BuildFlags = OptixBuildFlags.AllowUpdate,
+                Operation = OptixBuildOperation.Update
             };
             if (preferFastTrace)
-                buildOptions.BuildFlags |= OptixBuildFlags.OPTIX_BUILD_FLAG_PREFER_FAST_TRACE;
+                buildOptions.BuildFlags |= OptixBuildFlags.PreferFastTrace;
             if (preferFastBuild)
-                buildOptions.BuildFlags |= OptixBuildFlags.OPTIX_BUILD_FLAG_PREFER_FAST_BUILD;
+                buildOptions.BuildFlags |= OptixBuildFlags.PreferFastBuild;
             buildOptions.MotionOptions.NumKeys = 1;
 
             var bufferSizes = deviceContext.AccelComputeMemoryUsage(buildOptions, buildInputList.ToArray());
@@ -800,7 +1015,7 @@ namespace ILGPU.OptiX.AccelStructures
             if (stream == null)
                 accelerator.Synchronize();
 
-            // OptiX guarantees OPTIX_BUILD_OPERATION_UPDATE returns the same handle it
+            // OptiX guarantees OptixBuildOperation.Update returns the same handle it
             // was given at the original BUILD, but assign it back defensively rather than
             // assume that's true in every driver version.
             existing.SetTraversableHandle(handle);
@@ -829,6 +1044,21 @@ namespace ILGPU.OptiX.AccelStructures
         /// </summary>
         internal MemoryBuffer1D<byte, Dense> UpdateTempBuffer { get; set; }
 
+        /// <summary>
+        /// World-space AABB(s) emitted during the build, one per motion key, or null if
+        /// the builder's EmitAabbs() was not called.
+        /// </summary>
+        [CLSCompliant(false)]
+        public OptixAabb[] Aabbs { get; internal set; }
+
+        /// <summary>
+        /// One relocation descriptor per build input this structure was originally built
+        /// with, in build order - used by Relocate() to populate optixAccelRelocate's
+        /// relocateInputs parameter. Set by OptixAccelBuilder.Build().
+        /// </summary>
+        [CLSCompliant(false)]
+        internal OptixRelocateInput[] RelocateInputs { get; set; }
+
         internal BuiltAccelStructure(IntPtr handle, MemoryBuffer1D<byte, Dense> gasBuffer)
         {
             TraversableHandle = handle;
@@ -836,6 +1066,82 @@ namespace ILGPU.OptiX.AccelStructures
         }
 
         internal void SetTraversableHandle(IntPtr handle) => TraversableHandle = handle;
+
+        /// <summary>
+        /// Relocates this acceleration structure into a freshly allocated target buffer
+        /// on the given device context, returning a new <see cref="BuiltAccelStructure"/>
+        /// that owns it. This structure is left unchanged (and still usable/disposable)
+        /// afterwards. Throws if OptiX reports the source structure is not relocation-
+        /// compatible with <paramref name="deviceContext"/> (mismatched compile/ABI
+        /// options between the two - relocating within the same process/device, as in a
+        /// round-trip test, is always compatible).
+        /// </summary>
+        /// <param name="deviceContext">The OptiX device context to relocate on.</param>
+        /// <param name="accelerator">The accelerator to allocate the target buffer from.</param>
+        /// <param name="stream">The CUDA stream, or null to relocate synchronously.</param>
+        [CLSCompliant(false)]
+        public BuiltAccelStructure Relocate(
+            ILGPU.OptiX.Pipeline.OptixDeviceContext deviceContext,
+            CudaAccelerator accelerator,
+            CudaStream stream = null)
+        {
+            if (deviceContext == null)
+                throw new ArgumentNullException(nameof(deviceContext));
+            if (accelerator == null)
+                throw new ArgumentNullException(nameof(accelerator));
+            if (RelocateInputs == null || RelocateInputs.Length == 0)
+                throw new InvalidOperationException(
+                    "This BuiltAccelStructure has no relocation info - it must have come " +
+                    "from OptixAccelBuilder.Build().");
+
+            var info = deviceContext.AccelGetRelocationInfo(TraversableHandle);
+            if (!deviceContext.CheckRelocationCompatibility(info))
+                throw new InvalidOperationException(
+                    "This acceleration structure is not relocation-compatible with the " +
+                    "given device context (mismatched device/driver/compile options).");
+
+            MemoryBuffer1D<byte, Dense> targetBuffer = null;
+            try
+            {
+                targetBuffer = accelerator.Allocate1D<byte>(GasBuffer.LengthInBytes);
+
+                var relocateStream = stream ?? accelerator.DefaultStream;
+
+                // optixAccelRelocate does NOT copy the acceleration structure's memory -
+                // per optix_host.h: "This function only operates on the relocated memory
+                // whose new location is specified by 'targetAccel'... The original memory
+                // (source) is not required to be valid, only the OptixRelocationInfo." The
+                // caller is responsible for getting the bytes into targetAccel first (a
+                // device-to-device copy here, since both buffers live on the same
+                // accelerator - a real cross-device/cross-process relocation would copy via
+                // host memory or P2P instead). Skipping this step leaves targetBuffer as
+                // uninitialized device memory, which optixAccelRelocate then reinterprets as
+                // a traversable - undefined behavior that manifested as a sticky CUDA
+                // "unspecified launch failure" the first time this was tried.
+                GasBuffer.CopyTo(relocateStream, 0, targetBuffer.View);
+
+                var handle = deviceContext.AccelRelocate(
+                    relocateStream, info, RelocateInputs, targetBuffer.View);
+
+                if (stream == null)
+                    accelerator.Synchronize();
+
+                var result = new BuiltAccelStructure(handle, targetBuffer)
+                {
+                    RelocateInputs = RelocateInputs
+                };
+                targetBuffer = null; // Result now owns it
+                return result;
+            }
+            catch
+            {
+                // Once a CUDA context faults, further calls on it (including Dispose's
+                // own cudaFree) also throw - swallow a secondary failure here so the
+                // original exception (the actually useful one) isn't masked by it.
+                try { targetBuffer?.Dispose(); } catch { /* see comment above */ }
+                throw;
+            }
+        }
 
         public void Dispose()
         {

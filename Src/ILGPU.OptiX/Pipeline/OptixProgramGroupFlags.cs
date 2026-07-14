@@ -15,7 +15,7 @@ using System;
 #pragma warning disable CA1707 // Identifiers should not contain underscores
 #pragma warning disable CA1711 // Identifiers should not have incorrect suffix
 
-namespace ILGPU.OptiX
+namespace ILGPU.OptiX.Pipeline
 {
     [Flags]
     public enum OptixProgramGroupFlags
@@ -23,7 +23,7 @@ namespace ILGPU.OptiX
         /// <summary>
         /// Currently there are no flags.
         /// </summary>
-        OPTIX_PROGRAM_GROUP_FLAGS_NONE = 0
+        None = 0
     }
 }
 

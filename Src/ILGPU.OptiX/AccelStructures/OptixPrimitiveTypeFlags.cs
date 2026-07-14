@@ -15,7 +15,7 @@ using System.Diagnostics.CodeAnalysis;
 #pragma warning disable CA1707 // Identifiers should not contain underscores
 #pragma warning disable CA1711 // Identifiers should not have incorrect suffix
 
-namespace ILGPU.OptiX
+namespace ILGPU.OptiX.AccelStructures
 {
     [Flags]
     [SuppressMessage("Usage", "CA2217:Do not mark enums with FlagsAttribute")]
@@ -24,27 +24,27 @@ namespace ILGPU.OptiX
         /// <summary>
         /// Custom primitive.
         /// </summary>
-        OPTIX_PRIMITIVE_TYPE_FLAGS_CUSTOM = 1 << 0,
+        Custom = 1 << 0,
 
         /// <summary>
         /// B-spline curve of degree 2 with circular cross-section.
         /// </summary>
-        OPTIX_PRIMITIVE_TYPE_FLAGS_ROUND_QUADRATIC_BSPLINE = 1 << 1,
+        RoundQuadraticBSpline = 1 << 1,
 
         /// <summary>
         /// B-spline curve of degree 3 with circular cross-section.
         /// </summary>
-        OPTIX_PRIMITIVE_TYPE_FLAGS_ROUND_CUBIC_BSPLINE = 1 << 2,
+        RoundCubicBSpline = 1 << 2,
 
         /// <summary>
         /// Piecewise linear curve with circular cross-section.
         /// </summary>
-        OPTIX_PRIMITIVE_TYPE_FLAGS_ROUND_LINEAR = 1 << 3,
+        RoundLinear = 1 << 3,
 
         /// <summary>
         /// Triangle.
         /// </summary>
-        OPTIX_PRIMITIVE_TYPE_FLAGS_TRIANGLE = 1 << 31,
+        Triangle = 1 << 31,
     }
 }
 

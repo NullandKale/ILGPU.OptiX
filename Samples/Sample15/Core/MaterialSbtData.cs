@@ -9,6 +9,7 @@
 // Source License. See LICENSE.txt for details.
 // ---------------------------------------------------------------------------------------
 
+using ILGPU.OptiX.DeviceApi;
 namespace Sample15
 {
     // Device-side view of a hitgroup record's custom data (the bytes after the header) -
@@ -19,7 +20,7 @@ namespace Sample15
     // radiance hitgroup record's data is ever read (the shadow ray's closest-hit is an
     // empty stub).
     //
-    // This is Sample15's PBR material model (docs/SAMPLE15_PLAN.md Design Decision 2): a
+    // This is Sample15's PBR material model: a
     // glTF-style metallic-roughness parameter set, replacing Sample14's Albedo/
     // Reflectivity/Transparency threshold-dispatch fields. The full field set (including
     // Roughness/TransmissionRoughness/Orm/Normal textures/EmissiveLightListBase) is added
@@ -27,8 +28,7 @@ namespace Sample15
     // glass, unchanged math from Sample14, just renamed fields) read from it so far -
     // avoids repeated struct-layout churn across milestones (M2 GGX, M4 NEE light-list
     // wiring, M6 texture pipeline, M7 rough transmission each populate/read more of it
-    // without changing the layout again). See docs/SAMPLE15_PLAN.md Milestones for what
-    // reads which field first.
+    // without changing the layout again).
     //
     // Shading dispatch (__closest__radiance, current as of M2): Transmission > 0 ->
     // ShadeDielectric's perfect-specular Fresnel-Schlick glass (unchanged since M1, until
@@ -53,12 +53,11 @@ namespace Sample15
         public float Transmission;
         public Vec3 TransmissionColor;
 
-        // Roughness of the transmissive (BTDF) lobe specifically (docs/SAMPLE15_PLAN.md
-        // Milestone M7, Walter et al. rough dielectric transmission,
-        // MaterialShading.ShadeDielectric) - the struct default (0) is a deliberate,
-        // desired degenerate case here (unlike the base Roughness field's own
-        // struct-default trap, see docs/SAMPLE15_PLAN.md Milestone M4's postmortem):
-        // it correctly reproduces M1's perfect-specular glass unless a scene
+        // Roughness of the transmissive (BTDF) lobe specifically (Walter et al. rough
+        // dielectric transmission, MaterialShading.ShadeDielectric) - the struct default
+        // (0) is a deliberate, desired degenerate case here (unlike the base Roughness
+        // field's own struct-default trap): it correctly reproduces M1's perfect-specular
+        // glass unless a scene
         // explicitly opts into a rough/frosted look.
         public float TransmissionRoughness;
 
@@ -72,7 +71,7 @@ namespace Sample15
 
         // Tangent-space normal-map blend strength (1 = full strength, 0 = struct
         // default). Mirrors the exact trap Roughness's own struct-default 0 turned out
-        // to be (docs/SAMPLE15_PLAN.md Milestone M4's "diffuse objects bounce like
+        // to be (the "diffuse objects bounce like
         // specular rays" postmortem) - any material that sets NormalTexture MUST also
         // explicitly set NormalStrength (1f unless a deliberately subtle effect is
         // wanted), or the texture will be sampled and then silently multiplied away to

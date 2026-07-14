@@ -1,7 +1,9 @@
 using ILGPU;
 using ILGPU.OptiX;
 using ILGPU.OptiX.Device;
+using ILGPU.OptiX.DeviceApi;
 using System.Numerics;
+using System.Runtime.InteropServices;
 
 namespace Sample13
 {
@@ -13,6 +15,38 @@ namespace Sample13
     /// </summary>
     public static class Payloads
     {
+        // Host-side-only shapes for RayTracingPipelineBuilder's RayType(...).Payload<T>()
+        // call (see RendererPipeline.cs) - derives NumPayloadValues via
+        // OptixPayloadLayout.CountOf<T> instead of the old hard-coded
+        // NumPayloadValues = 19 pipeline option. Every actual device-side read/write in
+        // this sample still goes through the raw index-based OptixPayload.PayloadN /
+        // OptixPayloadInterop / OptixPayloadVec3Helper calls above and below (unchanged) -
+        // these structs exist purely to state the register count, matching Sample15's
+        // RadiancePayload/ShadowPayload pattern. Flat float/uint fields (not nested Vec3)
+        // so OptixPayloadLayout.CountOf can verify there's no compiler-inserted padding.
+        [StructLayout(LayoutKind.Sequential)]
+        internal struct RadiancePayload
+        {
+            public float ContributionX, ContributionY, ContributionZ; // 0-2
+            public uint Flag;                                          // 3
+            public float NewOriginX, NewOriginY, NewOriginZ;           // 4-6
+            public float NewDirX, NewDirY, NewDirZ;                    // 7-9
+            public float TintX, TintY, TintZ;                          // 10-12
+            public float NormalX, NormalY, NormalZ;                    // 13-15
+            public float AlbedoX, AlbedoY, AlbedoZ;                    // 16-18
+        }
+
+        // The shadow ray only ever uses payload0-3 (transmittance xyz + hit count) - see
+        // MissAndShadowPrograms.cs's __anyhit__shadow/__miss__shadow. Pipeline-wide
+        // NumPayloadValues is still derived as the max across ray types (19, from
+        // RadiancePayload above), matching the original hard-coded value exactly.
+        [StructLayout(LayoutKind.Sequential)]
+        internal struct ShadowPayload
+        {
+            public float TransmittanceX, TransmittanceY, TransmittanceZ; // 0-2
+            public uint HitCount;                                        // 3
+        }
+
         internal const uint RADIANCE_RAY_TYPE = OptixPayloadDefaults.RADIANCE_RAY_TYPE;
         internal const uint SHADOW_RAY_TYPE = OptixPayloadDefaults.SHADOW_RAY_TYPE;
         internal const uint RAY_TYPE_COUNT = OptixPayloadDefaults.RAY_TYPE_COUNT;

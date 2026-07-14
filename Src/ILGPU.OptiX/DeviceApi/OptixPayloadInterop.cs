@@ -13,7 +13,7 @@ using ILGPU;
 using ILGPU.Runtime.Cuda;
 using System;
 
-namespace ILGPU.OptiX
+namespace ILGPU.OptiX.DeviceApi
 {
     /// <summary>
     /// Provides convenience wrappers for payload register bit-casting operations.

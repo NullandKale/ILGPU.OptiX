@@ -1,4 +1,5 @@
 using ILGPU.OptiX;
+using ILGPU.OptiX.Cuda;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -12,8 +13,8 @@ namespace Sample15
     /// scene's textures stay resident.
     ///
     /// Unlike Sample13's TextureCache, video-texture support (VideoTexture/VideoReader,
-    /// which need OpenCvSharp + ffmpeg.exe on PATH) is deferred to a later milestone -
-    /// see docs/SAMPLE14_PLAN.md - so museum-style scenes aren't in Sample14's
+    /// which need OpenCvSharp + ffmpeg.exe on PATH) is deferred to a later milestone,
+    /// so museum-style scenes aren't in Sample14's
     /// SceneTable yet and this class only ever loads static images.
     /// </summary>
     public sealed class TextureCache

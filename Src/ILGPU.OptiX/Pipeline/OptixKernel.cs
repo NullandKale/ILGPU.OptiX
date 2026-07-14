@@ -13,7 +13,7 @@ using ILGPU.Util;
 using System;
 using System.Collections.Immutable;
 
-namespace ILGPU.OptiX
+namespace ILGPU.OptiX.Pipeline
 {
     /// <summary>
     /// Abstraction of an OptiX module and program group. We associate a single ILGPU

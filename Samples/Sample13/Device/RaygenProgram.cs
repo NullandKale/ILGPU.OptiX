@@ -1,5 +1,6 @@
 using ILGPU;
 using ILGPU.OptiX;
+using ILGPU.OptiX.DeviceApi;
 using System.Numerics;
 
 namespace Sample13
@@ -64,7 +65,7 @@ namespace Sample13
                         // below-threshold-alpha sample. DISABLE_ANYHIT (the old value
                         // here, from before alpha-cutout existed) would silently skip
                         // that test and shade the nearest triangle regardless of alpha.
-                        OptixRayFlags.OPTIX_RAY_FLAG_NONE,
+                        OptixRayFlags.None,
                         Payloads.RADIANCE_RAY_TYPE,
                         Payloads.RAY_TYPE_COUNT,
                         Payloads.RADIANCE_RAY_TYPE,

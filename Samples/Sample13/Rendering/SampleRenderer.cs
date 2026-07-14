@@ -45,7 +45,6 @@ namespace Sample13
         readonly FrameOutput frameOutput;
         PresentQueue presentQueue;
 
-        OptixShaderBindingTable sbt;
         IntPtr traversable;
         LaunchParams launchParams;
 
@@ -70,7 +69,7 @@ namespace Sample13
         public bool UseMergedTrianglesGas { get; set; } = true;
 
         // Scene-switcher state - mirrors the reference's RaytraceEntity.BuildSceneTable
-        // (lazily built, cached per index) - see docs/SAMPLE13_PLAN.md. currentScene is
+        // (lazily built, cached per index). currentScene is
         // the renderer's own reference to the active (cached) SceneData.
         readonly Func<SceneData>[] sceneBuilders;
         readonly Dictionary<int, SceneData> sceneCache = new Dictionary<int, SceneData>();
@@ -146,7 +145,7 @@ namespace Sample13
             pipeline = new RendererPipeline(gpu);
             buffers = new SceneGpuBuffers(gpu.Accelerator);
             textures = new TextureCache();
-            sbtBuilder = new SbtBuilder(gpu.Accelerator, pipeline, textures);
+            sbtBuilder = new SbtBuilder(pipeline, textures);
             accel = new AccelStructureBuilder(gpu.Accelerator, gpu.DeviceContext, buffers);
             animator = new SceneAnimator(buffers, accel, textures);
             frameOutput = new FrameOutput(gpu);
@@ -218,24 +217,23 @@ namespace Sample13
                 // as the old monolithic DisposeSceneBuffers.
                 textures.Clear();
                 accel.DisposeBuffers();
-                sbtBuilder.DisposeBuffers();
                 buffers.DisposeAll();
 
                 buffers.Upload(scene);
 
                 MeshRange[] triangleMeshRanges = SbtLayout.GetTriangleMeshRanges(scene, UseMergedTrianglesGas);
-                sbt = sbtBuilder.Build(scene, triangleMeshRanges);
+                sbtBuilder.Build(scene, triangleMeshRanges);
                 traversable = accel.Build(scene, triangleMeshRanges);
 
                 // Cross-checks that the accel structure's NumSbtRecords values (per
                 // AddTriangleMesh()/AddCustomPrimitives() call) still agree with the
-                // SBT's own actual hitgroup record count. A silent mismatch here is
+                // pipeline's own actual hitgroup record count. A silent mismatch here is
                 // exactly the bug class that made every triangle/primitive resolve to
                 // hitgroup record 0 regardless of its actual material, with no error or
-                // crash - see docs/API_BUILDER_PLAN.md's 2026-07-04 Sample13 fix notes.
+                // crash - a mismatch class this sample has already been fixed for once before.
                 Debug.Assert(
-                    sbt.HitgroupRecordCount == accel.TotalHitgroupRecordsUsed,
-                    $"SBT hitgroup record count ({sbt.HitgroupRecordCount}) doesn't match " +
+                    pipeline.Pipeline.HitgroupRecordCount == accel.TotalHitgroupRecordsUsed,
+                    $"Pipeline hitgroup record count ({pipeline.Pipeline.HitgroupRecordCount}) doesn't match " +
                     $"what the accel structure's NumSbtRecords values imply " +
                     $"({accel.TotalHitgroupRecordsUsed}) - AccelStructureBuilder and SbtBuilder " +
                     "have drifted out of sync.");
@@ -304,7 +302,6 @@ namespace Sample13
             {
                 textures.Clear();
                 accel.DisposeBuffers();
-                sbtBuilder.DisposeBuffers();
                 buffers.DisposeAll();
             }
 
@@ -384,14 +381,7 @@ namespace Sample13
                 launchParams.MaxDiffuseBounces = MaxDiffuseBounces;
 
                 stepStopwatch.Restart();
-                gpu.Accelerator.OptixLaunch(
-                    gpu.Accelerator.DefaultStream,
-                    pipeline.Pipeline,
-                    launchParams,
-                    sbt,
-                    (uint)width,
-                    (uint)height,
-                    1);
+                pipeline.Pipeline.Launch(launchParams, width, height);
                 gpu.Accelerator.Synchronize();
                 traceMs = stepStopwatch.Elapsed.TotalMilliseconds;
 

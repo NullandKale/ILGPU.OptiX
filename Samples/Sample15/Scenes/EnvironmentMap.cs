@@ -11,13 +11,12 @@
 
 namespace Sample15
 {
-    // Host-side 2D importance-sampling data for the HDRI environment map
-    // (docs/SAMPLE15_PLAN.md Milestone M5/Design Decision 5) - one flat piecewise-
-    // constant distribution over every texel (not a separate marginal+conditional pair;
-    // a single flat CDF over width*height texels is simpler to build and binary-search
-    // and has the same asymptotic cost, since the conditional array alone is already
-    // width*height). Built once at startup and shared across every scene (see the
-    // plan's own Open Questions resolution) - EnvironmentMapGpu is scene-independent.
+    // Host-side 2D importance-sampling data for the HDRI environment map - one
+    // flat piecewise-constant distribution over every texel (not a separate
+    // marginal+conditional pair; a single flat CDF over width*height texels is
+    // simpler to build and binary-search and has the same asymptotic cost, since
+    // the conditional array alone is already width*height). Built once at startup
+    // and shared across every scene - EnvironmentMapGpu is scene-independent.
     public static class EnvironmentMap
     {
         public struct EnvMapData

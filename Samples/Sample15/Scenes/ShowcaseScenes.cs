@@ -28,9 +28,9 @@ namespace Sample15
                 AmbientIntensity = 0f,
                 BackgroundTop = new Vec3(0.6f, 0.8f, 1.0f),
                 BackgroundBottom = new Vec3(0.9f, 0.95f, 1.0f),
-                // HDRI environment map test case (docs/SAMPLE15_PLAN.md Milestone M5) -
-                // an outdoor scene with the widest mix of roughness/metallic on the
-                // random spheres, good for showing off HDRI-lit specular highlights.
+                // HDRI environment map test case - an outdoor scene with the widest
+                // mix of roughness/metallic on the random spheres, good for showing
+                // off HDRI-lit specular highlights.
                 EnvMapPath = "models/hdri/venice_sunset_1k.hdr",
                 CameraOrigin = new Vec3(0f, 1f, 0f),
                 CameraLookAt = new Vec3(0f, 1f, -10f),
@@ -100,7 +100,7 @@ namespace Sample15
         // Direct port of the reference's Scenes.BuildCornellBox() - the classic
         // red/green/white box with a ceiling light panel and two boxes, using our
         // XYRect/XZRect/YZRect custom primitives in place of the reference's infinite
-        // Planes (docs/SAMPLE13_PLAN.md decision (c): finite rects, sized to the box).
+        // Planes (finite rects, sized to the box).
         public static SceneData BuildCornellBox()
         {
             var b = new SceneBuilder
@@ -220,9 +220,9 @@ namespace Sample15
 
         // Direct port of the reference's Scenes.BuildBoxesShowcase() - three plain white
         // diffuse boxes over a checkered floor. The reference's box constructors pass
-        // trailing reflectivity args that its own Solid() closure quirk always ignores
-        // (see docs/SAMPLE13_PLAN.md) - all 3 boxes render as diffuse white, matching the
-        // reference's actual behavior rather than its misleading constructor arguments.
+        // trailing reflectivity args that its own Solid() closure quirk always ignores -
+        // all 3 boxes render as diffuse white, matching the reference's actual
+        // behavior rather than its misleading constructor arguments.
         public static SceneData BuildBoxesShowcase()
         {
             var b = new SceneBuilder

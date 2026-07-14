@@ -47,7 +47,7 @@ namespace Sample13
             int glassBlue = b.AddMaterial(new MaterialSbtData { Albedo = new Vec3(0.9f, 0.95f, 1.0f), Transparency = 1f, IndexOfRefraction = 1.52f, TransmissionColor = new Vec3(0.9f, 0.95f, 1.0f), MaterialKind = MaterialSbtData.Solid });
 
             // Global floor and distant backdrop - one large XZRect/XYRect standing in for
-            // the reference's infinite Planes (see docs/SAMPLE13_PLAN.md's established
+            // the reference's infinite Planes (the established
             // Plane -> finite-rect substitution), sized to cover the whole corridor
             // (anchors range from Z=-12 out to Z=-88).
             int floorMat = b.AddMaterial(MaterialPresets.Checker(new Vec3(0.82f, 0.82f, 0.85f), new Vec3(0.12f, 0.12f, 0.12f), 0.8f));

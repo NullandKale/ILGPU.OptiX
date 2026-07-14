@@ -15,6 +15,7 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
+using ILGPU.OptiX.Cuda;
 
 namespace Sample15
 {
@@ -26,10 +27,9 @@ namespace Sample15
         // Relative to the .obj's directory, or null if the material has no diffuse map.
         public string? DiffuseTexturePath;
 
-        // PBR extensions (docs/SAMPLE15_PLAN.md Milestone M6) - none of this repo's
-        // bundled MTLs (confirmed: Sponza's) actually populate these (see the plan's
-        // own Verified Facts), so they're parsed correctly but exercised only once a
-        // scene supplies an asset that has them. RoughnessTexturePath/
+        // PBR extensions - none of this repo's bundled MTLs (confirmed: Sponza's)
+        // actually populate these, so they're parsed correctly but exercised only
+        // once a scene supplies an asset that has them. RoughnessTexturePath/
         // MetallicTexturePath are parsed for completeness but not wired to any
         // MaterialSbtData field - this sample's OrmTexture expects one already-packed
         // (occlusion.r/roughness.g/metallic.b) texture (an artist/tool convention, not
@@ -52,8 +52,8 @@ namespace Sample15
         public Vec3[] Vertices = Array.Empty<Vec3>();
         public Vec3[] Normals = Array.Empty<Vec3>();
         public Vec2[] TexCoords = Array.Empty<Vec2>();
-        // Per-vertex tangent (docs/SAMPLE15_PLAN.md Milestone M6) - always computed
-        // (ComputeTangents), independent of whether any material on this model
+        // Per-vertex tangent - always computed (ComputeTangents), independent of
+        // whether any material on this model
         // actually has a normal map; unused device-side unless MaterialSbtData.
         // NormalTexture is nonzero for the triangle being shaded.
         public Vec3[] Tangents = Array.Empty<Vec3>();
@@ -301,8 +301,8 @@ namespace Sample15
         // it's built from the unnormalized edge vectors), then Gram-Schmidt-
         // orthogonalized against each vertex's own final shading normal so the result
         // is always perpendicular to it regardless of which normal source (vn data or
-        // ComputeSmoothNormals' fallback) was used (docs/SAMPLE15_PLAN.md Milestone
-        // M6). A degenerate UV parameterization (duplicate/collapsed texcoords, or a
+        // ComputeSmoothNormals' fallback) was used. A degenerate UV parameterization
+        // (duplicate/collapsed texcoords, or a
         // model with no vt data at all) falls back to an arbitrary tangent orthogonal
         // to the normal - never a zero vector, so device-side TBN construction never
         // divides by zero.
@@ -402,7 +402,7 @@ namespace Sample15
                         break;
 
                     // map_Bump/norm are the two conventional MTL tag spellings for a
-                    // tangent-space normal map (docs/SAMPLE15_PLAN.md Milestone M6).
+                    // tangent-space normal map.
                     case "map_Bump":
                     case "norm":
                         if (current != null)

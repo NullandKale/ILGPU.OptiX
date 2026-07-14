@@ -1,4 +1,4 @@
-﻿// ---------------------------------------------------------------------------------------
+// ---------------------------------------------------------------------------------------
 //                                    ILGPU Samples
 //                        Copyright (c) 2020-2022 ILGPU Project
 //                                    www.ilgpu.net
@@ -16,6 +16,7 @@ using ILGPU.OptiX.Interop;
 using ILGPU.OptiX.Pipeline;
 using ILGPU.Runtime;
 using ILGPU.Runtime.Cuda;
+using ILGPU.OptiX.DeviceApi;
 using System;
 using System.Linq;
 using System.Runtime.InteropServices;
@@ -24,33 +25,6 @@ using System.Windows;
 
 namespace Sample03
 {
-    [StructLayout(LayoutKind.Sequential, Pack = OptixAPI.OPTIX_SBT_RECORD_ALIGNMENT, Size = 48)]
-    public unsafe struct RaygenRecord
-    {
-        public fixed byte Header[OptixAPI.OPTIX_SBT_RECORD_HEADER_SIZE];
-        // just a dummy value - later examples will use more interesting
-        // data here
-        public int ObjectID;
-    }
-
-    [StructLayout(LayoutKind.Sequential, Pack = OptixAPI.OPTIX_SBT_RECORD_ALIGNMENT, Size = 48)]
-    public unsafe struct MissRecord
-    {
-        public fixed byte Header[OptixAPI.OPTIX_SBT_RECORD_HEADER_SIZE];
-        // just a dummy value - later examples will use more interesting
-        // data here
-        public int ObjectID;
-    }
-
-    [StructLayout(LayoutKind.Sequential, Pack = OptixAPI.OPTIX_SBT_RECORD_ALIGNMENT, Size = 48)]
-    public unsafe struct HitgroupRecord
-    {
-        public fixed byte Header[OptixAPI.OPTIX_SBT_RECORD_HEADER_SIZE];
-        // just a dummy value - later examples will use more interesting
-        // data here
-        public int ObjectID;
-    }
-
     public class SampleRenderer
     {
         int width;
@@ -59,24 +33,9 @@ namespace Sample03
 
         Context context;
         CudaAccelerator accelerator;
-        OptixDeviceContext deviceContext;
+        OptixRayTracer rayTracer;
 
-        OptixKernel raygenKernel;
-        OptixKernel missKernel;
-        OptixKernel hitgroupKernel;
-
-        OptixKernel[] raygenKernels;
-        OptixKernel[] missKernels;
-        OptixKernel[] hitgroupKernels;
-
-        OptixPipeline pipeline;
-
-        RaygenRecord[] raygenRecordsArray;
-        MissRecord[] missRecordsArray;
-        HitgroupRecord[] hitgroupRecordsArray;
-
-        BuiltSbt? builtSbt;
-        OptixShaderBindingTable sbt;
+        RayTracingPipeline<LaunchParams> pipeline;
 
         MemoryBuffer1D<byte, Stride1D.Dense> colorBuffer0;
         MemoryBuffer1D<byte, Stride1D.Dense> colorBuffer1;
@@ -94,67 +53,21 @@ namespace Sample03
             //init optix
             context = Context.Create(b => b.Cuda());
             accelerator = context.CreateCudaAccelerator(0);
-            deviceContext = accelerator.CreateDeviceContext()
-                .WithModuleCompileOptions(new OptixModuleCompileOptions()
-                {
-                    MaxRegisterCount = 50,
-                    OptimizationLevel = OptixCompileOptimizationLevel.OPTIX_COMPILE_OPTIMIZATION_DEFAULT,
-                    DebugLevel = OptixCompileDebugLevel.OPTIX_COMPILE_DEBUG_LEVEL_NONE
-                })
-                .WithPipelineCompileOptions(new OptixPipelineCompileOptions()
-                {
-                    TraversableGraphFlags = OptixTraversableGraphFlags.OPTIX_TRAVERSABLE_GRAPH_FLAG_ALLOW_SINGLE_GAS,
-                    NumPayloadValues = 2,
-                    NumAttributeValues = 2,
-                    ExceptionFlags = OptixExceptionFlags.OPTIX_EXCEPTION_FLAG_NONE,
-                    PipelineLaunchParamsVariableName = OptixLaunchParams.VariableName
-                })
-                .WithPipelineLinkOptions(new OptixPipelineLinkOptions()
-                {
-                    MaxTraceDepth = 2
-                });
+            rayTracer = OptixRayTracer.Create(accelerator);
 
-            raygenKernel = deviceContext.CreateRaygenKernel<LaunchParams>(
-                devicePrograms.__raygen__renderFrame);
+            // No module/pipeline/link compile options, no SBT record structs, no
+            // manually chosen stack sizes - these are all computed automatically. This
+            // sample never calls OptixTrace.Trace(...), so its single ray type needs
+            // no Payload<T>() and its hitgroup needs no real per-material data - byte
+            // is just a 1-byte placeholder record.
+            pipeline = rayTracer.CreatePipeline<LaunchParams>(b => b
+                .Raygen(devicePrograms.__raygen__renderFrame)
+                .RayType("radiance", r => r
+                    .Miss(devicePrograms.__miss__radiance)
+                    .HitGroup<byte>(devicePrograms.__closest__radiance, devicePrograms.__anyhit__radiance))
+                .MaxTraceDepth(2));
 
-            missKernel = deviceContext.CreateMissKernel<LaunchParams>(
-                devicePrograms.__miss__radiance);
-
-            hitgroupKernel = deviceContext.CreateHitgroupKernel<LaunchParams>(
-                devicePrograms.__closest__radiance,
-                devicePrograms.__anyhit__radiance,
-                null);
-
-            raygenKernels = new[] { raygenKernel };
-            missKernels = new[] { missKernel };
-            hitgroupKernels = new[] { hitgroupKernel };
-
-            // Build pipeline using builder
-            var pipelineBuilder = new OptixPipelineBuilder();
-            pipelineBuilder.AddKernels(raygenKernels);
-            pipelineBuilder.AddKernels(missKernels);
-            pipelineBuilder.AddKernels(hitgroupKernels);
-            pipeline = pipelineBuilder.Build(deviceContext);
-
-            pipeline.SetStackSize(
-                2 * 1024,
-                2 * 1024,
-                2 * 1024,
-                1);
-
-
-            // Setup SBT using builder
-            raygenRecordsArray = OptixSbt.PackRecords<RaygenRecord>(raygenKernels);
-            missRecordsArray = OptixSbt.PackRecords<MissRecord>(missKernels);
-            hitgroupRecordsArray = OptixSbt.PackRecords<HitgroupRecord>(hitgroupKernels);
-
-            var sbtBuilder = new OptixSbtBuilder();
-            sbtBuilder.WithAccelerator(accelerator);
-            sbtBuilder.SetRaygenRecords(raygenRecordsArray);
-            sbtBuilder.SetMissRecords(missRecordsArray);
-            sbtBuilder.AddHitgroupRecords(hitgroupRecordsArray);
-            builtSbt = sbtBuilder.Build();
-            sbt = builtSbt.Sbt;
+            pipeline.SetHitRecords<byte>(new byte[] { 0 });
 
             resize(width, height);
             flipBitmap = accelerator.LoadAutoGroupedStreamKernel<Index1D, int, int, ArrayView<byte>, ArrayView<byte>>(devicePrograms.flipBitmap);
@@ -162,15 +75,9 @@ namespace Sample03
 
         public void Dispose()
         {
-            builtSbt?.Dispose();
-
             pipeline.Dispose();
 
-            hitgroupKernel.Dispose();
-            missKernel.Dispose();
-            raygenKernel.Dispose();
-
-            deviceContext.Dispose();
+            rayTracer.Dispose();
             accelerator.Dispose();
             context.Dispose();
         }
@@ -203,14 +110,7 @@ namespace Sample03
 
             launchParams.FrameID++;
 
-            accelerator.OptixLaunch(
-                accelerator.DefaultStream,
-                pipeline,
-                launchParams,
-                sbt,
-                (uint)launchParams.FbSizeX,
-                (uint)launchParams.FbSizeY,
-                1);
+            pipeline.Launch(launchParams, launchParams.FbSizeX, launchParams.FbSizeY);
 
             //need to flip bitmap because of wpf weirdness
             flipBitmap(new Index1D(width * height), width, height, colorBuffer0.View, colorBuffer1.View);

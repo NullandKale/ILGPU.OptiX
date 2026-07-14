@@ -1,6 +1,7 @@
 using ILGPU;
 using ILGPU.Algorithms;
 using ILGPU.OptiX;
+using ILGPU.OptiX.DeviceApi;
 using System.Numerics;
 
 namespace Sample07
@@ -32,7 +33,7 @@ namespace Sample07
                 1e20f,
                 0.0f,
                 0xff,
-                OptixRayFlags.OPTIX_RAY_FLAG_DISABLE_ANYHIT,
+                OptixRayFlags.DisableAnyHit,
                 0,
                 1,
                 0,

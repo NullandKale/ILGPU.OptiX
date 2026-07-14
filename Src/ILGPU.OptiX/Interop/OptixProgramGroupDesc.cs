@@ -1,4 +1,4 @@
-﻿// ---------------------------------------------------------------------------------------
+// ---------------------------------------------------------------------------------------
 //                                     ILGPU OptiX
 //                        Copyright (c) 2020-2022 ILGPU Project
 //                                    www.ilgpu.net
@@ -10,6 +10,7 @@
 // ---------------------------------------------------------------------------------------
 
 using System.Runtime.InteropServices;
+using ILGPU.OptiX.Pipeline;
 
 #pragma warning disable CA1051 // Do not declare visible instance fields
 #pragma warning disable CA1815 // Override equals and operator equals on value types

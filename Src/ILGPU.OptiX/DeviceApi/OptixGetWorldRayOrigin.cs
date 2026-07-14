@@ -10,14 +10,21 @@
 // ---------------------------------------------------------------------------------------
 
 using ILGPU.Runtime.Cuda;
+using System.Numerics;
 
-namespace ILGPU.OptiX
+namespace ILGPU.OptiX.DeviceApi
 {
     /// <summary>
     /// Provides the functionality of the optixGetWorldRayOrigin built-in function.
     /// </summary>
     public static class OptixGetWorldRayOrigin
     {
+        /// <summary>
+        /// The world-space ray origin, as a tuple. Prefer <see cref="AsVector3"/> for
+        /// new code - <c>System.Numerics.Vector3</c> is this library's standard vector
+        /// type (see <see cref="OptixTrace.Trace{T}"/>, <see cref="OptixHitProgramHelpers"/>).
+        /// Kept for existing call sites that destructure via <c>var (x, y, z) = ...</c>.
+        /// </summary>
         public static (float X, float Y, float Z) Value
         {
             get
@@ -32,6 +39,19 @@ namespace ILGPU.OptiX
                     "call (%0), _optix_get_world_ray_origin_z, ();",
                     out float z);
                 return (x, y, z);
+            }
+        }
+
+        /// <summary>
+        /// The world-space ray origin, as a <see cref="Vector3"/> - this library's
+        /// standard vector type. Prefer this over <see cref="Value"/> in new code.
+        /// </summary>
+        public static Vector3 AsVector3
+        {
+            get
+            {
+                var (x, y, z) = Value;
+                return new Vector3(x, y, z);
             }
         }
     }

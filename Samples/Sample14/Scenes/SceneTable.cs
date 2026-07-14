@@ -27,7 +27,7 @@ namespace Sample14
             MeshScenes.BuildDragonScene,
             MeshScenes.BuildSponzaScene,
             // MuseumScene/RadialMuseumScene are video-textured and deferred to a later
-            // milestone (see docs/SAMPLE14_PLAN.md) - they need Media/VideoReader.cs +
+            // milestone - they need Media/VideoReader.cs +
             // VideoTexture.cs + OpenCvSharp + ffmpeg.exe, none of which are ported yet.
         };
     }

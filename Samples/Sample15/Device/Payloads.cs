@@ -1,5 +1,6 @@
 using ILGPU.OptiX;
 using ILGPU.OptiX.Device;
+using ILGPU.OptiX.DeviceApi;
 using System.Runtime.InteropServices;
 
 namespace Sample15
@@ -9,8 +10,8 @@ namespace Sample15
     /// every OptiX program in this sample. The 24-register payload convention:
     /// 0-2 radiance contribution, 3 continuation flag, 4-6 new origin, 7-9 new
     /// direction, 10-12 throughput tint, 13-15 AOV normal, 16-18 AOV albedo, 19 carried
-    /// RNG state (docs/SAMPLE15_PLAN.md Milestone M3), 20 carried BSDF pdf
-    /// (docs/SAMPLE15_PLAN.md Milestone M4 - the sampled direction's BSDF pdf from the
+    /// RNG state, 20 carried BSDF pdf
+    /// (the sampled direction's BSDF pdf from the
     /// bounce that produced this ray, or the sentinel <see cref="DeltaOrPrimarySentinel"/>
     /// if that bounce was a delta lobe or this is the primary/camera ray; read by the
     /// next closest-hit call to power-heuristic-MIS-weight its own material's emission
@@ -25,7 +26,7 @@ namespace Sample15
     {
         // Exact device-side layout of the radiance ray's 24-register payload, used by
         // OptixPayload.Read{T}/Write{T} (this file) and OptixTrace.Trace{T}
-        // (RaygenProgram.cs) - see docs/API_USABILITY_PLAN.md section 2. Flat
+        // (RaygenProgram.cs). Flat
         // float/uint fields (rather than nesting Vec3, which has no
         // [StructLayout] of its own and so has no *guaranteed* field order) avoid
         // depending on an unrelated type's undocumented layout for correctness here.

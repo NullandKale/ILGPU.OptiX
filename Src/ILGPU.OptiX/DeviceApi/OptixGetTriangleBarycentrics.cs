@@ -11,7 +11,7 @@
 
 using ILGPU.Runtime.Cuda;
 
-namespace ILGPU.OptiX
+namespace ILGPU.OptiX.DeviceApi
 {
     /// <summary>
     /// Provides the functionality of the optixGetTriangleBarycentrics built-in

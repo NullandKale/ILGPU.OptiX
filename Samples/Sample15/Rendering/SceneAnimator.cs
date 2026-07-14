@@ -38,8 +38,8 @@ namespace Sample15
 
         // Sample13's version also OR's in textures.HasActiveVideos (video textures
         // don't move geometry but still need a per-frame refresh/accumulation reset) -
-        // not applicable here since video-texture scenes are deferred (see
-        // docs/SAMPLE14_PLAN.md) and TextureCache has no video support in Sample14.
+        // not applicable here since video-texture scenes are deferred
+        // and TextureCache has no video support in Sample14.
         public bool IsAnimated(SceneData scene) => scene.HasAnyAnimation;
 
         // Called every rendered frame under the renderer's gpuLock, before OptixLaunch.

@@ -9,7 +9,7 @@
 // Source License. See LICENSE.txt for details.
 // ---------------------------------------------------------------------------------------
 
-namespace ILGPU.OptiX
+namespace ILGPU.OptiX.Pipeline
 {
     public static class OptixLaunchParams
     {

@@ -49,6 +49,11 @@
         <AutoGen>True</AutoGen>
         <DependentUpon>OptixTrace.tt</DependentUpon>
       </Compile>
+      <Compile Update="DeviceApi\OptixCoopVec.cs">
+        <DesignTime>True</DesignTime>
+        <AutoGen>True</AutoGen>
+        <DependentUpon>OptixCoopVec.tt</DependentUpon>
+      </Compile>
       <Compile Update="Resources\ErrorMessages.Designer.cs">
         <DesignTime>True</DesignTime>
         <AutoGen>True</AutoGen>
@@ -71,6 +76,10 @@
       <None Update="DeviceApi\OptixTrace.tt">
         <Generator>TextTemplatingFileGenerator</Generator>
         <LastGenOutput>OptixTrace.cs</LastGenOutput>
+      </None>
+      <None Update="DeviceApi\OptixCoopVec.tt">
+        <Generator>TextTemplatingFileGenerator</Generator>
+        <LastGenOutput>OptixCoopVec.cs</LastGenOutput>
       </None>
     </ItemGroup>
 

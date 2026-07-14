@@ -12,7 +12,7 @@
 using System;
 using System.Runtime.InteropServices;
 
-namespace ILGPU.OptiX
+namespace ILGPU.OptiX.AccelStructures
 {
     /// <summary>
     /// Mirrors OptiX's OptixInstance (optix_types.h) - one entry per instance in an
@@ -35,8 +35,7 @@ namespace ILGPU.OptiX
 
         /// <summary>
         /// SBT record offset - added to each hit's GAS-local sbt index to compute the
-        /// global hitgroup record index (see docs/SAMPLE13_PLAN.md's custom-primitive
-        /// GAS design).
+        /// global hitgroup record index.
         /// </summary>
         public uint SbtOffset;
 

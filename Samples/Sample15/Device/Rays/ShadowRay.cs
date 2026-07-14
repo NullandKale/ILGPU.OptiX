@@ -1,5 +1,6 @@
 using ILGPU;
 using ILGPU.OptiX;
+using ILGPU.OptiX.DeviceApi;
 using System.Numerics;
 
 namespace Sample15
@@ -7,8 +8,8 @@ namespace Sample15
     /// <summary>
     /// Everything about the shadow ray type in one place: the trace-call-site wrapper
     /// (<see cref="Trace"/>, called by <see cref="NextEventEstimation"/>) and the three
-    /// OptiX device programs it invokes. Multi-hit colored transmittance (docs/
-    /// SAMPLE13_PLAN.md design decision (f)) - walks through transparent occluders via
+    /// OptiX device programs it invokes. Multi-hit colored transmittance - walks
+    /// through transparent occluders via
     /// <see cref="__anyhit__shadow"/>'s optixIgnoreIntersection, accumulating
     /// TransmissionColor*Transmission per hit up to MaxRefractions, unlike a plain
     /// binary occlusion test.
@@ -18,7 +19,7 @@ namespace Sample15
     ///   __anyhit__shadow   (opaque hit):    writes (0,0,0), Terminate()
     ///   __anyhit__shadow   (glass hit):     writes accumulated transmittance, IgnoreIntersection()
     ///   __anyhit__shadow   (alpha-cutout):  no write, IgnoreIntersection()
-    ///   __closesthit__shadow:               disabled (OPTIX_RAY_FLAG_DISABLE_CLOSESTHIT) - never runs
+    ///   __closesthit__shadow:               disabled (DisableClosestHit) - never runs
     ///   __miss__shadow:                     no write - reads back the untouched seed
     ///   Reader: Trace's return value / NextEventEstimation.SampleDirectLighting
     ///
@@ -68,7 +69,7 @@ namespace Sample15
                     // shadow rays skips that no-op invocation entirely (attribute
                     // setup + SBT lookup + empty call) on every hit that terminates
                     // the ray, at zero behavioral cost.
-                    OptixRayFlags.OPTIX_RAY_FLAG_DISABLE_CLOSESTHIT,
+                    OptixRayFlags.DisableClosestHit,
                 sbtOffset: Payloads.SHADOW_RAY_TYPE,
                 sbtStride: Payloads.RAY_TYPE_COUNT,
                 missSbtIndex: Payloads.SHADOW_RAY_TYPE);

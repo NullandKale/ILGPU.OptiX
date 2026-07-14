@@ -9,6 +9,7 @@
 // Source License. See LICENSE.txt for details.
 // ---------------------------------------------------------------------------------------
 
+using ILGPU.OptiX.DeviceApi;
 namespace Sample08
 {
     // Device-side view of a hitgroup record's custom data (the bytes after the header)

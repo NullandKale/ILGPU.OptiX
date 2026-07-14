@@ -17,34 +17,34 @@ using System.Runtime.InteropServices;
 #pragma warning disable CA1707 // Identifiers should not contain underscores
 #pragma warning disable CA1815 // Override equals and operator equals on value types
 
-namespace ILGPU.OptiX
+namespace ILGPU.OptiX.AccelStructures
 {
     public enum OptixBuildInputType
     {
         /// <summary>
         /// Triangle inputs.
         /// </summary>
-        OPTIX_BUILD_INPUT_TYPE_TRIANGLES = 0x2141,
+        Triangles = 0x2141,
 
         /// <summary>
         /// Custom primitive inputs.
         /// </summary>
-        OPTIX_BUILD_INPUT_TYPE_CUSTOM_PRIMITIVES = 0x2142,
+        CustomPrimitives = 0x2142,
 
         /// <summary>
         /// Instance inputs.
         /// </summary>
-        OPTIX_BUILD_INPUT_TYPE_INSTANCES = 0x2143,
+        Instances = 0x2143,
 
         /// <summary>
         /// Instance pointer inputs.
         /// </summary>
-        OPTIX_BUILD_INPUT_TYPE_INSTANCE_POINTERS = 0x2144,
+        InstancePointers = 0x2144,
 
         /// <summary>
         /// Curve inputs.
         /// </summary>
-        OPTIX_BUILD_INPUT_TYPE_CURVES = 0x2145
+        Curves = 0x2145
     }
 
     public enum OptixVertexFormat
@@ -52,29 +52,29 @@ namespace ILGPU.OptiX
         /// <summary>
         /// No vertices
         /// </summary>
-        OPTIX_VERTEX_FORMAT_NONE = 0x0000,
+        None = 0x0000,
 
         /// <summary>
         /// Vertices are represented by three floats
         /// </summary>
-        OPTIX_VERTEX_FORMAT_FLOAT3 = 0x2121,
+        Float3 = 0x2121,
 
         /// <summary>
         /// Vertices are represented by two floats
         /// </summary>
-        OPTIX_VERTEX_FORMAT_FLOAT2 = 0x2122,
+        Float2 = 0x2122,
 
         /// <summary>
         /// Vertices are represented by three halfs
         /// </summary>
-        OPTIX_VERTEX_FORMAT_HALF3 = 0x2123,
+        Half3 = 0x2123,
 
         /// <summary>
         /// Vertices are represented by two halfs
         /// </summary>
-        OPTIX_VERTEX_FORMAT_HALF2 = 0x2124,
-        OPTIX_VERTEX_FORMAT_SNORM16_3 = 0x2125,
-        OPTIX_VERTEX_FORMAT_SNORM16_2 = 0x2126
+        Half2 = 0x2124,
+        Snorm16x3 = 0x2125,
+        Snorm16x2 = 0x2126
     }
 
     public enum OptixIndicesFormat
@@ -83,17 +83,17 @@ namespace ILGPU.OptiX
         /// No indices, this format must only be used in combination with triangle soups
         /// i.e., numIndexTriplets must be zero
         /// </summary>
-        OPTIX_INDICES_FORMAT_NONE = 0,
+        None = 0,
 
         /// <summary>
         /// // Three shorts.
         /// </summary>
-        OPTIX_INDICES_FORMAT_UNSIGNED_SHORT3 = 0x2102,
+        UnsignedShort3 = 0x2102,
 
         /// <summary>
         /// Three ints.
         /// </summary>
-        OPTIX_INDICES_FORMAT_UNSIGNED_INT3 = 0x2103
+        UnsignedInt3 = 0x2103
     }
 
     public enum OptixTransformFormat
@@ -101,12 +101,12 @@ namespace ILGPU.OptiX
         /// <summary>
         /// No transform, default for zero initialization.
         /// </summary>
-        OPTIX_TRANSFORM_FORMAT_NONE = 0,
+        None = 0,
 
         /// <summary>
         /// 3x4 row major affine matrix.
         /// </summary>
-        OPTIX_TRANSFORM_FORMAT_MATRIX_FLOAT12 = 0x21E1,
+        MatrixFloat12 = 0x21E1,
     }
 
     public enum OptixPrimitiveType
@@ -114,27 +114,41 @@ namespace ILGPU.OptiX
         /// <summary>
         /// Custom primitive.
         /// </summary>
-        OPTIX_PRIMITIVE_TYPE_CUSTOM = 0x2500,
+        Custom = 0x2500,
 
         /// <summary>
         /// B-spline curve of degree 2 with circular cross-section.
         /// </summary>
-        OPTIX_PRIMITIVE_TYPE_ROUND_QUADRATIC_BSPLINE = 0x2501,
+        RoundQuadraticBSpline = 0x2501,
 
         /// <summary>
         /// B-spline curve of degree 3 with circular cross-section.
         /// </summary>
-        OPTIX_PRIMITIVE_TYPE_ROUND_CUBIC_BSPLINE = 0x2502,
+        RoundCubicBSpline = 0x2502,
 
         /// <summary>
         /// Piecewise linear curve with circular cross-section.
         /// </summary>
-        OPTIX_PRIMITIVE_TYPE_ROUND_LINEAR = 0x2503,
+        RoundLinear = 0x2503,
 
         /// <summary>
         /// Triangle.
         /// </summary>
-        OPTIX_PRIMITIVE_TYPE_TRIANGLE = 0x2531,
+        Triangle = 0x2531,
+    }
+
+    /// <summary>
+    /// Mirrors OptixCurveEndcapFlags (optix_types.h).
+    /// </summary>
+    [CLSCompliant(false)]
+    [Flags]
+    public enum OptixCurveEndcapFlags : uint
+    {
+        /// <summary>Round end caps for linear, no end caps for quadratic/cubic.</summary>
+        Default = 0,
+
+        /// <summary>Flat end caps at both ends of quadratic/cubic curve segments. Not valid for linear.</summary>
+        On = 1u << 0,
     }
 
     [StructLayout(LayoutKind.Explicit)]
@@ -184,8 +198,24 @@ namespace ILGPU.OptiX
         public uint PrimitiveIndexOffset;
 
         public OptixTransformFormat TransformFormat;
+
+        // This struct previously ended at
+        // TransformFormat, omitting OpacityMicromap/DisplacementMicromap entirely (the
+        // real SDK 9.0.0 struct has both trailing fields). Only OpacityMicromap is
+        // added - displacement micromaps remain out of scope. Safe to omit the trailing DisplacementMicromap field: every
+        // OptixBuildInput is constructed via `new OptixBuildInput { ... }`, which
+        // zero-initializes the whole union (including this struct's own unused tail
+        // bytes) - correctly representing "no displacement micromap" to the driver.
+        public OptixBuildInputOpacityMicromap OpacityMicromap;
     }
 
+    // This struct previously omitted IndexBuffer/
+    // IndexStrideInBytes/EndcapFlags entirely, which optix_types.h's own doc comment
+    // on OptixBuildInputCurveArray::indexBuffer calls out as "required (unlike for
+    // OptixBuildInputTriangleArray)" - the struct as it stood could never have
+    // actually built curves even with a builder method added, since there was no way
+    // to supply the index buffer at all. Fixed to match the real SDK 9.0.0 field
+    // order/layout exactly (verified against optix_types.h directly, not guessed).
     [CLSCompliant(false)]
     public unsafe struct OptixBuildInputCurveArray
     {
@@ -203,9 +233,20 @@ namespace ILGPU.OptiX
         public IntPtr NormalBuffers;
         public uint NormalStrideInBytes;
 
+        /// <summary>
+        /// Device pointer to a uint array, one entry per curve segment, each the
+        /// index (into VertexBuffers/WidthBuffers) of that segment's first vertex.
+        /// Required - unlike triangles, curves have no default/implicit indexing.
+        /// </summary>
+        public IntPtr IndexBuffer;
+        public uint IndexStrideInBytes;
+
         public uint Flag;
 
         public uint PrimitiveIndexOffset;
+
+        /// <summary>See <see cref="OptixCurveEndcapFlags"/>.</summary>
+        public uint EndcapFlags;
     }
 
     [CLSCompliant(false)]

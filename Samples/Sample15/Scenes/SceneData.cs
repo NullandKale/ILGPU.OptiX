@@ -11,6 +11,7 @@
 
 using MeshRange = ILGPU.OptiX.Pipeline.OptixMeshRange;
 using System;
+using ILGPU.OptiX.Cuda;
 
 namespace Sample15
 {
@@ -46,9 +47,8 @@ namespace Sample15
 
     // Host-side POCO a Scenes.cs builder method returns; SampleRenderer.SwitchToScene
     // consumes it to (re)allocate device buffers, rebuild the GAS/SBT, and reset FrameID -
-    // mirrors the reference's own lazy-built, cached-per-index Scene objects
-    // (docs/SAMPLE13_PLAN.md, "Where scene-build logic lives"). Grows a field per
-    // milestone as new primitive kinds/volume grid/mesh support come online; unused
+    // mirrors the reference's own lazy-built, cached-per-index Scene objects. Grows a
+    // field as new primitive kinds/volume grid/mesh support come online; unused
     // fields on a given scene are left null/default.
     public class SceneData
     {
@@ -57,9 +57,8 @@ namespace Sample15
         public Vec3[] Vertices = Array.Empty<Vec3>();
         public Vec3[] Normals = Array.Empty<Vec3>();
         public Vec2[] TexCoords = Array.Empty<Vec2>();
-        // Per-vertex tangent (docs/SAMPLE15_PLAN.md Milestone M6) - see Model.cs's
-        // ComputeTangents/SceneBuilder's TangentFromTriangle for how each geometry
-        // source computes it.
+        // Per-vertex tangent - see Model.cs's ComputeTangents/SceneBuilder's
+        // TangentFromTriangle for how each geometry source computes it.
         public Vec3[] Tangents = Array.Empty<Vec3>();
         public Vec3i[] Indices = Array.Empty<Vec3i>();
 
@@ -90,15 +89,13 @@ namespace Sample15
         // Same convention as MaterialTexturePaths, for MaterialSbtData.NormalTexture
         // (tangent-space normal map) and .OrmTexture (a single already-packed
         // occlusion.r/roughness.g/metallic.b texture - not composed from separate
-        // grayscale maps at load time, see Model.cs's OBJMaterial doc comment)
-        // (docs/SAMPLE15_PLAN.md Milestone M6).
+        // grayscale maps at load time, see Model.cs's OBJMaterial doc comment).
         public string[] MaterialNormalTexturePaths = Array.Empty<string>();
         public string[] MaterialOrmTexturePaths = Array.Empty<string>();
 
         public PointLightGpu[] Lights = Array.Empty<PointLightGpu>();
 
-        // NEE light list (docs/SAMPLE15_PLAN.md Milestone M4) - computed by
-        // Scenes/LightList.cs from this SceneData's own Lights/Indices/
+        // NEE light list - computed by Scenes/LightList.cs from this SceneData's own Lights/Indices/
         // TriangleMaterialIds/Materials once they're final (see SceneBuilder.Build);
         // never populated by a scene builder directly. NeeLightAreaPdf is parallel to
         // Indices/TriangleMaterialIds (one entry per triangle, 0 = not a registered
@@ -119,8 +116,8 @@ namespace Sample15
         public Vec3 BackgroundTop = new Vec3(0.4f, 0.55f, 0.8f);
         public Vec3 BackgroundBottom = new Vec3(0.05f, 0.05f, 0.08f);
 
-        // HDRI environment map (docs/SAMPLE15_PLAN.md Milestone M5) - a path relative
-        // to AppContext.BaseDirectory (matching MaterialTexturePaths' convention), or
+        // HDRI environment map - a path relative to AppContext.BaseDirectory
+        // (matching MaterialTexturePaths' convention), or
         // null/empty for "no environment map, use the flat BackgroundTop/Bottom
         // gradient instead" (this sample's scene-dependent design: not every scene
         // opts in). SampleRenderer caches the loaded/uploaded GPU data per unique path

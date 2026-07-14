@@ -18,7 +18,7 @@ using System.Diagnostics.CodeAnalysis;
 #pragma warning disable CA1707 // Identifiers should not contain underscores
 #pragma warning disable CA1815 // Override equals and operator equals on value types
 
-namespace ILGPU.OptiX
+namespace ILGPU.OptiX.AccelStructures
 {
     [CLSCompliant(false)]
     [Flags]
@@ -27,25 +27,25 @@ namespace ILGPU.OptiX
         "CA1711:Identifiers should not have incorrect suffix")]
     public enum OptixBuildFlags : uint
     {
-        OPTIX_BUILD_FLAG_NONE = 0,
-        OPTIX_BUILD_FLAG_ALLOW_UPDATE = 1u << 0,
-        OPTIX_BUILD_FLAG_ALLOW_COMPACTION = 1u << 1,
-        OPTIX_BUILD_FLAG_PREFER_FAST_TRACE = 1u << 2,
-        OPTIX_BUILD_FLAG_PREFER_FAST_BUILD = 1u << 3,
-        OPTIX_BUILD_FLAG_ALLOW_RANDOM_VERTEX_ACCESS = 1u << 4,
-        OPTIX_BUILD_FLAG_ALLOW_RANDOM_INSTANCE_ACCESS = 1u << 5,
+        None = 0,
+        AllowUpdate = 1u << 0,
+        AllowCompaction = 1u << 1,
+        PreferFastTrace = 1u << 2,
+        PreferFastBuild = 1u << 3,
+        AllowRandomVertexAccess = 1u << 4,
+        AllowRandomInstanceAccess = 1u << 5,
     }
 
     public enum OptixBuildOperation
     {
-        OPTIX_BUILD_OPERATION_BUILD = 0x2161,
-        OPTIX_BUILD_OPERATION_UPDATE = 0x2162,
+        Build = 0x2161,
+        Update = 0x2162,
     }
 
     public enum OptixAccelPropertyType
     {
-        OPTIX_PROPERTY_TYPE_COMPACTED_SIZE = 0x2181,
-        OPTIX_PROPERTY_TYPE_AABBS = 0x2182,
+        CompactedSize = 0x2181,
+        Aabbs = 0x2182,
     }
 
     [CLSCompliant(false)]
@@ -55,9 +55,9 @@ namespace ILGPU.OptiX
         "CA1711:Identifiers should not have incorrect suffix")]
     public enum OptixMotionFlags : uint
     {
-        OPTIX_MOTION_FLAG_NONE = 0u,
-        OPTIX_MOTION_FLAG_START_VANISH = 1u << 0,
-        OPTIX_MOTION_FLAG_END_VANISH = 1u << 1
+        None = 0u,
+        StartVanish = 1u << 0,
+        EndVanish = 1u << 1
     }
 
     [CLSCompliant(false)]

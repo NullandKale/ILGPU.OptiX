@@ -1,6 +1,8 @@
 using ILGPU;
 using ILGPU.Algorithms;
 using ILGPU.OptiX;
+using ILGPU.OptiX.DeviceApi;
+using ILGPU.OptiX.Cuda;
 
 namespace Sample14
 {
@@ -62,8 +64,7 @@ namespace Sample14
         // primitive index, not by data read during intersection) - so material lookup
         // goes directly through LaunchParams.Materials/VoxelMaterialIds instead of
         // OptixGetSbtDataPointer, a deliberate deviation from every other primitive kind
-        // in this sample (see docs/SAMPLE13_PLAN.md's note on this and the comment on
-        // LaunchParams.Materials).
+        // in this sample (see the comment on LaunchParams.Materials).
         internal unsafe static void ShadeVolumeGrid(LaunchParams launchParams, Vec3 rayDir, uint faceCode)
         {
             var (ox, oy, oz) = OptixGetWorldRayOrigin.Value;
@@ -184,9 +185,9 @@ namespace Sample14
             return r0 + ((1f - r0) * x2 * x2 * x);
         }
 
-        // Multi-hit colored transmittance shadow ray (docs/SAMPLE13_PLAN.md design
-        // decision (f)) - walks through transparent occluders via __anyhit__shadow's
-        // optixIgnoreIntersection, accumulating TransmissionColor*Transparency per hit
+        // Multi-hit colored transmittance shadow ray - walks through transparent
+        // occluders via __anyhit__shadow's optixIgnoreIntersection, accumulating
+        // TransmissionColor*Transparency per hit
         // up to MaxRefractions, unlike a plain binary occlusion test.
         private unsafe static Vec3 ShadowTransmittance(LaunchParams launchParams, Vec3 surfPos, Vec3 outwardNormal, Vec3 lightDir, float lightDist)
         {
@@ -203,7 +204,7 @@ namespace Sample14
                 lightDist * (1f - 1e-3f),
                 0.0f,
                 0xff,
-                OptixRayFlags.OPTIX_RAY_FLAG_NONE,
+                OptixRayFlags.None,
                 Payloads.SHADOW_RAY_TYPE,
                 Payloads.RAY_TYPE_COUNT,
                 Payloads.SHADOW_RAY_TYPE,

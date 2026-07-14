@@ -1,0 +1,154 @@
+// ---------------------------------------------------------------------------------------
+//                                     ILGPU OptiX
+//                           Copyright (c) 2022 ILGPU Project
+//                                    www.ilgpu.net
+//
+// File: OptixHitObjectTraverse.tt/OptixHitObjectTraverse.cs
+//
+// This file is part of ILGPU and is distributed under the University of Illinois Open
+// Source License. See LICENSE.txt for details.
+// ---------------------------------------------------------------------------------------
+
+<#@ template debug="false" hostspecific="false" language="C#" #>
+<#@ assembly name="System.Core" #>
+<#@ import namespace="System.Linq" #>
+<#@ import namespace="System.Text" #>
+<#@ import namespace="System.Collections.Generic" #>
+<#@ output extension=".cs" #>
+
+using ILGPU.Runtime.Cuda;
+using System;
+
+namespace ILGPU.OptiX.DeviceApi
+{
+    /// <summary>
+    /// Provides the functionality of optixTraverse - the first step of the
+    /// Shader Execution Reordering (SER) 3-step pattern: traverse-then-reorder-then-invoke instead of a single optixTrace call,
+    /// letting the driver batch coherent hits together (via <see cref="OptixReorder"/>)
+    /// before running any hit/miss program (<see cref="Invoke"/>). Traverse() alone
+    /// does NOT run the hit/miss program - it only finds the closest hit and leaves the
+    /// result in an implicit per-thread "hit object" state, same underlying registers
+    /// optixTrace itself uses (confirmed via internal/optix_device_impl.h:
+    /// _optix_hitobject_traverse has the exact same pseudo-call argument shape as
+    /// _optix_trace_typed_32 - this template mirrors OptixTrace.tt's generation
+    /// approach directly for that reason).
+    /// </summary>
+    public static partial class OptixHitObject
+    {
+<#
+    const int MaxPayloadValues = 32;
+    const int NonPayloadArgCount = 1 + 1 + 1 + 1 + 9 + 5;
+    const int MaxEmitRefArguments = 44;
+    const int MaxAchievablePayloadValues = MaxEmitRefArguments - NonPayloadArgCount;
+
+    for (int paramIdx = 0; paramIdx <= MaxAchievablePayloadValues; paramIdx++) {
+        int padArg = paramIdx;
+        int typeArg = paramIdx + 1;
+        int countArg = paramIdx + 2;
+        int handleArg = paramIdx + 3;
+        int floatsStart = paramIdx + 4;
+        int uintsStart = floatsStart + 9;
+
+        Func<int, int> payloadSlotArg = i => i < paramIdx ? i : padArg;
+        var outputArgs = Enumerable.Range(0, MaxPayloadValues).Select(payloadSlotArg);
+        var fixedArgs = new List<int> { handleArg }
+            .Concat(Enumerable.Range(floatsStart, 9))
+            .Concat(Enumerable.Range(uintsStart, 5));
+        var inputPayloadArgs = Enumerable.Range(0, MaxPayloadValues).Select(payloadSlotArg);
+
+        var bodyArgs = new List<string> { $"%{typeArg}" };
+        bodyArgs.AddRange(fixedArgs.Select(x => $"%{x}"));
+        bodyArgs.Add($"%{countArg}");
+        bodyArgs.AddRange(inputPayloadArgs.Select(x => $"%{x}"));
+
+        string callInstruction =
+            $"mov.u32 %{typeArg}, 0; mov.u32 %{countArg}, {paramIdx}; call (";
+        callInstruction += string.Join(", ", outputArgs.Select(x => $"%{x}"));
+        callInstruction += "), _optix_hitobject_traverse, (";
+        callInstruction += string.Join(", ", bodyArgs);
+        callInstruction += ");";
+
+        string payloadRegisterSummary = paramIdx == 0
+            ? "carrying no payload registers"
+            : paramIdx == 1
+                ? "carrying 1 payload register (p0)"
+                : $"carrying {paramIdx} payload registers (p0..p{paramIdx - 1})";
+#>
+        /// <summary>
+        /// Traverses (but does not yet shade) a ray, <#= payloadRegisterSummary #> -
+        /// call <see cref="OptixReorder"/> then the matching <c>Invoke(...)</c>
+        /// overload (same payload count) to actually run the resulting hit/miss
+        /// program.
+        /// </summary>
+        public static void Traverse(
+            ulong traversableHandle
+            , (float X, float Y, float Z) rayOrigin
+            , (float X, float Y, float Z) rayDirection
+            , float tmin
+            , float tmax
+            , float rayTime
+            , uint visibilityMask
+            , OptixRayFlags rayFlags
+            , uint SbtOffset
+            , uint SbtStride
+            , uint missSbtIndex
+<#      for (int i = 0; i < paramIdx; i++) { #>
+            , ref uint p<#= i #>
+<#      } #>
+            )
+        {
+<#      for (int i = 0; i < paramIdx; i++) { #>
+            Ref<uint> _p<#= i #> = p<#= i #>;
+<#      } #>
+            Ref<uint> _pad = 0u;
+            Output<uint> _type = default;
+            Output<uint> _count = default;
+            Input<ulong> _traversableHandle = traversableHandle;
+            Input<float> _ox = rayOrigin.X;
+            Input<float> _oy = rayOrigin.Y;
+            Input<float> _oz = rayOrigin.Z;
+            Input<float> _dx = rayDirection.X;
+            Input<float> _dy = rayDirection.Y;
+            Input<float> _dz = rayDirection.Z;
+            Input<float> _tmin = tmin;
+            Input<float> _tmax = tmax;
+            Input<float> _rayTime = rayTime;
+            Input<uint> _visibilityMask = visibilityMask;
+            Input<OptixRayFlags> _rayFlags = rayFlags;
+            Input<uint> _SbtOffset = SbtOffset;
+            Input<uint> _SbtStride = SbtStride;
+            Input<uint> _missSbtIndex = missSbtIndex;
+
+            CudaAsm.EmitRef(
+                "<#= callInstruction #>"
+<#      for (int i = 0; i < paramIdx; i++) { #>
+                , ref _p<#= i #>
+<#      } #>
+                , ref _pad
+                , ref _type
+                , ref _count
+                , ref _traversableHandle
+                , ref _ox
+                , ref _oy
+                , ref _oz
+                , ref _dx
+                , ref _dy
+                , ref _dz
+                , ref _tmin
+                , ref _tmax
+                , ref _rayTime
+                , ref _visibilityMask
+                , ref _rayFlags
+                , ref _SbtOffset
+                , ref _SbtStride
+                , ref _missSbtIndex
+                );
+
+<#      for (int i = 0; i < paramIdx; i++) { #>
+            p<#= i #> = _p<#= i #>.Value;
+<#      } #>
+        }
+
+<# } #>
+    }
+}

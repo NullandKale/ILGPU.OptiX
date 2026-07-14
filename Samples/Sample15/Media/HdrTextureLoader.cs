@@ -14,8 +14,8 @@ using System.IO;
 
 namespace Sample15
 {
-    // HDR (Radiance .hdr) loader for the environment map (docs/SAMPLE15_PLAN.md
-    // Milestone M5) - StbImageSharp's ImageResultFloat wraps stb_image's stbi_loadf,
+    // HDR (Radiance .hdr) loader for the environment map - StbImageSharp's
+    // ImageResultFloat wraps stb_image's stbi_loadf,
     // which auto-detects the Radiance format and decodes directly to linear float RGB
     // (no manual RGBE decode, no gamma correction needed - unlike TextureLoader.cs's
     // 8-bit sRGB path, this data is already linear).

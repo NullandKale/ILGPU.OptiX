@@ -86,7 +86,7 @@ namespace Sample14
         // Direct port of the reference's Scenes.BuildCornellBox() - the classic
         // red/green/white box with a ceiling light panel and two boxes, using our
         // XYRect/XZRect/YZRect custom primitives in place of the reference's infinite
-        // Planes (docs/SAMPLE13_PLAN.md decision (c): finite rects, sized to the box).
+        // Planes (finite rects, sized to the box).
         public static SceneData BuildCornellBox()
         {
             var b = new SceneBuilder
@@ -198,8 +198,8 @@ namespace Sample14
 
         // Direct port of the reference's Scenes.BuildBoxesShowcase() - three plain white
         // diffuse boxes over a checkered floor. The reference's box constructors pass
-        // trailing reflectivity args that its own Solid() closure quirk always ignores
-        // (see docs/SAMPLE13_PLAN.md) - all 3 boxes render as diffuse white, matching the
+        // trailing reflectivity args that its own Solid() closure quirk always ignores -
+        // all 3 boxes render as diffuse white, matching the
         // reference's actual behavior rather than its misleading constructor arguments.
         public static SceneData BuildBoxesShowcase()
         {

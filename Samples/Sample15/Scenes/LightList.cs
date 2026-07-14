@@ -14,12 +14,10 @@ using System.Collections.Generic;
 
 namespace Sample15
 {
-    // Builds the unified NEE light list (docs/SAMPLE15_PLAN.md Milestone M4, Design
-    // Decision 4) from a already-built SceneData: point lights plus power/area-weighted
-    // emissive triangles, walked from SceneData's existing Indices/TriangleMaterialIds/
-    // Materials buffers - no duplicated geometry. The environment map (M5) will become a
-    // third light kind added to the same CDF later; this milestone covers only the first
-    // two.
+    // Builds the unified NEE light list from an already-built SceneData: point
+    // lights plus power/area-weighted emissive triangles, walked from SceneData's
+    // existing Indices/TriangleMaterialIds/Materials buffers - no duplicated
+    // geometry. The environment map is a third light kind added to the same CDF.
     public static class LightList
     {
         // Relative "power" proxies, not physical radiant power - good enough for a
@@ -105,8 +103,8 @@ namespace Sample15
                     Vec3 a = scene.Vertices[idx.x], b = scene.Vertices[idx.y], c = scene.Vertices[idx.z];
                     float area = 0.5f * Vec3.cross(b - a, c - a).length();
                     // Combines the light-picking pdf and the per-triangle uniform-area
-                    // pdf into one constant (docs/SAMPLE15_PLAN.md Milestone M4) - lets
-                    // the closest-hit program's per-hit MIS reweighting of a BSDF ray
+                    // pdf into one constant - lets the closest-hit program's per-hit
+                    // MIS reweighting of a BSDF ray
                     // that lands on this triangle multiply by dist²/cosAtLight alone,
                     // with no vertex/area recomputation on the hot path.
                     triangleLightAreaPdf[l.RefIndex] = pdf / area;

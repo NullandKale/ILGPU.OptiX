@@ -89,10 +89,10 @@ namespace ILGPU.OptiX.Pipeline
             if (disposing)
             {
                 // The builder does not own the pipeline or the kernels it was given -
-                // kernels are caller-supplied (see the "Pre-created Kernels" deviation
-                // from the original string-entry-point spec in
-                // docs/API_BUILDER_PLAN.md), and the pipeline was just handed back to
-                // the caller from Build(). This matches the "builders own nothing after
+                // kernels are caller-supplied (a deliberate "Pre-created Kernels"
+                // deviation from the original string-entry-point spec), and the
+                // pipeline was just handed back to the caller from Build(). This
+                // matches the "builders own nothing after
                 // Build()" policy every other builder in this library follows
                 // (OptixSbtBuilder, OptixAccelBuilder, OptixDenoiserBuilder).
                 // Previously this disposed `pipeline` and every kernel here, which would

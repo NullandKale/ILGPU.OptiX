@@ -2,6 +2,9 @@ using ILGPU;
 using ILGPU.OptiX;
 using ILGPU.OptiX.Device;
 using ILGPU.OptiX.Interop;
+using ILGPU.OptiX.Pipeline;
+using ILGPU.OptiX.DeviceApi;
+using ILGPU.OptiX.AccelStructures;
 using MeshRange = ILGPU.OptiX.Pipeline.OptixMeshRange;
 using System;
 using System.Collections.Generic;
@@ -10,18 +13,38 @@ using System.Diagnostics;
 namespace Sample14
 {
     /// <summary>
+    /// The radiance/shadow ray types' shared 19-register payload struct - matches the
+    /// old pipeline-wide NumPayloadValues = 19 (see Payloads.cs's own doc comment:
+    /// color(3) + flag(1) + new-ray-origin(3) + new-ray-direction(3) + throughput-
+    /// tint(3) + normal(3) + albedo(3)). Declaring the same struct on both ray types
+    /// matches the original shared-register-count behavior; the shadow ray type only
+    /// ever uses the first 4 registers (transmittance xyz + hit count, see
+    /// MissAndShadowPrograms.cs's raw OptixPayload.Payload0-3 access), but the payload
+    /// count is effectively a shared pipeline-wide register count in the old design.
+    /// Never Read/Write against this struct directly - every device program in this
+    /// sample still uses OptixPayloadInterop/OptixPayload's raw per-register API
+    /// (Payloads.cs), unchanged by this migration; this type exists purely so
+    /// RayTypeBuilder&lt;T&gt;.Payload&lt;T&gt;() can size the pipeline's
+    /// NumPayloadValues correctly.
+    /// </summary>
+    public struct RadianceShadowPayload
+    {
+        public uint Slot0, Slot1, Slot2, Slot3, Slot4, Slot5, Slot6, Slot7, Slot8,
+            Slot9, Slot10, Slot11, Slot12, Slot13, Slot14, Slot15, Slot16, Slot17, Slot18;
+    }
+
+    /// <summary>
     /// The renderer coordinator: owns the launch params, the camera, the scene
     /// switcher, and the render loop, wiring together the components that do the
-    /// actual work - <see cref="GpuContext"/>, <see cref="RendererPipeline"/>,
+    /// actual work - <see cref="GpuContext"/>, <see cref="RayTracingPipeline{TLaunchParams}"/>,
     /// <see cref="SceneGpuBuffers"/>, <see cref="SbtBuilder"/>,
     /// <see cref="AccelStructureBuilder"/>, <see cref="TextureCache"/>,
     /// <see cref="FrameOutput"/>, <see cref="SceneAnimator"/>.
     ///
     /// Unlike Sample13's SampleRenderer, there is no MainWindow coupling and no
-    /// PresentQueue - render() runs entirely on the single GL/compute thread (see
-    /// docs/SAMPLE14_PLAN.md's threading-model section) and DenoiseAndTonemap's
-    /// Map/tonemap/Unmap sequence (see FrameOutput.cs) is the last GPU-touching step,
-    /// with no further cross-thread handoff needed.
+    /// PresentQueue - render() runs entirely on the single GL/compute thread and
+    /// DenoiseAndTonemap's Map/tonemap/Unmap sequence (see FrameOutput.cs) is the last
+    /// GPU-touching step, with no further cross-thread handoff needed.
     /// </summary>
     public class SampleRenderer
     {
@@ -29,7 +52,7 @@ namespace Sample14
         int height;
 
         readonly GpuContext gpu;
-        readonly RendererPipeline pipeline;
+        readonly RayTracingPipeline<LaunchParams> pipeline;
         readonly SceneGpuBuffers buffers;
         readonly TextureCache textures;
         readonly SbtBuilder sbtBuilder;
@@ -37,7 +60,6 @@ namespace Sample14
         readonly SceneAnimator animator;
         readonly FrameOutput frameOutput;
 
-        OptixShaderBindingTable sbt;
         IntPtr traversable;
         LaunchParams launchParams;
 
@@ -85,17 +107,56 @@ namespace Sample14
         // Kept even though Sample14 is single-threaded (unlike Sample13, where this
         // lock exists specifically to protect against a dedicated render thread racing
         // scene-switch/camera-move calls from the UI thread) - cheap insurance when
-        // uncontended, and removing it isn't a meaningful simplification on its own
-        // (see docs/SAMPLE14_PLAN.md's note on this).
+        // uncontended, and removing it isn't a meaningful simplification on its own.
         readonly object gpuLock = new object();
 
         public SampleRenderer(int width, int height)
         {
             gpu = new GpuContext();
-            pipeline = new RendererPipeline(gpu);
+
+            // No module/pipeline compile options, no SetStackSize magic numbers, no
+            // hand-rolled SBT record structs. Ray
+            // type declaration order (radiance, then shadow) fixes their SBT index at
+            // 0/1, matching Payloads.RADIANCE_RAY_TYPE/SHADOW_RAY_TYPE. Triangle
+            // geometry and every custom-primitive kind (plus the volume grid) share
+            // each ray type's closest-hit/any-hit pair via named hit groups (one
+            // .HitGroup(kind, ...) call per intersection program) - see SbtBuilder.cs's
+            // HitGroupKinds and Apply(). WithTraversableGraphFlags(...
+            // ALLOW_SINGLE_LEVEL_INSTANCING) is required here (unlike every other
+            // sample's single-GAS default) since AccelStructureBuilder always combines
+            // this sample's GAS(es) via an IAS.
+            pipeline = gpu.RayTracer.CreatePipeline<LaunchParams>(b => b
+                .Raygen(RaygenProgram.__raygen__renderFrame)
+                .RayType("radiance", r => r
+                    .Payload<RadianceShadowPayload>()
+                    .Miss(MissAndShadowPrograms.__miss__radiance)
+                    .HitGroup<MaterialSbtData>(HitGroupKinds.Triangle, ClosestHitProgram.__closest__radiance, MissAndShadowPrograms.__anyhit__radiance)
+                    .HitGroup<MaterialSbtData>(HitGroupKinds.CustomPrimitiveKinds[0], ClosestHitProgram.__closest__radiance, MissAndShadowPrograms.__anyhit__radiance, IntersectionPrograms.__intersection__sphere)
+                    .HitGroup<MaterialSbtData>(HitGroupKinds.CustomPrimitiveKinds[1], ClosestHitProgram.__closest__radiance, MissAndShadowPrograms.__anyhit__radiance, IntersectionPrograms.__intersection__box)
+                    .HitGroup<MaterialSbtData>(HitGroupKinds.CustomPrimitiveKinds[2], ClosestHitProgram.__closest__radiance, MissAndShadowPrograms.__anyhit__radiance, IntersectionPrograms.__intersection__cylinderY)
+                    .HitGroup<MaterialSbtData>(HitGroupKinds.CustomPrimitiveKinds[3], ClosestHitProgram.__closest__radiance, MissAndShadowPrograms.__anyhit__radiance, IntersectionPrograms.__intersection__disk)
+                    .HitGroup<MaterialSbtData>(HitGroupKinds.CustomPrimitiveKinds[4], ClosestHitProgram.__closest__radiance, MissAndShadowPrograms.__anyhit__radiance, IntersectionPrograms.__intersection__xyRect)
+                    .HitGroup<MaterialSbtData>(HitGroupKinds.CustomPrimitiveKinds[5], ClosestHitProgram.__closest__radiance, MissAndShadowPrograms.__anyhit__radiance, IntersectionPrograms.__intersection__xzRect)
+                    .HitGroup<MaterialSbtData>(HitGroupKinds.CustomPrimitiveKinds[6], ClosestHitProgram.__closest__radiance, MissAndShadowPrograms.__anyhit__radiance, IntersectionPrograms.__intersection__yzRect)
+                    .HitGroup<MaterialSbtData>(HitGroupKinds.VolumeGrid, ClosestHitProgram.__closest__radiance, MissAndShadowPrograms.__anyhit__radiance, IntersectionPrograms.__intersection__volumeGrid))
+                .RayType("shadow", r => r
+                    .Payload<RadianceShadowPayload>()
+                    .Miss(MissAndShadowPrograms.__miss__shadow)
+                    .HitGroup<MaterialSbtData>(HitGroupKinds.Triangle, MissAndShadowPrograms.__closesthit__shadow, MissAndShadowPrograms.__anyhit__shadow)
+                    .HitGroup<MaterialSbtData>(HitGroupKinds.CustomPrimitiveKinds[0], MissAndShadowPrograms.__closesthit__shadow, MissAndShadowPrograms.__anyhit__shadow, IntersectionPrograms.__intersection__sphere)
+                    .HitGroup<MaterialSbtData>(HitGroupKinds.CustomPrimitiveKinds[1], MissAndShadowPrograms.__closesthit__shadow, MissAndShadowPrograms.__anyhit__shadow, IntersectionPrograms.__intersection__box)
+                    .HitGroup<MaterialSbtData>(HitGroupKinds.CustomPrimitiveKinds[2], MissAndShadowPrograms.__closesthit__shadow, MissAndShadowPrograms.__anyhit__shadow, IntersectionPrograms.__intersection__cylinderY)
+                    .HitGroup<MaterialSbtData>(HitGroupKinds.CustomPrimitiveKinds[3], MissAndShadowPrograms.__closesthit__shadow, MissAndShadowPrograms.__anyhit__shadow, IntersectionPrograms.__intersection__disk)
+                    .HitGroup<MaterialSbtData>(HitGroupKinds.CustomPrimitiveKinds[4], MissAndShadowPrograms.__closesthit__shadow, MissAndShadowPrograms.__anyhit__shadow, IntersectionPrograms.__intersection__xyRect)
+                    .HitGroup<MaterialSbtData>(HitGroupKinds.CustomPrimitiveKinds[5], MissAndShadowPrograms.__closesthit__shadow, MissAndShadowPrograms.__anyhit__shadow, IntersectionPrograms.__intersection__xzRect)
+                    .HitGroup<MaterialSbtData>(HitGroupKinds.CustomPrimitiveKinds[6], MissAndShadowPrograms.__closesthit__shadow, MissAndShadowPrograms.__anyhit__shadow, IntersectionPrograms.__intersection__yzRect)
+                    .HitGroup<MaterialSbtData>(HitGroupKinds.VolumeGrid, MissAndShadowPrograms.__closesthit__shadow, MissAndShadowPrograms.__anyhit__shadow, IntersectionPrograms.__intersection__volumeGrid))
+                .MaxTraceDepth(2)
+                .WithTraversableGraphFlags(OptixTraversableGraphFlags.AllowSingleLevelInstancing));
+
             buffers = new SceneGpuBuffers(gpu.Accelerator);
             textures = new TextureCache();
-            sbtBuilder = new SbtBuilder(gpu.Accelerator, pipeline, textures);
+            sbtBuilder = new SbtBuilder(textures);
             accel = new AccelStructureBuilder(gpu.Accelerator, gpu.DeviceContext, buffers);
             animator = new SceneAnimator(buffers, accel, textures);
             frameOutput = new FrameOutput(gpu);
@@ -157,13 +218,15 @@ namespace Sample14
 
                 textures.Clear();
                 accel.DisposeBuffers();
-                sbtBuilder.DisposeBuffers();
                 buffers.DisposeAll();
 
                 buffers.Upload(scene);
 
                 MeshRange[] triangleMeshRanges = SbtLayout.GetTriangleMeshRanges(scene, UseMergedTrianglesGas);
-                sbt = sbtBuilder.Build(scene, triangleMeshRanges);
+                // SetHitRecords (inside sbtBuilder.Apply) synchronizes the accelerator
+                // and disposes the previous scene's hitgroup buffer itself - no
+                // separate DisposeBuffers() call needed before this.
+                sbtBuilder.Apply(pipeline, scene, triangleMeshRanges);
                 traversable = accel.Build(scene, triangleMeshRanges);
 
                 // Cross-checks that the accel structure's NumSbtRecords values (per
@@ -171,8 +234,8 @@ namespace Sample14
                 // SBT's own actual hitgroup record count - see Sample13's identical
                 // assert for the bug class this guards against.
                 Debug.Assert(
-                    sbt.HitgroupRecordCount == accel.TotalHitgroupRecordsUsed,
-                    $"SBT hitgroup record count ({sbt.HitgroupRecordCount}) doesn't match " +
+                    pipeline.HitgroupRecordCount == accel.TotalHitgroupRecordsUsed,
+                    $"SBT hitgroup record count ({pipeline.HitgroupRecordCount}) doesn't match " +
                     $"what the accel structure's NumSbtRecords values imply " +
                     $"({accel.TotalHitgroupRecordsUsed}) - AccelStructureBuilder and SbtBuilder " +
                     "have drifted out of sync.");
@@ -241,7 +304,6 @@ namespace Sample14
             {
                 textures.Clear();
                 accel.DisposeBuffers();
-                sbtBuilder.DisposeBuffers();
                 buffers.DisposeAll();
             }
 
@@ -323,14 +385,9 @@ namespace Sample14
                 launchParams.MaxDiffuseBounces = MaxDiffuseBounces;
 
                 stepStopwatch.Restart();
-                gpu.Accelerator.OptixLaunch(
-                    gpu.Accelerator.DefaultStream,
-                    pipeline.Pipeline,
-                    launchParams,
-                    sbt,
-                    (uint)width,
-                    (uint)height,
-                    1);
+                // Persistent launch-params buffer, reused every frame - no per-call
+                // allocate/free (the leak OptixLaunchExtensions.OptixLaunch had).
+                pipeline.Launch(launchParams, width, height);
                 gpu.Accelerator.Synchronize();
                 double traceMs = stepStopwatch.Elapsed.TotalMilliseconds;
 

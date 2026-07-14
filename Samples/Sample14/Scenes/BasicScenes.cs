@@ -1,3 +1,4 @@
+using ILGPU.OptiX.Cuda;
 namespace Sample14
 {
     /// <summary>
@@ -163,7 +164,7 @@ namespace Sample14
         }
 
         // Ambient-only lit, single textured quad - reuses Sample08's CudaTextureObject/
-        // CudaTex2D pattern (trivial, per docs/SAMPLE13_PLAN.md's M7 scope) via one
+        // CudaTex2D pattern (trivial, in scope for the M7 milestone) via one
         // texture already bundled for Sponza, rather than fetching a new asset.
         public static SceneData BuildTextureTestScene()
         {

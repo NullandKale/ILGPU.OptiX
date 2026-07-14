@@ -11,29 +11,29 @@
 
 #pragma warning disable CA1707 // Identifiers should not contain underscores
 
-namespace ILGPU.OptiX
+namespace ILGPU.OptiX.Pipeline
 {
     public enum OptixCompileDebugLevel
     {
         /// <summary>
         /// Default currently is to add line info.
         /// </summary>
-        OPTIX_COMPILE_DEBUG_LEVEL_DEFAULT = 0,
+        Default = 0,
 
         /// <summary>
         /// No debug information.
         /// </summary>
-        OPTIX_COMPILE_DEBUG_LEVEL_NONE = 0x2350,
+        None = 0x2350,
 
         /// <summary>
         /// Generate lineinfo only.
         /// </summary>
-        OPTIX_COMPILE_DEBUG_LEVEL_LINEINFO = 0x2351,
+        LineInfo = 0x2351,
 
         /// <summary>
         /// Generate dwarf debug information.
         /// </summary>
-        OPTIX_COMPILE_DEBUG_LEVEL_FULL = 0x2352,
+        Full = 0x2352,
     }
 }
 

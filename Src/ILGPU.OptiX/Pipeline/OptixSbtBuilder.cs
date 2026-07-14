@@ -14,6 +14,7 @@ using ILGPU.Runtime;
 using ILGPU.Runtime.Cuda;
 using ILGPU.OptiX.Interop;
 using ILGPU.Util;
+using ILGPU.OptiX.Native;
 using System;
 using System.Runtime.InteropServices;
 

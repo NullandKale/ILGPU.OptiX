@@ -1,4 +1,4 @@
-﻿// ---------------------------------------------------------------------------------------
+// ---------------------------------------------------------------------------------------
 //                                     ILGPU OptiX
 //                        Copyright (c) 2020-2022 ILGPU Project
 //                                    www.ilgpu.net
@@ -10,6 +10,7 @@
 // ---------------------------------------------------------------------------------------
 
 using ILGPU.OptiX.Util;
+using ILGPU.OptiX.DeviceApi;
 using Microsoft.Win32;
 using Microsoft.Win32.SafeHandles;
 using System;
@@ -35,9 +36,9 @@ using System.Runtime.InteropServices;
 // the newest SDK - then diff every struct/enum/function-pointer in this project
 // against the matching SDK's headers field-for-field - silent field/order drift here
 // causes native heap corruption or cryptic driver-side compile errors, not C# compile
-// errors. See docs/OPTIX_ROADMAP.md for the full audit checklist.
+// errors.
 
-namespace ILGPU.OptiX
+namespace ILGPU.OptiX.Native
 {
     partial class OptixAPI
     {
@@ -105,7 +106,7 @@ namespace ILGPU.OptiX
                     functionTableSize == IntPtr.Size * 52,
                     "OptixFunctionTable field count no longer matches the native " +
                     "OptixFunctionTable (52 function pointers in OptiX SDK 9.0.0) - " +
-                    "re-check optix_function_table.h. See docs/OPTIX_ROADMAP.md.");
+                    "re-check optix_function_table.h.");
                 using var functionTablePtr = SafeHGlobal.Alloc(functionTableSize);
 
                 var query =

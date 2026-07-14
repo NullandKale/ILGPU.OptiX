@@ -1,4 +1,4 @@
-﻿// ---------------------------------------------------------------------------------------
+// ---------------------------------------------------------------------------------------
 //                                     ILGPU OptiX
 //                        Copyright (c) 2020-2022 ILGPU Project
 //                                    www.ilgpu.net
@@ -11,11 +11,13 @@
 
 using System;
 using System.Runtime.InteropServices;
+using ILGPU.OptiX.Native;
+using ILGPU.OptiX.AccelStructures;
 
 #pragma warning disable CA1051 // Do not declare visible instance fields
 #pragma warning disable CA1815 // Override equals and operator equals on value types
 
-namespace ILGPU.OptiX
+namespace ILGPU.OptiX.Pipeline
 {
     [CLSCompliant(false)]
     public struct OptixPipelineCompileOptions
@@ -57,8 +59,8 @@ namespace ILGPU.OptiX
 
         /// <summary>
         /// Bit field enabling primitive types. See OptixPrimitiveTypeFlags.
-        /// Setting to zero corresponds to enabling OPTIX_PRIMITIVE_TYPE_FLAGS_CUSTOM and
-        /// OPTIX_PRIMITIVE_TYPE_FLAGS_TRIANGLE.
+        /// Setting to zero corresponds to enabling Custom and
+        /// Triangle.
         /// </summary>
         public OptixPrimitiveTypeFlags UsesPrimitiveTypeFlags;
 

@@ -12,7 +12,7 @@
 using System;
 using System.Runtime.InteropServices;
 
-namespace ILGPU.OptiX
+namespace ILGPU.OptiX.Native
 {
     /// <summary>
     /// Matches OptiX's OptixLogCallback native function pointer type

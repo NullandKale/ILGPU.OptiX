@@ -2,6 +2,7 @@ using ILGPU;
 using ILGPU.Algorithms;
 using ILGPU.OptiX;
 using ILGPU.OptiX.Device;
+using ILGPU.OptiX.DeviceApi;
 using System.Numerics;
 
 namespace Sample15
@@ -13,8 +14,8 @@ namespace Sample15
     /// </summary>
     public static class RaygenProgram
     {
-        // Hard safety cap on total Trace() calls per sample (docs/SAMPLE15_PLAN.md
-        // Milestone M3) - launchParams.MaxBounces and Russian roulette termination are
+        // Hard safety cap on total Trace() calls per sample -
+        // launchParams.MaxBounces and Russian roulette termination are
         // what actually bound path length in practice; this is only a runaway
         // safety net (e.g. a pathological RR draw sequence) and is set well above any
         // reasonable MaxBounces the UI allows.
@@ -65,7 +66,7 @@ namespace Sample15
 
                 // Sentinel until the first Trace() call returns a real value - the
                 // primary/camera ray has no previous bounce to MIS against
-                // (docs/SAMPLE15_PLAN.md Milestone M4, Payloads.DeltaOrPrimarySentinel).
+                // (Payloads.DeltaOrPrimarySentinel).
                 float bsdfPdf = Payloads.DeltaOrPrimarySentinel;
 
                 for (int bounce = 0; bounce < MaxTotalBounces; bounce++)
@@ -92,7 +93,7 @@ namespace Sample15
                         // below-threshold-alpha sample. DISABLE_ANYHIT (the old value
                         // here, from before alpha-cutout existed) would silently skip
                         // that test and shade the nearest triangle regardless of alpha.
-                        rayFlags: OptixRayFlags.OPTIX_RAY_FLAG_NONE,
+                        rayFlags: OptixRayFlags.None,
                         sbtOffset: Payloads.RADIANCE_RAY_TYPE,
                         sbtStride: Payloads.RAY_TYPE_COUNT,
                         missSbtIndex: Payloads.RADIANCE_RAY_TYPE);
@@ -131,7 +132,7 @@ namespace Sample15
                         break;
 
                     // Resume the RNG stream from wherever the closest-hit program's
-                    // sampling left it (docs/SAMPLE15_PLAN.md Milestone M3) - a single
+                    // sampling left it - a single
                     // continuous stream shared between raygen's own draws (pixel
                     // jitter, Russian roulette below) and every shading call.
                     rng.State = payload.RngState;
@@ -144,8 +145,7 @@ namespace Sample15
                     if (bounce + 1 >= launchParams.MaxBounces)
                         break;
 
-                    // Russian roulette termination (docs/SAMPLE15_PLAN.md Design
-                    // Decision 7) - replaces the old per-material-kind bounce budgets
+                    // Russian roulette termination - replaces the old per-material-kind bounce budgets
                     // and the lengthSquared < 1e-6 throughput cutoff with a single
                     // unbiased stochastic rule: survival probability tracks the path's
                     // remaining energy, and a surviving path's throughput is corrected

@@ -21,7 +21,7 @@
   <ItemGroup>
     <!-- cow.obj/stanford-bunny.obj/teapot.obj/xyzrgb_dragon.obj + Sponza, same asset
          set Sample13 bundles (see Sample13.csproj) - museum's video-textured scenes
-         are deferred (see docs/SAMPLE14_PLAN.md), so no museum assets here yet. -->
+         are deferred, so no museum assets here yet. -->
     <None Include="..\Models\meshes\**\*.*">
       <Link>models\meshes\%(RecursiveDir)%(Filename)%(Extension)</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
@@ -38,13 +38,13 @@
       <Link>models\sponza\textures\%(RecursiveDir)%(Filename)%(Extension)</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
-    <!-- HDRI environment map (docs/SAMPLE15_PLAN.md Milestone M5) - Poly Haven
+    <!-- HDRI environment map - Poly Haven
          venice_sunset 1k, CC0 (see ..\Models\hdri\LICENSE.txt). -->
     <None Include="..\Models\hdri\**\*.*">
       <Link>models\hdri\%(RecursiveDir)%(Filename)%(Extension)</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
-    <!-- PBR texture set for the M9 showcase scene (docs/SAMPLE15_PLAN.md) - Poly
+    <!-- PBR texture set for the showcase scene - Poly
          Haven rusty_metal_02 1k, CC0 (see ..\Models\textures\rusty_metal_02\LICENSE.txt).
          arm.png is already a packed ORM texture, no repacking needed. -->
     <None Include="..\Models\textures\rusty_metal_02\**\*.*">

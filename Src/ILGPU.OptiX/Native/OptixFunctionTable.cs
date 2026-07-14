@@ -1,4 +1,4 @@
-﻿// ---------------------------------------------------------------------------------------
+// ---------------------------------------------------------------------------------------
 //                                     ILGPU OptiX
 //                        Copyright (c) 2020-2022 ILGPU Project
 //                                    www.ilgpu.net
@@ -10,19 +10,20 @@
 // ---------------------------------------------------------------------------------------
 
 using ILGPU.OptiX.Pipeline;
+using ILGPU.OptiX.Denoising;
+using ILGPU.OptiX.CooperativeVectors;
 using System;
 
 #pragma warning disable CS0649 // Field is never assigned to
 
-namespace ILGPU.OptiX
+namespace ILGPU.OptiX.Native
 {
     // Mirrors OptixFunctionTable in optix_function_table.h (OptiX SDK 9.0.0, ABI 105 -
     // this is the exact version the nvoptix.dll bundled with the installed driver
     // ships, confirmed via its file version; see OptixAPI.Init.cs for why this can
     // differ from the newest SDK you have headers for). The driver fills this struct
     // positionally via optixQueryFunctionTable, so every field must be present in this
-    // exact order even if unused by this binding - see docs/OPTIX_ROADMAP.md for the
-    // audit process.
+    // exact order even if unused by this binding.
     internal struct OptixFunctionTable
     {
         // Error handling
@@ -117,6 +118,34 @@ namespace ILGPU.OptiX
 
     internal delegate OptixResult ModuleDestroy(IntPtr module);
 
+    internal delegate OptixResult BuiltinISModuleGet(
+        IntPtr context,
+        IntPtr moduleCompileOptions,
+        IntPtr pipelineCompileOptions,
+        IntPtr builtinISOptions,
+        out IntPtr builtinModule);
+
+    internal delegate OptixResult ModuleCreateWithTasks(
+        IntPtr deviceContext,
+        IntPtr moduleCompileOptions,
+        IntPtr pipelineCompileOptions,
+        IntPtr ptxString,
+        ulong ptxStringSize,
+        IntPtr logString,
+        ref ulong logStringSize,
+        out IntPtr module,
+        out IntPtr firstTask);
+
+    internal delegate OptixResult ModuleGetCompilationState(
+        IntPtr module,
+        out Pipeline.OptixModuleCompileState state);
+
+    internal delegate OptixResult TaskExecute(
+        IntPtr task,
+        [System.Runtime.InteropServices.Out] IntPtr[] additionalTasks,
+        uint maxNumAdditionalTasks,
+        out uint numAdditionalTasksCreated);
+
     internal delegate OptixResult ProgramGroupCreate(
         IntPtr deviceContext,
         IntPtr programDescriptions,
@@ -194,6 +223,49 @@ namespace ILGPU.OptiX
         ulong outputBufferSizeInBytes,
         IntPtr outputHandle);
 
+    internal delegate OptixResult AccelGetRelocationInfo(
+        IntPtr context,
+        ulong handle,
+        IntPtr info);
+
+    internal delegate OptixResult CheckRelocationCompatibility(
+        IntPtr context,
+        IntPtr info,
+        out int compatible);
+
+    internal delegate OptixResult AccelRelocate(
+        IntPtr context,
+        IntPtr stream,
+        IntPtr info,
+        IntPtr relocateInputs,
+        ulong numRelocateInputs,
+        IntPtr targetAccel,
+        ulong targetAccelSizeInBytes,
+        IntPtr targetHandle);
+
+    internal delegate OptixResult AccelEmitProperty(
+        IntPtr context,
+        IntPtr stream,
+        ulong handle,
+        IntPtr emittedProperty);
+
+    internal delegate OptixResult ConvertPointerToTraversableHandle(
+        IntPtr onDevice,
+        ulong pointer,
+        AccelStructures.OptixTraversableType traversableType,
+        out ulong traversableHandle);
+
+    internal delegate OptixResult OpacityMicromapArrayComputeMemoryUsage(
+        IntPtr context,
+        IntPtr buildInput,
+        out AccelStructures.OptixMicromapBufferSizes bufferSizes);
+
+    internal delegate OptixResult OpacityMicromapArrayBuild(
+        IntPtr context,
+        IntPtr stream,
+        IntPtr buildInput,
+        IntPtr buffers);
+
     internal delegate OptixResult DenoiserCreate(
         IntPtr context,
         OptixDenoiserModelKind modelKind,
@@ -247,6 +319,26 @@ namespace ILGPU.OptiX
         IntPtr outputAverageColor,
         IntPtr scratch,
         ulong scratchSizeInBytes);
+
+    internal delegate OptixResult CoopVecMatrixConvert(
+        IntPtr context,
+        IntPtr stream,
+        uint numNetworks,
+        IntPtr inputNetworkDescription,
+        ulong inputNetworks,
+        ulong inputNetworkStrideInBytes,
+        IntPtr outputNetworkDescription,
+        ulong outputNetworks,
+        ulong outputNetworkStrideInBytes);
+
+    internal delegate OptixResult CoopVecMatrixComputeSize(
+        IntPtr context,
+        uint N,
+        uint K,
+        CooperativeVectors.OptixCoopVecElemType elementType,
+        CooperativeVectors.OptixCoopVecMatrixLayout layout,
+        ulong rowColumnStrideInBytes,
+        out ulong sizeInBytes);
 }
 
 #pragma warning restore CS0649 // Field is never assigned to

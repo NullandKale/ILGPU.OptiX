@@ -12,16 +12,15 @@
 using ILGPU.Runtime.Cuda;
 using System;
 
-namespace ILGPU.OptiX
+namespace ILGPU.OptiX.DeviceApi
 {
     /// <summary>
     /// Provides the functionality of the 0-attribute optixReportIntersection built-in
     /// function overload (internal/optix_device_impl.h's "_optix_report_intersection_0"
     /// pseudo-call) - callable only from an intersection program. Per-primitive geometry
     /// (position/normal/UV) is recovered analytically in the closest-hit program instead
-    /// of being threaded through attribute registers (see docs/SAMPLE13_PLAN.md design
-    /// (b)), so the 1-8 attribute overloads (_optix_report_intersection_1..8) aren't
-    /// bound here.
+    /// of being threaded through attribute registers, so the 1-8 attribute overloads
+    /// (_optix_report_intersection_1..8) aren't bound here.
     /// </summary>
     [CLSCompliant(false)]
     public static class OptixReportIntersection

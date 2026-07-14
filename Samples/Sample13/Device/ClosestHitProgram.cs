@@ -1,6 +1,7 @@
 using ILGPU;
 using ILGPU.Algorithms;
 using ILGPU.OptiX;
+using ILGPU.OptiX.DeviceApi;
 using System.Numerics;
 
 namespace Sample13
@@ -31,8 +32,8 @@ namespace Sample13
             }
 
             // Geometry is recovered analytically here rather than threaded through
-            // intersection-program attributes (docs/SAMPLE13_PLAN.md design (b)) - a
-            // built-in triangle hit (hitKind >= TriangleFrontFace) interpolates from the
+            // intersection-program attributes - a built-in triangle hit
+            // (hitKind >= TriangleFrontFace) interpolates from the
             // triangle buffers as before; any other hitKind is a custom primitive
             // recomputed from its own per-primitive parameter buffer plus the hit
             // distance/ray.
@@ -124,8 +125,8 @@ namespace Sample13
             ShadingHelpers.ShadeDiffuse(launchParams, albedo, sbtData->Emission, surfPos, shadingNormal, outwardNormal, rayDir);
         }
 
-        // Analytic normal recomputation per custom-primitive kind (docs/SAMPLE13_PLAN.md
-        // design (b)) - avoids threading attributes through OptixReportIntersection.
+        // Analytic normal recomputation per custom-primitive kind - avoids threading
+        // attributes through OptixReportIntersection.
         private unsafe static Vec3 ComputeCustomPrimitiveNormal(LaunchParams launchParams, uint hitKind, Vec3 surfPos)
         {
             uint primId = OptixGetPrimitiveIndex.Value;

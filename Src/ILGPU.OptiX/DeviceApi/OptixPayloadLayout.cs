@@ -13,7 +13,7 @@ using System;
 using System.Reflection;
 using System.Runtime.CompilerServices;
 
-namespace ILGPU.OptiX
+namespace ILGPU.OptiX.DeviceApi
 {
     /// <summary>
     /// Host-side-only validation for payload structs used with

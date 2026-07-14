@@ -14,13 +14,13 @@ using System;
 #pragma warning disable CA1028 // Enum Storage should be Int32
 #pragma warning disable CA1707 // Identifiers should not contain underscores
 
-namespace ILGPU.OptiX
+namespace ILGPU.OptiX.Pipeline
 {
     [CLSCompliant(false)]
     public enum OptixDeviceContextValidationMode : uint
     {
-        OPTIX_DEVICE_CONTEXT_VALIDATION_MODE_OFF = 0,
-        OPTIX_DEVICE_CONTEXT_VALIDATION_MODE_ALL = 0xFFFFFFFF
+        Off = 0,
+        All = 0xFFFFFFFF
     }
 }
 

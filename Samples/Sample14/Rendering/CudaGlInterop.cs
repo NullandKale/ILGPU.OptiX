@@ -1,4 +1,5 @@
 using ILGPU.Runtime.Cuda;
+using ILGPU.OptiX.Cuda;
 using System;
 using System.Runtime.InteropServices;
 

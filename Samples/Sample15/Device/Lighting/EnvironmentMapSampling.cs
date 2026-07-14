@@ -1,10 +1,11 @@
 using ILGPU.Algorithms;
+using ILGPU.OptiX.Cuda;
 
 namespace Sample15
 {
     /// <summary>
-    /// Device-side importance sampling and evaluation for the HDRI environment map
-    /// (docs/SAMPLE15_PLAN.md Milestone M5) - shared by NextEventEstimation.cs (picking
+    /// Device-side importance sampling and evaluation for the HDRI environment map -
+    /// shared by NextEventEstimation.cs (picking
     /// a direction toward the environment) and Rays/RadianceRay.cs's __miss__radiance
     /// (evaluating the environment's radiance/pdf in a BSDF-sampled ray's own miss
     /// direction). Both
@@ -16,7 +17,7 @@ namespace Sample15
         // Direction (unit vector, +Y up) -> equirectangular (u, v) in [0, 1)x[0, 1].
         // theta = polar angle from +Y (0 at the top pole, pi at the bottom); phi =
         // azimuth around Y. Self-consistent with TexelToDirection below - rotation
-        // (docs/SAMPLE15_PLAN.md Milestone M8) is subtracted here and added back
+        // is subtracted here and added back
         // there, so a positive rotation spins the visible environment content the
         // same direction for both the NEE-sampling and miss-evaluation sides.
         internal static void DirectionToUv(Vec3 dir, float rotation, out float u, out float v)

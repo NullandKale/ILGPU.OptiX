@@ -18,31 +18,9 @@ using System.Windows;
 
 namespace Sample05
 {
-    [StructLayout(LayoutKind.Sequential, Pack = OptixAPI.OPTIX_SBT_RECORD_ALIGNMENT, Size = 48)]
-    public unsafe struct RaygenRecord
+    struct RadiancePayload
     {
-        public fixed byte Header[OptixAPI.OPTIX_SBT_RECORD_HEADER_SIZE];
-        // just a dummy value - later examples will use more interesting
-        // data here
-        public int ObjectID;
-    }
-
-    [StructLayout(LayoutKind.Sequential, Pack = OptixAPI.OPTIX_SBT_RECORD_ALIGNMENT, Size = 48)]
-    public unsafe struct MissRecord
-    {
-        public fixed byte Header[OptixAPI.OPTIX_SBT_RECORD_HEADER_SIZE];
-        // just a dummy value - later examples will use more interesting
-        // data here
-        public int ObjectID;
-    }
-
-    [StructLayout(LayoutKind.Sequential, Pack = OptixAPI.OPTIX_SBT_RECORD_ALIGNMENT, Size = 48)]
-    public unsafe struct HitgroupRecord
-    {
-        public fixed byte Header[OptixAPI.OPTIX_SBT_RECORD_HEADER_SIZE];
-        // just a dummy value - later examples will use more interesting
-        // data here
-        public int ObjectID;
+        public uint P0, P1, P2;
     }
 
     public class SampleRenderer
@@ -53,24 +31,9 @@ namespace Sample05
 
         Context context;
         CudaAccelerator accelerator;
-        OptixDeviceContext deviceContext;
+        OptixRayTracer rayTracer;
 
-        OptixKernel raygenKernel;
-        OptixKernel missKernel;
-        OptixKernel hitgroupKernel;
-
-        OptixKernel[] raygenKernels;
-        OptixKernel[] missKernels;
-        OptixKernel[] hitgroupKernels;
-
-        OptixPipeline pipeline;
-
-        RaygenRecord[] raygenRecordsArray;
-        MissRecord[] missRecordsArray;
-        HitgroupRecord[] hitgroupRecordsArray;
-
-        BuiltSbt? builtSbt;
-        OptixShaderBindingTable sbt;
+        RayTracingPipeline<LaunchParams> pipeline;
 
         MemoryBuffer1D<byte, Stride1D.Dense> colorBuffer0;
         MemoryBuffer1D<byte, Stride1D.Dense> colorBuffer1;
@@ -93,68 +56,17 @@ namespace Sample05
 
             initOptixAndOptixContext();
 
-            deviceContext
-                .WithModuleCompileOptions(new OptixModuleCompileOptions()
-                {
-                    MaxRegisterCount = 50,
-                    OptimizationLevel = OptixCompileOptimizationLevel.OPTIX_COMPILE_OPTIMIZATION_DEFAULT,
-                    DebugLevel = OptixCompileDebugLevel.OPTIX_COMPILE_DEBUG_LEVEL_NONE
-                })
-                .WithPipelineCompileOptions(new OptixPipelineCompileOptions()
-                {
-                    TraversableGraphFlags = OptixTraversableGraphFlags.OPTIX_TRAVERSABLE_GRAPH_FLAG_ALLOW_SINGLE_GAS,
-                    UsesMotionBlur = 0,
-                    NumPayloadValues = 3,
-                    NumAttributeValues = 2,
-                    ExceptionFlags = OptixExceptionFlags.OPTIX_EXCEPTION_FLAG_NONE,
-                    PipelineLaunchParamsVariableName = OptixLaunchParams.VariableName
-                })
-                .WithPipelineLinkOptions(new OptixPipelineLinkOptions()
-                {
-                    MaxTraceDepth = 2
-                });
+            pipeline = rayTracer.CreatePipeline<LaunchParams>(b => b
+                .Raygen(devicePrograms.__raygen__renderFrame)
+                .RayType("radiance", r => r
+                    .Payload<RadiancePayload>()
+                    .Miss(devicePrograms.__miss__radiance)
+                    .HitGroup<byte>(
+                        devicePrograms.__closest__radiance,
+                        devicePrograms.__anyhit__radiance))
+                .MaxTraceDepth(2));
 
-            raygenKernel = deviceContext.CreateRaygenKernel<LaunchParams>(
-                devicePrograms.__raygen__renderFrame);
-
-            missKernel = deviceContext.CreateMissKernel<LaunchParams>(
-                devicePrograms.__miss__radiance);
-
-            hitgroupKernel = deviceContext.CreateHitgroupKernel<LaunchParams>(
-                devicePrograms.__closest__radiance,
-                devicePrograms.__anyhit__radiance,
-                null);
-
-            raygenKernels = new[] { raygenKernel };
-            missKernels = new[] { missKernel };
-            hitgroupKernels = new[] { hitgroupKernel };
-
-            // Build pipeline using builder
-            var pipelineBuilder = new OptixPipelineBuilder();
-            pipelineBuilder.AddKernels(raygenKernels);
-            pipelineBuilder.AddKernels(missKernels);
-            pipelineBuilder.AddKernels(hitgroupKernels);
-            pipeline = pipelineBuilder.Build(deviceContext);
-
-            pipeline.SetStackSize(
-                2 * 1024,
-                2 * 1024,
-                2 * 1024,
-                1);
-
-            // Setup SBT using builder
-            raygenRecordsArray = OptixSbt.PackRecords<RaygenRecord>(raygenKernels);
-            missRecordsArray = OptixSbt.PackRecords<MissRecord>(missKernels);
-            hitgroupRecordsArray = OptixSbt.PackRecords<HitgroupRecord>(hitgroupKernels);
-
-            var sbtBuilder = new OptixSbtBuilder();
-            sbtBuilder.WithAccelerator(accelerator);
-            sbtBuilder.SetRaygenRecords(raygenRecordsArray);
-            sbtBuilder.SetMissRecords(missRecordsArray);
-            sbtBuilder.AddHitgroupRecords(hitgroupRecordsArray);
-            builtSbt = sbtBuilder.Build();
-            sbt = builtSbt.Sbt;
-
+            pipeline.SetHitRecords<byte>(new byte[] { 0 });
 
             model = new TriangleMesh(accelerator);
             model.AddCube(new Affine3f(new Vec3(0, -1.5f, 0), new Vec3(10, 0.1f, 10)), new Vec3(0.6f, 0.6f, 0.6f));
@@ -164,7 +76,7 @@ namespace Sample05
             camera = new Camera(new Vec3(-10, 2, -12), new Vec3(0, 0, 0), new Vec3(0, 1, 0), width, height, new Vec3(1, 1, 1), 40f, 10f);
 
             var accelBuilder = new OptixAccelBuilder()
-                .WithDeviceContext(deviceContext)
+                .WithDeviceContext(rayTracer.DeviceContext)
                 .WithAccelerator(accelerator)
                 .AddTriangleMesh(model.d_vertexBuffer, model.d_triangleIndexBuffer)
                 .AllowCompaction();
@@ -178,15 +90,10 @@ namespace Sample05
         public void Dispose()
         {
             builtAccel?.Dispose();
-            builtSbt?.Dispose();
 
             pipeline.Dispose();
 
-            hitgroupKernel.Dispose();
-            missKernel.Dispose();
-            raygenKernel.Dispose();
-
-            deviceContext.Dispose();
+            rayTracer.Dispose();
             accelerator.Dispose();
             context.Dispose();
         }
@@ -221,7 +128,7 @@ namespace Sample05
             Trace.WriteLine("Init Optix");
             context = Context.Create(b => b.Cuda());
             accelerator = context.CreateCudaAccelerator(0);
-            deviceContext = accelerator.CreateDeviceContext();
+            rayTracer = OptixRayTracer.Create(accelerator);
         }
 
 
@@ -237,14 +144,7 @@ namespace Sample05
 
             launchParams.FrameID++;
 
-            accelerator.OptixLaunch(
-                accelerator.DefaultStream,
-                pipeline,
-                launchParams,
-                sbt,
-                (uint)width,
-                (uint)height,
-                1);
+            pipeline.Launch(launchParams, width, height);
 
             //need to flip bitmap because of wpf weirdness
             flipBitmap(new Index1D(width * height), width, height, colorBuffer0.View, colorBuffer1.View);

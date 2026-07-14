@@ -15,12 +15,11 @@ namespace Sample15
 {
     // ILGPU compiles device kernels against one concrete unmanaged struct layout, so this
     // must stay a single superset shape across every scene the runtime scene-switcher can
-    // select (docs/SAMPLE13_PLAN.md, "LaunchParams superset design"). Unused buffers on a
-    // given scene are left invalid/zero-length (OptixDeviceView<T>.IsValid == false)
-    // rather than changing the struct itself.
+    // select. Unused buffers on a given scene are left invalid/zero-length
+    // (OptixDeviceView<T>.IsValid == false) rather than changing the struct itself.
     //
     // Triangle geometry, multi-point-light shading, unified GGX metallic-roughness
-    // materials (docs/SAMPLE15_PLAN.md Milestone M2) + perfect-specular dielectric
+    // materials + perfect-specular dielectric
     // materials, mesh scenes, and AOV/denoiser buffers are all wired up. Custom
     // primitives (spheres/boxes/cylinders/disks/rects) and the voxel volume grid were
     // removed in favor of an all-triangle-mesh geometry path (single GAS, no IAS).
@@ -29,7 +28,7 @@ namespace Sample15
         public int NumPixelSamples;
         public int FrameID;
 
-        // Unified bounce budget (docs/SAMPLE15_PLAN.md Milestone M3) - replaces the
+        // Unified bounce budget - replaces the
         // old per-material-kind MaxMirrorBounces/MaxRefractionBounces/
         // MaxDiffuseBounces counters now that every material kind shares the same
         // raygen bounce loop; Russian roulette (RaygenProgram.cs) is what actually
@@ -105,7 +104,7 @@ namespace Sample15
         public Vec3 AmbientColor;
         public float AmbientIntensity;
 
-        // Unified NEE light list (docs/SAMPLE15_PLAN.md Milestone M4) - see
+        // Unified NEE light list - see
         // Scenes/LightList.cs. NeeLightAreaPdf is parallel to Indices/
         // TriangleMaterialIds (one entry per triangle, 0 = not a registered light) -
         // read directly by primitive index in __closest__radiance's MIS reweighting,
@@ -115,7 +114,7 @@ namespace Sample15
         public int NumNeeLights;
         public OptixDeviceView<float> NeeLightAreaPdf;
 
-        // HDRI environment map (docs/SAMPLE15_PLAN.md Milestone M5) - scene-dependent
+        // HDRI environment map - scene-dependent
         // (see SceneData.EnvMapPath); EnvMapWidth == 0 means "no environment map for
         // this scene, fall back to the flat BackgroundTop/Bottom gradient" (checked by
         // __miss__radiance and NextEventEstimation before touching the other EnvMap*
@@ -130,7 +129,7 @@ namespace Sample15
         public int EnvMapHeight;
         public float EnvMapIntensity;
         public float EnvMapLightPdf;
-        // Azimuthal rotation in radians (docs/SAMPLE15_PLAN.md Milestone M8) - applied
+        // Azimuthal rotation in radians - applied
         // uniformly by EnvironmentMapSampling's direction<->uv conversion.
         public float EnvMapRotation;
 

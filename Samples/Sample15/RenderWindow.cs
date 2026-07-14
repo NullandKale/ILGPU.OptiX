@@ -11,8 +11,7 @@ namespace Sample15
 {
     /// <summary>
     /// M3: FPS camera (WASD + hold-left-mouse-drag look) and the keyboard-only control
-    /// scheme replacing Sample13's WPF button panel (see docs/SAMPLE14_PLAN.md's
-    /// Window/input-layer section for the full keymap). M7 adds an ImGui-based visual
+    /// scheme replacing Sample13's WPF button panel. M7 adds an ImGui-based visual
     /// panel (UI/UiPanel.cs) mirroring the same controls - the keymap stays as the
     /// keyboard-only fallback it always was, ImGui is an additional, not replacement,
     /// input path. GL context and CUDA/OptiX compute run on the same thread, driven by
@@ -62,7 +61,7 @@ namespace Sample15
 
             // ImGui.CreateContext() must run before either backend Init() call, and
             // the platform backend (input) must be initialized before the renderer
-            // backend - see docs/SAMPLE14_PLAN.md's M7 milestone. Docking/multi-
+            // backend. Docking/multi-
             // viewport support (ImGuiConfigFlags.DockingEnable/ViewportsEnable) is
             // deliberately not enabled - Sample14 only needs one overlay panel, and
             // multi-viewport requires OpenTK APIs (window.MousePassthrough, several
@@ -244,7 +243,7 @@ namespace Sample15
             if (IsKeyPressed(Keys.D1)) AdjustMaxBounces(-1);
             if (IsKeyPressed(Keys.D2)) AdjustMaxBounces(1);
 
-            // Tonemap controls (docs/SAMPLE15_PLAN.md Milestone M8) - Exposure/env
+            // Tonemap controls - Exposure/env
             // rotation/env intensity are continuous slider values with no natural
             // keyboard equivalent (unlike the discrete toggles here), so they stay
             // UI-panel-only.
@@ -257,7 +256,7 @@ namespace Sample15
             }
         }
 
-        // Unified bounce budget (docs/SAMPLE15_PLAN.md Milestone M3) - replaces the
+        // Unified bounce budget - replaces the
         // old three per-material-kind Adjust*Bounces methods/key bindings (D1-D6) now
         // that every material kind shares one raygen bounce loop terminated by
         // Russian roulette; D3-D6 are free again.
@@ -300,7 +299,7 @@ namespace Sample15
                 return;
             }
 
-            // Console stats logging (see docs/SAMPLE14_PLAN.md) stays in place
+            // Console stats logging stays in place
             // alongside the panel's own STATS section - useful when the panel is
             // hidden/off-screen or for scripted/headless runs.
             frameCount++;

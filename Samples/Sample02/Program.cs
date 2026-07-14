@@ -15,6 +15,7 @@ using ILGPU.OptiX.Device;
 using ILGPU.OptiX.Pipeline;
 using ILGPU.Runtime;
 using ILGPU.Runtime.Cuda;
+using ILGPU.OptiX.DeviceApi;
 using System;
 using System.IO;
 using System.Runtime.InteropServices;
@@ -63,7 +64,7 @@ namespace Sample02
             using var rt = OptixRayTracer.Create(accelerator);
 
             // No module/pipeline/link compile options, no SBT record structs, no
-            // manually chosen stack sizes - see docs/API_USABILITY_PLAN.md. This
+            // manually chosen stack sizes - these are all computed automatically. This
             // sample never calls OptixTrace.Trace(...), so its single ray type needs
             // no Payload<T>() and its hitgroup needs no real per-material data - byte
             // is just a 1-byte placeholder record.

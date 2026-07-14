@@ -1,6 +1,8 @@
 using ILGPU;
 using ILGPU.Algorithms;
 using ILGPU.OptiX;
+using ILGPU.OptiX.DeviceApi;
+using ILGPU.OptiX.Cuda;
 
 namespace Sample15
 {
@@ -13,21 +15,19 @@ namespace Sample15
     /// </summary>
     public static class MaterialShading
     {
-        // Unified metallic-roughness GGX BSDF shading (docs/SAMPLE15_PLAN.md Milestones
-        // M2/M4) - replaces Sample14/M1's separate Oren-Nayar-diffuse/perfect-mirror
-        // branches with one continuous function. Direct lighting is next-event
-        // estimation against the unified light list (NextEventEstimation.cs); indirect
-        // lighting stochastically
+        // Unified metallic-roughness GGX BSDF shading - replaces Sample14/M1's separate
+        // Oren-Nayar-diffuse/perfect-mirror branches with one continuous function.
+        // Direct lighting is next-event estimation against the unified light list
+        // (NextEventEstimation.cs); indirect lighting stochastically
         // picks one lobe to extend the path with, weighted by both lobes' combined pdf
-        // at the sampled direction (see Bsdf.cs and docs/SAMPLE15_PLAN.md Design
-        // Decision 1/3). bsdfPdfIn/lightPickAreaPdf implement the MIS side of a
+        // at the sampled direction (see Bsdf.cs). bsdfPdfIn/lightPickAreaPdf implement the MIS side of a
         // BSDF-sampled ray landing directly on this material's own emission - see
         // Payloads.cs's own doc comment and Rays/RadianceRay.cs's callsite.
         internal unsafe static void ShadeSurface(LaunchParams launchParams, MaterialSbtData mat, Vec3 baseColor, Vec3 surfPos, Vec3 shadingNormal, Vec3 outwardNormal, Vec3 rayDir, uint rngStateIn, float bsdfPdfIn, float lightPickAreaPdf, Vec2 uv)
         {
             float roughness = mat.Roughness;
             float metallic = mat.Metallic;
-            // ORM texture (docs/SAMPLE15_PLAN.md Milestone M6) - occlusion.r (unused;
+            // ORM texture - occlusion.r (unused;
             // no ambient-occlusion consumption point exists in this sample yet),
             // roughness.g, metallic.b, multiplicatively blended against the material's
             // own scalar Roughness/Metallic (the glTF metallic-roughness convention:
@@ -56,7 +56,7 @@ namespace Sample15
             if (emission.lengthSquared() > 0f)
             {
                 // MIS-weight a BSDF-sampled ray landing directly on this emissive
-                // material (docs/SAMPLE15_PLAN.md Milestone M4) - full unweighted
+                // material - full unweighted
                 // emission if this material isn't a registered light-list entry
                 // (lightPickAreaPdf <= 0, e.g. a custom primitive/volume-grid hit,
                 // which the light list never indexes) or the previous bounce sampled a
@@ -141,8 +141,8 @@ namespace Sample15
         // actual glass materials) - if a future scene wants partial transmission,
         // revisit how it should modulate this probability split.
         //
-        // Rough dielectric transmission (docs/SAMPLE15_PLAN.md Milestone M7, Design
-        // Decision 3 - Walter et al. 2007) - TransmissionRoughness < DeltaRoughnessThreshold
+        // Rough dielectric transmission (Walter et al. 2007) -
+        // TransmissionRoughness < DeltaRoughnessThreshold
         // (the struct default, 0) reproduces exactly the old perfect-specular path as a
         // degenerate case (same delta-lobe convention as the opaque GGX lobe's own
         // Roughness threshold). Otherwise, a microfacet normal is VNDF-sampled the same
@@ -283,7 +283,7 @@ namespace Sample15
                 return baseColor;
 
             var (tr, tg, tb, _) = CudaTex2D.Sample(sbtData->BaseColorTexture, uv.x * sbtData->UVScale, uv.y * sbtData->UVScale);
-            // sRGB decode (docs/SAMPLE15_PLAN.md Milestone M6) - base-color textures
+            // sRGB decode - base-color textures
             // are 8-bit sRGB-encoded source assets (TextureLoader.LoadRgba8 uploads
             // the raw bytes with no gamma handling at all), but every other quantity
             // in this renderer (GGX energy conservation, HDRI radiance, the scalar
@@ -296,8 +296,7 @@ namespace Sample15
             return (baseColor * (1f - sbtData->TextureWeight)) + (texSample * sbtData->TextureWeight);
         }
 
-        // Tangent-space normal map perturbation (docs/SAMPLE15_PLAN.md Milestone M6) -
-        // standard OpenGL-convention normal map (texel.x/.y/.z map to the tangent/
+        // Tangent-space normal map perturbation - standard OpenGL-convention normal map (texel.x/.y/.z map to the tangent/
         // bitangent/normal axes respectively after the [0,1] -> [-1,1] remap).
         // NormalStrength blends between the unperturbed shadingNormal (0) and the full
         // texture-driven perturbation (1); bitangent is reconstructed via cross(normal,

@@ -3,8 +3,8 @@ using ILGPU.Algorithms;
 namespace Sample15
 {
     /// <summary>
-    /// Next-event estimation against the unified light list (docs/SAMPLE15_PLAN.md
-    /// Milestone M4/Design Decision 4) - picks one light via the scene's power-weighted
+    /// Next-event estimation against the unified light list -
+    /// picks one light via the scene's power-weighted
     /// CDF, samples a point on it, shadow-tests it, and evaluates the surface's BSDF
     /// toward it. Point lights are delta lights (no MIS competitor - a BSDF-sampled ray
     /// can never land on a measure-zero point, so their NEE sample is always the sole
@@ -107,7 +107,7 @@ namespace Sample15
 
                 // Two-sided emitter (abs) - Sponza's hand-promoted emissive vase
                 // materials have no reliable consistent winding to assume one-sidedness
-                // from (docs/SAMPLE15_PLAN.md Milestone M4).
+                // from.
                 float cosAtLight = XMath.Abs(Vec3.dot(triNormal, lightDir));
                 if (cosAtLight <= 1e-6f)
                     return new Vec3(0f, 0f, 0f);

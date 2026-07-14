@@ -1,4 +1,4 @@
-﻿// ---------------------------------------------------------------------------------------
+// ---------------------------------------------------------------------------------------
 //                                     ILGPU OptiX
 //                        Copyright (c) 2020-2022 ILGPU Project
 //                                    www.ilgpu.net
@@ -10,9 +10,10 @@
 // ---------------------------------------------------------------------------------------
 
 using ILGPU.Util;
+using ILGPU.OptiX.Native;
 using System;
 
-namespace ILGPU.OptiX
+namespace ILGPU.OptiX.Pipeline
 {
     /// <summary>
     /// Wrapper over OptiX program group.

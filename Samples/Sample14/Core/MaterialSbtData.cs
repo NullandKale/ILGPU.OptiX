@@ -9,6 +9,7 @@
 // Source License. See LICENSE.txt for details.
 // ---------------------------------------------------------------------------------------
 
+using ILGPU.OptiX.DeviceApi;
 namespace Sample14
 {
     // Device-side view of a hitgroup record's custom data (the bytes after the header) -
@@ -17,11 +18,10 @@ namespace Sample14
     // array. Only the radiance hitgroup record's data is ever read (the shadow ray's
     // closest-hit is an empty stub).
     //
-    // The full reference Material field set (docs/SAMPLE13_PLAN.md section "MaterialSbtData
-    // / host HitgroupRecord") is added in one pass even though Reflectivity/Transparency/
-    // IndexOfRefraction/TransmissionColor aren't read by any shading branch until mirror/
-    // dielectric materials are added - avoids repeated struct-layout churn across
-    // milestones.
+    // The full reference Material field set is added in one pass even though
+    // Reflectivity/Transparency/IndexOfRefraction/TransmissionColor aren't read by any
+    // shading branch until mirror/dielectric materials are added - avoids repeated
+    // struct-layout churn across milestones.
     //
     // Shading dispatch order (evaluated in __closest__radiance, mirrors the reference's
     // Material field-value dispatch exactly): Transparency > 0 -> dielectric; else

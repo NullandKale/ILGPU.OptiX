@@ -9,6 +9,7 @@
 // Source License. See LICENSE.txt for details.
 // ---------------------------------------------------------------------------------------
 
+using ILGPU.OptiX.DeviceApi;
 namespace Sample13
 {
     // Device-visible per-light data, uploaded as a flat array (LaunchParams.PointLights /
@@ -24,7 +25,7 @@ namespace Sample13
     // Per-primitive parameters for the Sphere custom-primitive type (direct port of
     // RayTracing/Objects/BoundedObjects.cs's Sphere fields). Indexed by
     // OptixGetPrimitiveIndex.Value from within the sphere build input's own local
-    // indexing (see docs/SAMPLE13_PLAN.md's custom-primitive design).
+    // indexing.
     public struct SphereData
     {
         public Vec3 Center;
@@ -33,7 +34,7 @@ namespace Sample13
 
     // Axis-aligned box (direct port of RayTracing/Objects/BoundedObjects.cs's Box,
     // ported as a real 3-axis slab-test box rather than the reference's 6-rect-face
-    // proxy - see docs/SAMPLE13_PLAN.md's Box design note).
+    // proxy).
     public struct BoxData
     {
         public Vec3 Min;

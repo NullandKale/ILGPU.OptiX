@@ -1,4 +1,4 @@
-﻿// ---------------------------------------------------------------------------------------
+// ---------------------------------------------------------------------------------------
 //                                     ILGPU OptiX
 //                        Copyright (c) 2020-2022 ILGPU Project
 //                                    www.ilgpu.net
@@ -10,11 +10,12 @@
 // ---------------------------------------------------------------------------------------
 
 using ILGPU.OptiX.Resources;
+using ILGPU.OptiX.Native;
 using System;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
 
-namespace ILGPU.OptiX
+namespace ILGPU.OptiX.Pipeline
 {
     /// <summary>
     /// Helper functions for constructing OptixShaderBindingTable.

@@ -20,7 +20,7 @@ using ILGPU.Runtime.Cuda;
 using System;
 using System.Numerics;
 
-namespace ILGPU.OptiX
+namespace ILGPU.OptiX.DeviceApi
 {
     /// <summary>
     /// Provides the functionality of the optixTrace built-in function.
@@ -45,6 +45,17 @@ namespace ILGPU.OptiX
     /// in the format string (each %N is the index of its argument in the EmitRef
     /// call, not an OptiX ABI slot number) rather than passed as 81 distinct
     /// arguments.
+    ///
+    /// The payload-type ID this class's own top-level Trace(...) family bakes into
+    /// that "mov.u32" instruction is always 0 (OPTIX_PAYLOAD_TYPE_DEFAULT) - untyped
+    /// payload dispatch, correct when a pipeline declares no OptixPayloadType entries
+    /// (or exactly one). Nested static classes (<see cref="Typed0"/>, <see cref="Typed1"/>)
+    /// re-generate the identical Trace(...)/Trace&lt;T&gt;(...) family with a different
+    /// literal baked in, for pipelines using OptiX's typed-payload dispatch
+    /// with more than one OptixPayloadType declared -
+    /// each ray type's optixTrace call site must specify which declared type it uses,
+    /// and that ID has to be a genuine PTX immediate for the same reason the type-0
+    /// case does, so it can't be a normal runtime method parameter.
     /// </remarks>
     [CLSCompliant(false)]
     public static class OptixTrace
@@ -63,9 +74,8 @@ namespace ILGPU.OptiX
     // paramIdx, leaving 44 - 18 = 26 as the actual highest payload count an overload
     // can support. Generating every count up to this true ceiling up front (rather
     // than only as high as whatever a given sample happens to need today) means no
-    // sample should ever need to touch this loop bound again - see
-    // docs/SAMPLE15_PLAN.md Milestone M3 for the last time a sample-specific bump
-    // here caused a silent mismatch against RendererPipeline.cs's own
+    // sample should ever need to touch this loop bound again - a sample-specific bump
+    // here previously caused a silent mismatch against RendererPipeline.cs's own
     // NumPayloadValues (a separate, unrelated number samples must still set
     // themselves to match how many of these generated slots they actually use).
     const int MaxEmitRefArguments = 44;
@@ -84,6 +94,37 @@ namespace ILGPU.OptiX
         public const int MaxPayloadCount = <#= MaxAchievablePayloadValues #>;
 
 <#
+    // One entry per generated Trace(...) family: WrapperClassName == null emits the
+    // root (untyped, OPTIX_PAYLOAD_TYPE_DEFAULT = 0) family directly in OptixTrace
+    // itself, unchanged from before item 5 - every existing sample's call sites keep
+    // working with zero changes. The others each emit their family nested inside a
+    // "public static class <name> { ... }" block, with TypeIdLiteral baked into the
+    // PTX "mov.u32" instruction instead of 0.
+    var variants = new[]
+    {
+        new { WrapperClassName = (string)null, TypeIdLiteral = 0 }, // OPTIX_PAYLOAD_TYPE_DEFAULT
+        new { WrapperClassName = "Typed0", TypeIdLiteral = 1 },     // OPTIX_PAYLOAD_TYPE_ID_0
+        new { WrapperClassName = "Typed1", TypeIdLiteral = 2 },     // OPTIX_PAYLOAD_TYPE_ID_1
+    };
+
+    foreach (var variant in variants) {
+        bool wrapped = variant.WrapperClassName != null;
+        if (wrapped) {
+#>
+        /// <summary>
+        /// Same Trace(...)/Trace&lt;T&gt;(...) family as the enclosing
+        /// <see cref="OptixTrace"/>, but bakes payload-type ID <#= variant.TypeIdLiteral #>
+        /// into the underlying _optix_trace_typed_32 call instead of
+        /// OPTIX_PAYLOAD_TYPE_DEFAULT - use for a ray type whose pipeline declares
+        /// multiple OptixPayloadType entries and needs to select this one at each
+        /// optixTrace call site.
+        /// </summary>
+        [CLSCompliant(false)]
+        public static class <#= variant.WrapperClassName #>
+        {
+<#
+        }
+
     for (int paramIdx = 0; paramIdx <= MaxAchievablePayloadValues; paramIdx++) {
         int padArg = paramIdx;
         int typeArg = paramIdx + 1;
@@ -105,7 +146,7 @@ namespace ILGPU.OptiX
         bodyArgs.AddRange(inputPayloadArgs.Select(x => $"%{x}"));
 
         string callInstruction =
-            $"mov.u32 %{typeArg}, 0; mov.u32 %{countArg}, {paramIdx}; call (";
+            $"mov.u32 %{typeArg}, {variant.TypeIdLiteral}; mov.u32 %{countArg}, {paramIdx}; call (";
         callInstruction += string.Join(", ", outputArgs.Select(x => $"%{x}"));
         callInstruction += "), _optix_trace_typed_32, (";
         callInstruction += string.Join(", ", bodyArgs);
@@ -116,81 +157,83 @@ namespace ILGPU.OptiX
             : paramIdx == 1
                 ? "carrying 1 payload register (p0)"
                 : $"carrying {paramIdx} payload registers (p0..p{paramIdx - 1})";
+
+        string indent = wrapped ? "    " : "";
 #>
-        /// <summary>
-        /// Traces a ray, <#= payloadRegisterSummary #> - see <see cref="OptixPayload"/>
-        /// to read/write them from within the hit/miss programs this ray invokes.
-        /// <#= paramIdx #> of <see cref="MaxPayloadCount"/> max.
-        /// </summary>
-        public static void Trace(
-            ulong traversableHandle
-            , (float X, float Y, float Z) rayOrigin
-            , (float X, float Y, float Z) rayDirection
-            , float tmin
-            , float tmax
-            , float rayTime
-            , uint visibilityMask
-            , OptixRayFlags rayFlags
-            , uint SbtOffset
-            , uint SbtStride
-            , uint missSbtIndex
+<#= indent #>        /// <summary>
+<#= indent #>        /// Traces a ray, <#= payloadRegisterSummary #> - see <see cref="OptixPayload"/>
+<#= indent #>        /// to read/write them from within the hit/miss programs this ray invokes.
+<#= indent #>        /// <#= paramIdx #> of <see cref="MaxPayloadCount"/> max.
+<#= indent #>        /// </summary>
+<#= indent #>        public static void Trace(
+<#= indent #>            ulong traversableHandle
+<#= indent #>            , (float X, float Y, float Z) rayOrigin
+<#= indent #>            , (float X, float Y, float Z) rayDirection
+<#= indent #>            , float tmin
+<#= indent #>            , float tmax
+<#= indent #>            , float rayTime
+<#= indent #>            , uint visibilityMask
+<#= indent #>            , OptixRayFlags rayFlags
+<#= indent #>            , uint SbtOffset
+<#= indent #>            , uint SbtStride
+<#= indent #>            , uint missSbtIndex
 <#      for (int i = 0; i < paramIdx; i++) { #>
-            , ref uint p<#= i #>
+<#= indent #>            , ref uint p<#= i #>
 <#      } #>
-            )
-        {
+<#= indent #>            )
+<#= indent #>        {
 <#      for (int i = 0; i < paramIdx; i++) { #>
-            Ref<uint> _p<#= i #> = p<#= i #>;
+<#= indent #>            Ref<uint> _p<#= i #> = p<#= i #>;
 <#      } #>
-            Ref<uint> _pad = 0u;
-            Output<uint> _type = default;
-            Output<uint> _count = default;
-            Input<ulong> _traversableHandle = traversableHandle;
-            Input<float> _ox = rayOrigin.X;
-            Input<float> _oy = rayOrigin.Y;
-            Input<float> _oz = rayOrigin.Z;
-            Input<float> _dx = rayDirection.X;
-            Input<float> _dy = rayDirection.Y;
-            Input<float> _dz = rayDirection.Z;
-            Input<float> _tmin = tmin;
-            Input<float> _tmax = tmax;
-            Input<float> _rayTime = rayTime;
-            Input<uint> _visibilityMask = visibilityMask;
-            Input<OptixRayFlags> _rayFlags = rayFlags;
-            Input<uint> _SbtOffset = SbtOffset;
-            Input<uint> _SbtStride = SbtStride;
-            Input<uint> _missSbtIndex = missSbtIndex;
-
-            CudaAsm.EmitRef(
-                "<#= callInstruction #>"
+<#= indent #>            Ref<uint> _pad = 0u;
+<#= indent #>            Output<uint> _type = default;
+<#= indent #>            Output<uint> _count = default;
+<#= indent #>            Input<ulong> _traversableHandle = traversableHandle;
+<#= indent #>            Input<float> _ox = rayOrigin.X;
+<#= indent #>            Input<float> _oy = rayOrigin.Y;
+<#= indent #>            Input<float> _oz = rayOrigin.Z;
+<#= indent #>            Input<float> _dx = rayDirection.X;
+<#= indent #>            Input<float> _dy = rayDirection.Y;
+<#= indent #>            Input<float> _dz = rayDirection.Z;
+<#= indent #>            Input<float> _tmin = tmin;
+<#= indent #>            Input<float> _tmax = tmax;
+<#= indent #>            Input<float> _rayTime = rayTime;
+<#= indent #>            Input<uint> _visibilityMask = visibilityMask;
+<#= indent #>            Input<OptixRayFlags> _rayFlags = rayFlags;
+<#= indent #>            Input<uint> _SbtOffset = SbtOffset;
+<#= indent #>            Input<uint> _SbtStride = SbtStride;
+<#= indent #>            Input<uint> _missSbtIndex = missSbtIndex;
+<#= indent #>
+<#= indent #>            CudaAsm.EmitRef(
+<#= indent #>                "<#= callInstruction #>"
 <#      for (int i = 0; i < paramIdx; i++) { #>
-                , ref _p<#= i #>
+<#= indent #>                , ref _p<#= i #>
 <#      } #>
-                , ref _pad
-                , ref _type
-                , ref _count
-                , ref _traversableHandle
-                , ref _ox
-                , ref _oy
-                , ref _oz
-                , ref _dx
-                , ref _dy
-                , ref _dz
-                , ref _tmin
-                , ref _tmax
-                , ref _rayTime
-                , ref _visibilityMask
-                , ref _rayFlags
-                , ref _SbtOffset
-                , ref _SbtStride
-                , ref _missSbtIndex
-                );
-
+<#= indent #>                , ref _pad
+<#= indent #>                , ref _type
+<#= indent #>                , ref _count
+<#= indent #>                , ref _traversableHandle
+<#= indent #>                , ref _ox
+<#= indent #>                , ref _oy
+<#= indent #>                , ref _oz
+<#= indent #>                , ref _dx
+<#= indent #>                , ref _dy
+<#= indent #>                , ref _dz
+<#= indent #>                , ref _tmin
+<#= indent #>                , ref _tmax
+<#= indent #>                , ref _rayTime
+<#= indent #>                , ref _visibilityMask
+<#= indent #>                , ref _rayFlags
+<#= indent #>                , ref _SbtOffset
+<#= indent #>                , ref _SbtStride
+<#= indent #>                , ref _missSbtIndex
+<#= indent #>                );
+<#= indent #>
 <#      for (int i = 0; i < paramIdx; i++) { #>
-            p<#= i #> = _p<#= i #>.Value;
+<#= indent #>            p<#= i #> = _p<#= i #>.Value;
 <#      } #>
-        }
-
+<#= indent #>        }
+<#= indent #>
 <# } #>
 <#
     // Generic struct-payload wrapper: dispatches to one of the fixed-payload-count
@@ -201,55 +244,64 @@ namespace ILGPU.OptiX
     // hand-counts payload registers or bit-casts floats through
     // Interop.FloatAsInt/IntAsFloat.
     //
-    // NOTE (docs/API_USABILITY_PLAN.md section 2.5): whether ILGPU folds the switch
-    // below to a single branch (since count is constant once T is a concrete type)
-    // has not been verified on real hardware - inspect PTX via DumpGeneratedPtx
-    // before relying on this in a hot per-frame path.
+    // NOTE: whether ILGPU folds the switch below to a single branch (since count is
+    // constant once T is a concrete type) has not been verified on real hardware -
+    // inspect PTX via DumpGeneratedPtx before relying on this in a hot per-frame path.
+    string indent2 = wrapped ? "    " : "";
 #>
-        /// <summary>
-        /// Traces a ray carrying a single struct-typed payload instead of individual
-        /// <c>ref uint</c> registers - see <see cref="OptixPayload.Read{T}"/> and
-        /// <see cref="OptixPayload.Write{T}"/> to access it from hit/miss programs, and
-        /// <see cref="OptixPayloadLayout.CountOf{T}"/> (host-side only) to derive
-        /// <c>NumPayloadValues</c> for the pipeline compile options from
-        /// <c>sizeof(T)</c> instead of a hand-maintained constant. Internally
-        /// dispatches to one of the fixed-count overloads above based on
-        /// <c>sizeof(T)/4</c> - see the verification note on this method in
-        /// OptixTrace.tt before relying on it in a hot per-frame path.
-        /// </summary>
-        public static unsafe void Trace<T>(
-            ulong traversableHandle,
-            Vector3 rayOrigin,
-            Vector3 rayDirection,
-            float tmin,
-            float tmax,
-            ref T payload,
-            float rayTime = 0f,
-            uint visibilityMask = 0xff,
-            OptixRayFlags rayFlags = OptixRayFlags.OPTIX_RAY_FLAG_NONE,
-            uint sbtOffset = 0,
-            uint sbtStride = 1,
-            uint missSbtIndex = 0)
-            where T : unmanaged
-        {
-            var origin = (rayOrigin.X, rayOrigin.Y, rayOrigin.Z);
-            var direction = (rayDirection.X, rayDirection.Y, rayDirection.Z);
-            int count = sizeof(T) / 4;
-            T local = payload;
-            uint* w = (uint*)&local;
-
-            switch (count)
-            {
+<#= indent2 #>        /// <summary>
+<#= indent2 #>        /// Traces a ray carrying a single struct-typed payload instead of individual
+<#= indent2 #>        /// <c>ref uint</c> registers - see <see cref="OptixPayload.Read{T}"/> and
+<#= indent2 #>        /// <see cref="OptixPayload.Write{T}"/> to access it from hit/miss programs, and
+<#= indent2 #>        /// <see cref="OptixPayloadLayout.CountOf{T}"/> (host-side only) to derive
+<#= indent2 #>        /// <c>NumPayloadValues</c> for the pipeline compile options from
+<#= indent2 #>        /// <c>sizeof(T)</c> instead of a hand-maintained constant. Internally
+<#= indent2 #>        /// dispatches to one of the fixed-count overloads above based on
+<#= indent2 #>        /// <c>sizeof(T)/4</c> - see the verification note on this method in
+<#= indent2 #>        /// OptixTrace.tt before relying on it in a hot per-frame path.
+<#= indent2 #>        /// </summary>
+<#= indent2 #>        public static unsafe void Trace<T>(
+<#= indent2 #>            ulong traversableHandle,
+<#= indent2 #>            Vector3 rayOrigin,
+<#= indent2 #>            Vector3 rayDirection,
+<#= indent2 #>            float tmin,
+<#= indent2 #>            float tmax,
+<#= indent2 #>            ref T payload,
+<#= indent2 #>            float rayTime = 0f,
+<#= indent2 #>            uint visibilityMask = 0xff,
+<#= indent2 #>            OptixRayFlags rayFlags = OptixRayFlags.None,
+<#= indent2 #>            uint sbtOffset = 0,
+<#= indent2 #>            uint sbtStride = 1,
+<#= indent2 #>            uint missSbtIndex = 0)
+<#= indent2 #>            where T : unmanaged
+<#= indent2 #>        {
+<#= indent2 #>            var origin = (rayOrigin.X, rayOrigin.Y, rayOrigin.Z);
+<#= indent2 #>            var direction = (rayDirection.X, rayDirection.Y, rayDirection.Z);
+<#= indent2 #>            int count = sizeof(T) / 4;
+<#= indent2 #>            T local = payload;
+<#= indent2 #>            uint* w = (uint*)&local;
+<#= indent2 #>
+<#= indent2 #>            switch (count)
+<#= indent2 #>            {
 <#  for (int paramIdx = 0; paramIdx <= MaxAchievablePayloadValues; paramIdx++) {
         var refArgs = string.Concat(Enumerable.Range(0, paramIdx).Select(i => $", ref w[{i}]"));
 #>
-                case <#= paramIdx #>:
-                    Trace(traversableHandle, origin, direction, tmin, tmax, rayTime, visibilityMask, rayFlags, sbtOffset, sbtStride, missSbtIndex<#= refArgs #>);
-                    break;
+<#= indent2 #>                case <#= paramIdx #>:
+<#= indent2 #>                    Trace(traversableHandle, origin, direction, tmin, tmax, rayTime, visibilityMask, rayFlags, sbtOffset, sbtStride, missSbtIndex<#= refArgs #>);
+<#= indent2 #>                    break;
 <#  } #>
-            }
-
-            payload = local;
+<#= indent2 #>            }
+<#= indent2 #>
+<#= indent2 #>            payload = local;
+<#= indent2 #>        }
+<#
+        if (wrapped) {
+#>
         }
+
+<#
+        }
+    }
+#>
     }
 }

@@ -8,11 +8,11 @@ namespace Sample15
     /// </summary>
     public static class MeshScenes
     {
-        // Shared by every single-mesh scene (M6) - reuses the existing triangle GAS
+        // Shared by every single-mesh scene - reuses the existing triangle GAS
         // pipeline as-is (meshes are pure triangle geometry, no new subsystem needed),
         // auto-fits the camera/lights to each mesh's own bounding box since these 4 OBJs
-        // (cow, stanford-bunny, teapot, xyzrgb_dragon - see docs/SAMPLE13_PLAN.md) are at
-        // very different real-world scales. Keeps the mesh's own vertex arrays directly
+        // (cow, stanford-bunny, teapot, xyzrgb_dragon) are at very different
+        // real-world scales. Keeps the mesh's own vertex arrays directly
         // (no SceneBuilder re-accumulation needed for a single unmodified mesh).
         private static SceneData BuildMeshScene(string name, string objFileName, MaterialSbtData material, Vec3 lightColorA, Vec3 lightColorB)
         {
@@ -41,8 +41,8 @@ namespace Sample15
                 Normals = mesh.Normals,
                 TexCoords = mesh.TexCoords,
                 // This builder constructs SceneData directly rather than going through
-                // SceneBuilder (docs/SAMPLE15_PLAN.md Milestone M6) - Tangents must be
-                // wired in explicitly here too, or Rays/RadianceRay.cs's unconditional
+                // SceneBuilder, so Tangents must be wired in explicitly here too, or
+                // Rays/RadianceRay.cs's unconditional
                 // launchParams.Tangents[tri.x] read (every triangle hit, no NumNeeLights-
                 // style empty-buffer guard) reads through a null device pointer the
                 // moment this scene has any Vertices at all.
@@ -168,10 +168,9 @@ namespace Sample15
                 AmbientIntensity = 0f,
                 BackgroundTop = new Vec3(0.15f, 0.15f, 0.2f),
                 BackgroundBottom = new Vec3(0.05f, 0.05f, 0.08f),
-                // HDRI environment map test case (docs/SAMPLE15_PLAN.md Milestone M5) -
-                // combined with the hand-promoted emissive vases (M4) and the existing
-                // point lights, exercises a full point+mesh+env MIS validation case
-                // through Sponza's colonnades.
+                // HDRI environment map test case - combined with the hand-promoted
+                // emissive vases and the existing point lights, exercises a full
+                // point+mesh+env MIS validation case through Sponza's colonnades.
                 EnvMapPath = "models/hdri/venice_sunset_1k.hdr",
                 CameraOrigin = new Vec3(min.x + (sizeX * 0.15f), eyeHeight, center.z),
                 CameraLookAt = new Vec3(max.x - (sizeX * 0.15f), eyeHeight, center.z),
@@ -232,20 +231,18 @@ namespace Sample15
                 // TextureObject stays 0.
                 bool isAlphaCutout = objMat.Name == "leaf" || objMat.Name == "Material__57" || objMat.Name == "chain";
 
-                // Hand-promoted emissive mesh-light test case (docs/SAMPLE15_PLAN.md
-                // Milestone M4) - Sponza's bundled MTL has zero real emissive
-                // materials (see the plan's own Verified Facts), so the three vase
-                // materials are overridden with a warm glow to exercise real
-                // emissive-triangle NEE/MIS against actual scene geometry, same
-                // pattern as the leaf/chain alpha-cutout override above.
+                // Hand-promoted emissive mesh-light test case - Sponza's bundled MTL
+                // has zero real emissive materials, so the three vase materials are
+                // overridden with a warm glow to exercise real emissive-triangle
+                // NEE/MIS against actual scene geometry, same pattern as the
+                // leaf/chain alpha-cutout override above.
                 bool isEmissiveVase = objMat.Name == "vase" || objMat.Name == "vase_round" || objMat.Name == "vase_hanging";
 
-                // Hand-authored scalar Metallic/Roughness overrides by material name
-                // (docs/SAMPLE15_PLAN.md Milestone M6) - Sponza has no real ORM
-                // texture data to drive this from (see the plan's own Verified Facts),
-                // so this is the documented fallback: the metal chain/flagpole get a
-                // real metallic response instead of Roughness=1's flat diffuse
-                // default, and the floor gets a subtler polished-stone gloss.
+                // Hand-authored scalar Metallic/Roughness overrides by material name -
+                // Sponza has no real ORM texture data to drive this from, so this is
+                // the fallback: the metal chain/flagpole get a real metallic response
+                // instead of Roughness=1's flat diffuse default, and the floor gets a
+                // subtler polished-stone gloss.
                 float materialRoughness = 1f;
                 float materialMetallic = 0f;
                 if (objMat.Name == "chain" || objMat.Name == "flagpole")

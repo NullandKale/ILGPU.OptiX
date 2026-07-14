@@ -21,7 +21,7 @@
   <ItemGroup>
     <!-- cow.obj/stanford-bunny.obj/teapot.obj/xyzrgb_dragon.obj + Sponza, same asset
          set Sample13 bundles (see Sample13.csproj) - museum's video-textured scenes
-         are deferred (see docs/SAMPLE14_PLAN.md), so no museum assets here yet. -->
+         are deferred, so no museum assets here yet. -->
     <None Include="..\Models\meshes\**\*.*">
       <Link>models\meshes\%(RecursiveDir)%(Filename)%(Extension)</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>

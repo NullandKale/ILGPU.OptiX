@@ -15,7 +15,7 @@ using System;
 #pragma warning disable CA1707 // Identifiers should not contain underscores
 #pragma warning disable CA1711 // Identifiers should not have incorrect suffix
 
-namespace ILGPU.OptiX
+namespace ILGPU.OptiX.Native
 {
     [Flags]
     public enum OptixExceptionFlags
@@ -23,28 +23,28 @@ namespace ILGPU.OptiX
         /// <summary>
         /// No exception are enabled.
         /// </summary>
-        OPTIX_EXCEPTION_FLAG_NONE = 0,
+        None = 0,
 
         /// <summary>
         /// Enables exceptions check related to the continuation stack.
         /// </summary>
-        OPTIX_EXCEPTION_FLAG_STACK_OVERFLOW = 1 << 0,
+        StackOverflow = 1 << 0,
 
         /// <summary>
         /// Enables exceptions check related to trace depth.
         /// </summary>
-        OPTIX_EXCEPTION_FLAG_TRACE_DEPTH = 1 << 1,
+        TraceDepth = 1 << 1,
 
         /// <summary>
         /// Enables user exceptions via optixThrowException(). This flag must be specified
         /// for all modules in a pipeline if any module calls optixThrowException().
         /// </summary>
-        OPTIX_EXCEPTION_FLAG_USER = 1 << 2,
+        User = 1 << 2,
 
         /// <summary>
         /// Enables various exceptions check related to traversal.
         /// </summary>
-        OPTIX_EXCEPTION_FLAG_DEBUG = 1 << 3
+        Debug = 1 << 3
     }
 }
 

@@ -14,6 +14,8 @@ using ILGPU.OptiX.Util;
 using ILGPU.Runtime;
 using ILGPU.Runtime.Cuda;
 using ILGPU.Util;
+using ILGPU.OptiX.DeviceApi;
+using ILGPU.OptiX.Native;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -69,17 +71,27 @@ namespace ILGPU.OptiX.Pipeline
         /// </summary>
         public uint HitgroupRecordCount => sbt.HitgroupRecordCount;
 
+        /// <summary>
+        /// How many OptixTasks were executed to compile the raygen module, if
+        /// <see cref="RayTracingPipelineBuilder{TLaunchParams}.CompileRaygenWithTasks"/>
+        /// was used - 0 if the raygen module was compiled the normal (blocking, single
+        /// call) way.
+        /// </summary>
+        public int RaygenCompileTaskCount { get; }
+
         internal RayTracingPipeline(
             OptixDeviceContext deviceContext,
             OptixPipeline pipeline,
             OptixKernel raygenKernel,
-            List<BuiltRayType<TLaunchParams>> rayTypes)
+            List<BuiltRayType<TLaunchParams>> rayTypes,
+            int raygenCompileTaskCount = 0)
         {
             this.deviceContext = deviceContext;
             Pipeline = pipeline;
             this.raygenKernel = raygenKernel;
             this.rayTypes = rayTypes;
             rayTypeIndicesByName = rayTypes.ToDictionary(rt => rt.Name, rt => rt.Index);
+            RaygenCompileTaskCount = raygenCompileTaskCount;
 
             sbtHandle = SafeHGlobal.Alloc(Marshal.SizeOf<OptixShaderBindingTable>());
             InitializeRaygenAndMissRecords();
@@ -137,6 +149,74 @@ namespace ILGPU.OptiX.Pipeline
             for (var r = 0; r < rayTypes.Count; r++)
                 perRayType[r] = materialsArray;
             SetHitRecords(perRayType, repeatCount);
+        }
+
+        /// <summary>
+        /// Packs and uploads one <see cref="SbtRecord{TMaterial}"/> per
+        /// <paramref name="entries"/> element per ray type, where each entry names
+        /// which of a ray type's (possibly several) declared
+        /// <see cref="RayTypeBuilder{TLaunchParams}.HitGroup{TMaterial}(string, Action{TLaunchParams}, Action{TLaunchParams}?, Action{TLaunchParams}?)"/>
+        /// program groups backs that record - the overload geometry with multiple
+        /// intersection programs per ray type needs (Sample13/14's custom-primitive
+        /// pattern: one kind per primitive type, sharing one closest-hit/any-hit pair).
+        /// Layout and interleaving match the other overloads exactly - entries in
+        /// order, ray types interleaved within each entry, the whole sequence repeated
+        /// <paramref name="repeatCount"/> times - so
+        /// <c>sbtOffset = entryIndex * RayTypeCount, sbtStride = RayTypeCount</c>
+        /// addresses a given entry/ray-type combination, and the caller controls entry
+        /// order to match its own GAS build-input / SbtIndexOffsetBuffer layout exactly
+        /// (this method has no opinion on acceleration-structure layout - that stays
+        /// entirely with <see cref="OptixAccelBuilder"/>, per every other builder in
+        /// this library).
+        /// </summary>
+        /// <param name="entries">
+        /// One entry per record-per-entry-slot (in declaration/geometry order); every
+        /// <see cref="HitGroupEntry{TMaterial}.Kind"/> must match a
+        /// <c>HitGroup(kind, ...)</c> declared on every ray type in this pipeline.
+        /// </param>
+        /// <param name="repeatCount">See the other overloads.</param>
+        public void SetHitRecords<TMaterial>(ReadOnlySpan<HitGroupEntry<TMaterial>> entries, int repeatCount = 1)
+            where TMaterial : unmanaged
+        {
+            foreach (var rayType in rayTypes)
+            {
+                if (rayType.HitGroupDataType != typeof(TMaterial))
+                    throw new ArgumentException(
+                        $"Ray type '{rayType.Name}' was declared with HitGroup<{rayType.HitGroupDataType.Name}>, " +
+                        $"but SetHitRecords was called with {typeof(TMaterial).Name}. Every ray type on a pipeline " +
+                        "must use the same hit-group material type.",
+                        nameof(TMaterial));
+            }
+            if (repeatCount < 0)
+                throw new ArgumentOutOfRangeException(nameof(repeatCount));
+
+            var entryCount = entries.Length;
+            var blockSize = entryCount * rayTypes.Count;
+            var kernels = new OptixKernel[blockSize * repeatCount];
+            var data = new TMaterial[blockSize * repeatCount];
+            for (var b = 0; b < repeatCount; b++)
+            {
+                for (var e = 0; e < entryCount; e++)
+                {
+                    var entry = entries[e];
+                    for (var r = 0; r < rayTypes.Count; r++)
+                    {
+                        if (!rayTypes[r].HitGroupKernelsByKind.TryGetValue(entry.Kind, out var kernel))
+                        {
+                            throw new ArgumentException(
+                                $"Ray type '{rayTypes[r].Name}' has no HitGroup(\"{entry.Kind}\", ...) configured, " +
+                                $"but an entry with Kind=\"{entry.Kind}\" was passed to SetHitRecords.",
+                                nameof(entries));
+                        }
+
+                        var i = (b * blockSize) + (e * rayTypes.Count) + r;
+                        kernels[i] = kernel;
+                        data[i] = entry.Data;
+                    }
+                }
+            }
+
+            UploadHitRecords(kernels, data);
         }
 
         /// <summary>
@@ -207,13 +287,26 @@ namespace ILGPU.OptiX.Pipeline
                 {
                     for (var r = 0; r < rayTypes.Count; r++)
                     {
+                        if (!rayTypes[r].HitGroupKernelsByKind.TryGetValue(HitGroupKind.Default, out var kernel))
+                        {
+                            throw new InvalidOperationException(
+                                $"Ray type '{rayTypes[r].Name}' declares multiple named hit groups; use the " +
+                                "SetHitRecords overload that takes HitGroupEntry<TMaterial> entries instead.");
+                        }
+
                         var i = (b * blockSize) + (m * rayTypes.Count) + r;
-                        kernels[i] = rayTypes[r].HitGroupKernel;
+                        kernels[i] = kernel;
                         data[i] = materialsByRayType[r][m];
                     }
                 }
             }
 
+            UploadHitRecords(kernels, data);
+        }
+
+        private void UploadHitRecords<TMaterial>(OptixKernel[] kernels, TMaterial[] data)
+            where TMaterial : unmanaged
+        {
             var packedBytes = OptixSbtRecords.Pack<TMaterial>(kernels, data);
             var newBuffer = deviceContext.Accelerator.Allocate1D(packedBytes);
 
@@ -285,7 +378,8 @@ namespace ILGPU.OptiX.Pipeline
                 foreach (var rayType in rayTypes)
                 {
                     rayType.MissKernel.Dispose();
-                    rayType.HitGroupKernel.Dispose();
+                    foreach (var hitGroupKernel in rayType.HitGroupKernelsByKind.Values)
+                        hitGroupKernel.Dispose();
                 }
                 raygenBuffer?.Dispose();
                 missBuffer?.Dispose();

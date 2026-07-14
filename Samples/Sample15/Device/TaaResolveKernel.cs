@@ -12,12 +12,17 @@ namespace Sample15
     /// block) - by the time this kernel runs, RawColorBuffer is fully written for the
     /// whole frame, so a 3x3 neighborhood read around any pixel is safe.
     ///
-    /// Clamps the reprojected history sample to the min/max color this frame's own
-    /// nearby pixels actually produced before blending it in - the standard
-    /// "neighborhood/variance clamping" technique production TAA implementations use to
-    /// catch ghosting/fireflies that survive RaygenProgram's own depth-based
-    /// disocclusion check (which only catches gross surface changes, not fine detail,
-    /// thin geometry, or a single stray bright sample).
+    /// Deliberately has no neighborhood/variance color clamp. That's a standard
+    /// real-time-TAA technique that assumes the "raw" per-frame color is
+    /// near-ground-truth (true for a rasterizer, where raw variation is just AA
+    /// jitter) and clamps stale/ghosted history back into this frame's local color
+    /// range. Here the raw signal is a single noisy Monte Carlo path-tracer sample,
+    /// so clamping a converging running average into one frame's noisy neighborhood
+    /// would re-inject raw per-sample noise into the output every frame, capping
+    /// achievable quality at roughly single-sample noise regardless of how many
+    /// frames have been accumulated - tried and removed for exactly this reason.
+    /// RaygenProgram's own depth-based disocclusion check (trustHistory) is the only
+    /// defense against stale/incorrect history now.
     /// </summary>
     public static class TaaResolveKernel
     {
@@ -74,9 +79,6 @@ namespace Sample15
             ArrayView<Vec4> outColor,
             ArrayView<float> outAccumCount)
         {
-            int ix = index % width;
-            int iy = index / width;
-
             Vec4 raw = rawColor[index];
             Vec3 pixelColor = new Vec3(raw.x, raw.y, raw.z);
             float currentDepth = raw.w;
@@ -95,29 +97,6 @@ namespace Sample15
                 float prevCount = SampleNearestScalar(prevAccumCount, width, height, coord.x, coord.y);
                 Vec3 prevSampleColor = new Vec3(prevSample.x, prevSample.y, prevSample.z);
 
-                // Neighborhood color clamp (3x3, clamped to buffer edges) - bounds the
-                // reprojected history sample to what this frame's own nearby pixels
-                // actually produced, so a history value that's ghosting or fireflying
-                // past that range gets pulled back into range instead of blended in
-                // wholesale. See this class's own doc comment.
-                int x0 = XMath.Max(ix - 1, 0), x1 = XMath.Min(ix + 1, width - 1);
-                int y0 = XMath.Max(iy - 1, 0), y1 = XMath.Min(iy + 1, height - 1);
-                Vec3 neighborMin = pixelColor;
-                Vec3 neighborMax = pixelColor;
-                for (int ny = y0; ny <= y1; ny++)
-                {
-                    for (int nx = x0; nx <= x1; nx++)
-                    {
-                        Vec4 n = rawColor[nx + (ny * width)];
-                        neighborMin = new Vec3(XMath.Min(neighborMin.x, n.x), XMath.Min(neighborMin.y, n.y), XMath.Min(neighborMin.z, n.z));
-                        neighborMax = new Vec3(XMath.Max(neighborMax.x, n.x), XMath.Max(neighborMax.y, n.y), XMath.Max(neighborMax.z, n.z));
-                    }
-                }
-                Vec3 clampedPrevColor = new Vec3(
-                    XMath.Clamp(prevSampleColor.x, neighborMin.x, neighborMax.x),
-                    XMath.Clamp(prevSampleColor.y, neighborMin.y, neighborMax.y),
-                    XMath.Clamp(prevSampleColor.z, neighborMin.z, neighborMax.z));
-
                 // Real-time decay (see SampleRenderer.HistoryDecayHalfLifeSeconds's own
                 // doc comment) - ages the effective count down every frame on a
                 // wall-clock schedule, so even a static/well-reprojected pixel keeps
@@ -127,7 +106,7 @@ namespace Sample15
                     prevCount *= XMath.Pow(0.5f, deltaTimeSeconds / historyDecayHalfLifeSeconds);
 
                 newCount = XMath.Min(prevCount + 1f, (float)maxHistoryFrames);
-                blendedColor = clampedPrevColor + ((pixelColor - clampedPrevColor) / newCount);
+                blendedColor = prevSampleColor + ((pixelColor - prevSampleColor) / newCount);
             }
 
             outColor[index] = new Vec4(blendedColor.x, blendedColor.y, blendedColor.z, currentDepth);

@@ -32,7 +32,7 @@ namespace Sample13
     }
 
     // Storage format for the HDR accumulation buffer (matches OptiX's
-    // OPTIX_PIXEL_FORMAT_FLOAT4/float4) - unlike Vec3, this is never used for device
+    // OptixPixelFormat.Float4/float4) - unlike Vec3, this is never used for device
     // math, only for reading/writing the accumulation buffer, so it doesn't need
     // arithmetic operators.
     public struct Vec4

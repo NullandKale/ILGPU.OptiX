@@ -9,8 +9,8 @@ namespace Sample15
     ///
     /// Proper tone mapping pipeline:
     /// 1. Exposure adjustment - scales the HDR values
-    /// 2. Tone mapping operator (Reinhard or ACES, runtime-selectable - docs/
-    ///    SAMPLE15_PLAN.md Milestone M8) - compresses HDR to LDR range
+    /// 2. Tone mapping operator (Reinhard or ACES, runtime-selectable) - compresses
+    ///    HDR to LDR range
     /// 3. sRGB OETF (piecewise, not an approximation - Milestone M8) - linear to
     ///    display-referred sRGB
     /// 4. Display output - convert to byte values

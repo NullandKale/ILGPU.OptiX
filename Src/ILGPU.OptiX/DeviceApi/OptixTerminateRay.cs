@@ -12,7 +12,7 @@
 using ILGPU.Runtime.Cuda;
 using System;
 
-namespace ILGPU.OptiX
+namespace ILGPU.OptiX.DeviceApi
 {
     /// <summary>
     /// Provides the functionality of the optixTerminateRay built-in function - callable

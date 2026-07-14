@@ -13,7 +13,7 @@ using ILGPU.Runtime.Cuda;
 using System;
 using System.Numerics;
 
-namespace ILGPU.OptiX
+namespace ILGPU.OptiX.DeviceApi
 {
     /// <summary>
     /// Helpers for compact Vec3/Vector3 payload packing/unpacking.

@@ -1,7 +1,7 @@
 ﻿// Vendored from github.com/NogginBops/ImGui.NET_OpenTK_Sample (MIT License,
 // Copyright (c) 2025 Julius Häger), namespace renamed only - this is Dear ImGui's own
 // C++ imgui_impl_opengl3 backend ported to OpenTK's GL bindings, not something worth
-// reimplementing from scratch (see docs/SAMPLE14_PLAN.md's M7 milestone).
+// reimplementing from scratch.
 
 using ImGuiNET;
 using OpenTK.Graphics.OpenGL4;

@@ -1,7 +1,9 @@
 using ILGPU;
 using ILGPU.Algorithms;
 using ILGPU.OptiX;
+using ILGPU.OptiX.Pipeline;
 using ILGPU.Runtime.Cuda;
+using ILGPU.OptiX.Native;
 using System;
 using System.Runtime.InteropServices;
 
@@ -9,14 +11,21 @@ namespace Sample13
 {
     /// <summary>
     /// Owns the process-lifetime GPU objects: the ILGPU context/accelerator and the
-    /// OptiX device context (with validation + log callback). Created first, disposed
-    /// last.
+    /// OptiX ray tracer (device context, with validation + log callback). Created
+    /// first, disposed last.
     /// </summary>
     public sealed class GpuContext : IDisposable
     {
         public Context Context { get; }
         public CudaAccelerator Accelerator { get; }
-        public OptixDeviceContext DeviceContext { get; }
+        public OptixRayTracer RayTracer { get; }
+
+        /// <summary>
+        /// Escape hatch for consumers that still talk to the raw device context
+        /// directly (acceleration structures, the denoiser) - <see cref="RayTracer"/>
+        /// only wraps pipeline/SBT/launch, not every OptiX surface.
+        /// </summary>
+        public OptixDeviceContext DeviceContext => RayTracer.DeviceContext;
 
         // accelerator.DefaultStream is declared as the base AcceleratorStream type; the
         // denoiser API needs the raw CUstream pointer, which only CudaStream exposes.
@@ -39,17 +48,17 @@ namespace Sample13
             // the driver.
             logCallback = (level, tag, message, _) =>
                 Console.Error.WriteLine($"[OptiX][{level}][{Marshal.PtrToStringAnsi(tag)}] {Marshal.PtrToStringAnsi(message)}");
-            DeviceContext = Accelerator.CreateDeviceContext(new OptixDeviceContextOptions
+            RayTracer = OptixRayTracer.Create(Accelerator, new OptixDeviceContextOptions
             {
                 LogCallbackFunction = Marshal.GetFunctionPointerForDelegate(logCallback),
                 LogCallbackLevel = 4,
-                ValidationMode = OptixDeviceContextValidationMode.OPTIX_DEVICE_CONTEXT_VALIDATION_MODE_ALL,
+                ValidationMode = OptixDeviceContextValidationMode.All,
             });
         }
 
         public void Dispose()
         {
-            DeviceContext.Dispose();
+            RayTracer.Dispose();
             Accelerator.Dispose();
             Context.Dispose();
         }

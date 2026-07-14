@@ -11,10 +11,11 @@
 
 using ILGPU.OptiX.Util;
 using ILGPU.Util;
+using ILGPU.OptiX.Native;
 using System;
 using System.Runtime.InteropServices;
 
-namespace ILGPU.OptiX
+namespace ILGPU.OptiX.Denoising
 {
     /// <summary>
     /// Wrapper over an OptiX denoiser. Create via

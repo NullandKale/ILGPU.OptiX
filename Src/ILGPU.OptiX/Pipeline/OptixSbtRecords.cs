@@ -12,6 +12,7 @@
 using System;
 using System.Collections.Generic;
 using System.Runtime.CompilerServices;
+using ILGPU.OptiX.Native;
 
 namespace ILGPU.OptiX.Pipeline
 {

@@ -27,7 +27,7 @@ namespace Sample15
     /// <c>repeatCount</c> argument below). This relies on OptiX automatically summing
     /// NumSbtRecords across build inputs within a GAS to compute each build input's
     /// base SBT-GAS-index, so each build input's own SbtIndexOffsetBuffer values stay
-    /// local/0-based - see docs/SAMPLE13_PLAN.md.
+    /// local/0-based.
     /// </summary>
     public sealed class SbtBuilder
     {
@@ -56,7 +56,7 @@ namespace Sample15
             // Resolved once per material index - any material without a texture path
             // (the overwhelming majority of Sample13's scenes) keeps TextureObject=0,
             // matching Sample08's "0 = no texture" convention. NormalTexture/OrmTexture
-            // (docs/SAMPLE15_PLAN.md Milestone M6) follow the exact same resolution as
+            // follow the exact same resolution as
             // BaseColorTexture - MaterialSbtData.OrmTexture/NormalTexture themselves are
             // never read here; only the parallel *TexturePaths arrays are.
             for (var i = 0; i < scene.Materials.Length; i++)

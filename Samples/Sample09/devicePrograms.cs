@@ -2,6 +2,8 @@ using ILGPU;
 using ILGPU.Algorithms;
 using ILGPU.OptiX;
 using ILGPU.OptiX.Device;
+using ILGPU.OptiX.DeviceApi;
+using ILGPU.OptiX.Cuda;
 using System.Numerics;
 
 namespace Sample09
@@ -40,7 +42,7 @@ namespace Sample09
                 1e20f,
                 0.0f,
                 0xff,
-                OptixRayFlags.OPTIX_RAY_FLAG_DISABLE_ANYHIT,
+                OptixRayFlags.DisableAnyHit,
                 RADIANCE_RAY_TYPE,
                 RAY_TYPE_COUNT,
                 RADIANCE_RAY_TYPE,
@@ -134,9 +136,9 @@ namespace Sample09
                 1f - 1e-3f,
                 0.0f,
                 0xff,
-                OptixRayFlags.OPTIX_RAY_FLAG_DISABLE_ANYHIT
-                    | OptixRayFlags.OPTIX_RAY_FLAG_TERMINATE_ON_FIRST_HIT
-                    | OptixRayFlags.OPTIX_RAY_FLAG_DISABLE_CLOSESTHIT,
+                OptixRayFlags.DisableAnyHit
+                    | OptixRayFlags.TerminateOnFirstHit
+                    | OptixRayFlags.DisableClosestHit,
                 SHADOW_RAY_TYPE,
                 RAY_TYPE_COUNT,
                 SHADOW_RAY_TYPE,

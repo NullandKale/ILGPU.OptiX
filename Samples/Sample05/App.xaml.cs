@@ -1,4 +1,5 @@
-﻿using ILGPU.OptiX;
+using ILGPU.OptiX;
+using ILGPU.OptiX.Native;
 using System;
 using System.Collections.Generic;
 using System.Configuration;

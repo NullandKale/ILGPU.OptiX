@@ -18,6 +18,8 @@ using ILGPU.OptiX.Pipeline;
 using ILGPU.OptiX.AccelStructures;
 using ILGPU.Runtime;
 using ILGPU.Runtime.Cuda;
+using ILGPU.OptiX.DeviceApi;
+using ILGPU.OptiX.Cuda;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -28,29 +30,21 @@ using System.Windows;
 
 namespace Sample11
 {
-    [StructLayout(LayoutKind.Sequential, Pack = OptixAPI.OPTIX_SBT_RECORD_ALIGNMENT, Size = 48)]
-    public unsafe struct RaygenRecord
+    // Placeholder payload struct - OptixTrace.Trace(...) in devicePrograms.cs passes 4
+    // ref uint args (p0..p3) for both the radiance and shadow ray types, so both
+    // RayType() declarations below use this same 4-field struct purely to derive
+    // NumPayloadValues; its field names carry no meaning.
+    public struct RadiancePayload
     {
-        public fixed byte Header[OptixAPI.OPTIX_SBT_RECORD_HEADER_SIZE];
-        public int ObjectID;
+        public uint P0, P1, P2, P3;
     }
 
-    [StructLayout(LayoutKind.Sequential, Pack = OptixAPI.OPTIX_SBT_RECORD_ALIGNMENT, Size = 48)]
-    public unsafe struct MissRecord
+    // Per-material hitgroup record data - custom data layout must match
+    // MaterialSbtData.cs, which is what __closest__radiance actually reads via
+    // OptixGetSbtDataPointer. Only radiance records ever have their custom data read;
+    // shadow records' Color/TextureObject stay zeroed (see the constructor).
+    public struct MaterialRecord
     {
-        public fixed byte Header[OptixAPI.OPTIX_SBT_RECORD_HEADER_SIZE];
-        public int ObjectID;
-    }
-
-    // Two records per material (radiance then shadow, see the constructor) - custom
-    // data layout must match MaterialSbtData.cs, which is what __closest__radiance
-    // actually reads via OptixGetSbtDataPointer (that pointer starts right after
-    // Header, not at the start of this struct). Only radiance records ever have their
-    // custom data read; shadow records' Color/TextureObject stay zeroed.
-    [StructLayout(LayoutKind.Sequential, Pack = OptixAPI.OPTIX_SBT_RECORD_ALIGNMENT, Size = 64)]
-    public unsafe struct HitgroupRecord
-    {
-        public fixed byte Header[OptixAPI.OPTIX_SBT_RECORD_HEADER_SIZE];
         public Vec3 Color;
         public ulong TextureObject;
     }
@@ -63,26 +57,9 @@ namespace Sample11
 
         Context context;
         CudaAccelerator accelerator;
-        OptixDeviceContext deviceContext;
+        OptixRayTracer rayTracer;
 
-        OptixKernel raygenKernel;
-        OptixKernel radianceMissKernel;
-        OptixKernel shadowMissKernel;
-        OptixKernel radianceHitgroupKernel;
-        OptixKernel shadowHitgroupKernel;
-
-        OptixKernel[] raygenKernels;
-        OptixKernel[] missKernels;
-        OptixKernel[] hitgroupKernels;
-
-        OptixPipeline pipeline;
-
-        RaygenRecord[] raygenRecordsArray;
-        MissRecord[] missRecordsArray;
-        HitgroupRecord[] hitgroupRecordsArray;
-
-        BuiltSbt? builtSbt;
-        OptixShaderBindingTable sbt;
+        RayTracingPipeline<LaunchParams> pipeline;
 
         // HDR accumulation buffer (raygen's target/denoiser's input) and the
         // denoiser's output, plus the final flipped display-byte buffer.
@@ -134,99 +111,45 @@ namespace Sample11
 
             context = Context.Create(b => b.Cuda());
             accelerator = context.CreateCudaAccelerator(0);
-            deviceContext = accelerator.CreateDeviceContext()
-                .WithModuleCompileOptions(new OptixModuleCompileOptions()
-                {
-                    MaxRegisterCount = 50,
-                    OptimizationLevel = OptixCompileOptimizationLevel.OPTIX_COMPILE_OPTIMIZATION_DEFAULT,
-                    DebugLevel = OptixCompileDebugLevel.OPTIX_COMPILE_DEBUG_LEVEL_NONE
-                })
-                .WithPipelineCompileOptions(new OptixPipelineCompileOptions()
-                {
-                    TraversableGraphFlags = OptixTraversableGraphFlags.OPTIX_TRAVERSABLE_GRAPH_FLAG_ALLOW_SINGLE_GAS,
-                    NumPayloadValues = 4,
-                    NumAttributeValues = 2,
-                    ExceptionFlags = OptixExceptionFlags.OPTIX_EXCEPTION_FLAG_NONE,
-                    PipelineLaunchParamsVariableName = OptixLaunchParams.VariableName
-                })
-                .WithPipelineLinkOptions(new OptixPipelineLinkOptions()
-                {
-                    MaxTraceDepth = 2
-                });
+            rayTracer = OptixRayTracer.Create(accelerator);
 
-            raygenKernel = deviceContext.CreateRaygenKernel<LaunchParams>(
-                devicePrograms.__raygen__renderFrame);
+            pipeline = rayTracer.CreatePipeline<LaunchParams>(b => b
+                .Raygen(devicePrograms.__raygen__renderFrame)
+                .RayType("radiance", r => r
+                    .Payload<RadiancePayload>()
+                    .Miss(devicePrograms.__miss__radiance)
+                    .HitGroup<MaterialRecord>(devicePrograms.__closest__radiance, devicePrograms.__anyhit__radiance))
+                .RayType("shadow", r => r
+                    .Payload<RadiancePayload>()
+                    .Miss(devicePrograms.__miss__shadow)
+                    .HitGroup<MaterialRecord>(devicePrograms.__closesthit__shadow, devicePrograms.__anyhit__shadow))
+                .MaxTraceDepth(2));
 
-            radianceMissKernel = deviceContext.CreateMissKernel<LaunchParams>(
-                devicePrograms.__miss__radiance);
-
-            shadowMissKernel = deviceContext.CreateMissKernel<LaunchParams>(
-                devicePrograms.__miss__shadow);
-
-            radianceHitgroupKernel = deviceContext.CreateHitgroupKernel<LaunchParams>(
-                devicePrograms.__closest__radiance,
-                devicePrograms.__anyhit__radiance,
-                null);
-
-            shadowHitgroupKernel = deviceContext.CreateHitgroupKernel<LaunchParams>(
-                devicePrograms.__closesthit__shadow,
-                devicePrograms.__anyhit__shadow,
-                null);
-
-            raygenKernels = new[] { raygenKernel };
-            missKernels = new[] { radianceMissKernel, shadowMissKernel };
-
-            // Two hitgroup records per material - [mat0 radiance, mat0 shadow, mat1
-            // radiance, mat1 shadow, ...] - matching how OptiX resolves a hit record
-            // index as sbtGASIndex*sbtStride + sbtOffset (sbtGASIndex = the material ID
-            // from d_materialIds/SbtIndexOffsetBuffer, sbtStride = RAY_TYPE_COUNT,
-            // sbtOffset = the ray type passed to OptixTrace.Trace in
-            // devicePrograms.cs). PackRecords below packs each record's header from its
-            // corresponding kernel's program group; per-material Color/TextureObject
-            // are filled in afterward, radiance records only.
+            // One radiance/shadow hitgroup record pair per material - matching how
+            // OptiX resolves a hit record index as sbtGASIndex*sbtStride + sbtOffset
+            // (sbtGASIndex = the material ID from d_materialIds/SbtIndexOffsetBuffer,
+            // sbtStride = RAY_TYPE_COUNT, sbtOffset = the ray type passed to
+            // OptixTrace.Trace in devicePrograms.cs). Only radiance records'
+            // Color/TextureObject are ever read; shadow records stay zeroed.
             var modelPath = Path.Combine(AppContext.BaseDirectory, "models", "sponza.obj");
             Console.WriteLine($"Loading model: {modelPath}...");
             model = OBJModel.Load(modelPath);
             Console.WriteLine($"Loaded {model.Indices.Length} triangles, {model.Vertices.Length} vertices, {model.Materials.Length} materials.");
             var materialTextures = LoadMaterialTextures(model, Path.GetDirectoryName(modelPath));
             Console.WriteLine($"Loaded {textureObjects.Count} unique texture(s) for {materialTextures.Count(h => h != 0)} of {model.Materials.Length} materials.");
-            var hitgroupKernelsList = new List<OptixKernel>(model.Materials.Length * (int)OptixPayloadDefaults.RAY_TYPE_COUNT);
+
+            var radianceMaterials = new MaterialRecord[model.Materials.Length];
+            var shadowMaterials = new MaterialRecord[model.Materials.Length];
             for (var i = 0; i < model.Materials.Length; i++)
             {
-                hitgroupKernelsList.Add(radianceHitgroupKernel);
-                hitgroupKernelsList.Add(shadowHitgroupKernel);
+                radianceMaterials[i] = new MaterialRecord
+                {
+                    Color = model.Materials[i].Diffuse,
+                    TextureObject = materialTextures[i]
+                };
+                shadowMaterials[i] = default;
             }
-            hitgroupKernels = hitgroupKernelsList.ToArray();
-
-            // Build pipeline using builder
-            var pipelineBuilder = new OptixPipelineBuilder();
-            pipelineBuilder.AddKernels(raygenKernels);
-            pipelineBuilder.AddKernels(missKernels);
-            pipelineBuilder.AddKernels(new[] { radianceHitgroupKernel, shadowHitgroupKernel });
-            pipeline = pipelineBuilder.Build(deviceContext);
-
-            pipeline.SetStackSize(
-                2 * 1024,
-                2 * 1024,
-                2 * 1024,
-                1);
-
-            raygenRecordsArray = OptixSbt.PackRecords<RaygenRecord>(raygenKernels);
-            missRecordsArray = OptixSbt.PackRecords<MissRecord>(missKernels);
-            hitgroupRecordsArray = OptixSbt.PackRecords<HitgroupRecord>(hitgroupKernels);
-            for (var i = 0; i < model.Materials.Length; i++)
-            {
-                hitgroupRecordsArray[i * (int)OptixPayloadDefaults.RAY_TYPE_COUNT].Color = model.Materials[i].Diffuse;
-                hitgroupRecordsArray[i * (int)OptixPayloadDefaults.RAY_TYPE_COUNT].TextureObject = materialTextures[i];
-            }
-
-            var sbtBuilder = new OptixSbtBuilder();
-            sbtBuilder.WithAccelerator(accelerator);
-            sbtBuilder.SetRaygenRecords(raygenRecordsArray);
-            sbtBuilder.SetMissRecords(missRecordsArray);
-            sbtBuilder.AddHitgroupRecords(hitgroupRecordsArray);
-            builtSbt = sbtBuilder.Build();
-            sbt = builtSbt.Sbt;
+            pipeline.SetHitRecords<MaterialRecord>(new[] { radianceMaterials, shadowMaterials });
 
             d_vertices = accelerator.Allocate1D(model.Vertices);
             d_normals = accelerator.Allocate1D(model.Normals);
@@ -238,7 +161,7 @@ namespace Sample11
             FitLightToModel();
 
             var accelBuilder = new OptixAccelBuilder()
-                .WithDeviceContext(deviceContext)
+                .WithDeviceContext(rayTracer.DeviceContext)
                 .WithAccelerator(accelerator)
                 .AddTriangleMesh(d_vertices as MemoryBuffer, d_indices as MemoryBuffer, d_materialIds as MemoryBuffer, (uint)model.Materials.Length)
                 .AllowCompaction();
@@ -341,17 +264,8 @@ namespace Sample11
             d_normals.Dispose();
             d_vertices.Dispose();
 
-            builtSbt?.Dispose();
-
             pipeline.Dispose();
-
-            shadowHitgroupKernel.Dispose();
-            radianceHitgroupKernel.Dispose();
-            shadowMissKernel.Dispose();
-            radianceMissKernel.Dispose();
-            raygenKernel.Dispose();
-
-            deviceContext.Dispose();
+            rayTracer.Dispose();
             accelerator.Dispose();
             context.Dispose();
         }
@@ -374,7 +288,7 @@ namespace Sample11
 
                 builtDenoiser?.Dispose();
                 builtDenoiser = new OptixDenoiserBuilder()
-                    .WithDeviceContext(deviceContext)
+                    .WithDeviceContext(rayTracer.DeviceContext)
                     .WithAccelerator(accelerator)
                     .WithImageDimensions((uint)width, (uint)height)
                     .Build();
@@ -412,14 +326,7 @@ namespace Sample11
                 launchParams.FrameID = 0;
             launchParams.NumPixelSamples = NumPixelSamples;
 
-            accelerator.OptixLaunch(
-                accelerator.DefaultStream,
-                pipeline,
-                launchParams,
-                sbt,
-                (uint)width,
-                (uint)height,
-                1);
+            pipeline.Launch(launchParams, width, height);
 
             // Incremented after the launch (unlike Sample07-10's FrameID, which is
             // purely informational there) - devicePrograms.cs's raygen reads the
@@ -435,7 +342,7 @@ namespace Sample11
                 Height = (uint)height,
                 RowStrideInBytes = (uint)(width * sizeof(Vec4)),
                 PixelStrideInBytes = (uint)sizeof(Vec4),
-                Format = OptixPixelFormat.OPTIX_PIXEL_FORMAT_FLOAT4
+                Format = OptixPixelFormat.Float4
             };
             var outputImage = new OptixImage2D
             {
@@ -444,7 +351,7 @@ namespace Sample11
                 Height = (uint)height,
                 RowStrideInBytes = (uint)(width * sizeof(Vec4)),
                 PixelStrideInBytes = (uint)sizeof(Vec4),
-                Format = OptixPixelFormat.OPTIX_PIXEL_FORMAT_FLOAT4
+                Format = OptixPixelFormat.Float4
             };
 
             MemoryBuffer1D<Vec4, Stride1D.Dense> tonemapSource;

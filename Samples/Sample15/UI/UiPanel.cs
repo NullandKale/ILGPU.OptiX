@@ -4,8 +4,7 @@ using System.Numerics;
 namespace Sample15.UI
 {
     /// <summary>
-    /// The ImGui control panel replacing Sample13's WPF button panel (see
-    /// docs/SAMPLE14_PLAN.md's M7 milestone) - same four sections (SCENE, RENDER
+    /// The ImGui control panel replacing Sample13's WPF button panel - same four sections (SCENE, RENDER
     /// SETTINGS, OPTIONS, CONTROLS) plus a stats readout, laid out top-left over the
     /// rendered frame. Every control here has a keyboard equivalent too (see
     /// RenderWindow's UpdateOneShotKeys) - this panel is a visual/mouse-driven
@@ -134,8 +133,8 @@ namespace Sample15.UI
         }
 
         // A getter/setter delegate pair, kept from when this drew three near-identical
-        // per-material-kind bounce rows (docs/SAMPLE15_PLAN.md Milestone M3 collapsed
-        // them into one unified row) - still convenient for the single row that's left.
+        // per-material-kind bounce rows (since collapsed into one unified row) - still
+        // convenient for the single row that's left.
         static void DrawBounceRow(string label, SampleRenderer renderer, System.Func<SampleRenderer, int> get, System.Action<SampleRenderer, int> set)
         {
             int value = get(renderer);
@@ -177,7 +176,7 @@ namespace Sample15.UI
             }
         }
 
-        // Tonemap + env-map controls (docs/SAMPLE15_PLAN.md Milestone M8). Env-map
+        // Tonemap + env-map controls. Env-map
         // rotation/intensity affect every scene's launch params regardless of whether
         // the active scene actually has one (SceneData.EnvMapPath unset) - harmless,
         // since LaunchParams.EnvMapWidth == 0 short-circuits both

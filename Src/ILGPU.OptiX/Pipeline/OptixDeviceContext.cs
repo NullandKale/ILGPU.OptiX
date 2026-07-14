@@ -1,4 +1,4 @@
-﻿// ---------------------------------------------------------------------------------------
+// ---------------------------------------------------------------------------------------
 //                                     ILGPU OptiX
 //                        Copyright (c) 2020-2022 ILGPU Project
 //                                    www.ilgpu.net
@@ -12,9 +12,10 @@
 using ILGPU.Backends.PTX;
 using ILGPU.Runtime.Cuda;
 using ILGPU.Util;
+using ILGPU.OptiX.Native;
 using System;
 
-namespace ILGPU.OptiX
+namespace ILGPU.OptiX.Pipeline
 {
     /// <summary>
     /// Wrapper for an OptiX device context with configurable compile options.

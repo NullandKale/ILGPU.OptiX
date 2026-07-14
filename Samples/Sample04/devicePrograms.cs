@@ -1,4 +1,4 @@
-﻿// ---------------------------------------------------------------------------------------
+// ---------------------------------------------------------------------------------------
 //                                    ILGPU Samples
 //                        Copyright (c) 2020-2022 ILGPU Project
 //                                    www.ilgpu.net
@@ -12,6 +12,7 @@
 using ILGPU;
 using ILGPU.Algorithms;
 using ILGPU.OptiX;
+using ILGPU.OptiX.DeviceApi;
 
 namespace Sample04
 {
@@ -43,7 +44,7 @@ namespace Sample04
                 1e20f,
                 0.0f,
                 0xff,
-                OptixRayFlags.OPTIX_RAY_FLAG_DISABLE_ANYHIT,
+                OptixRayFlags.DisableAnyHit,
                 0,
                 1,
                 0,

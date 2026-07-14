@@ -10,10 +10,11 @@
 // ---------------------------------------------------------------------------------------
 
 using ILGPU.Runtime.Cuda;
+using ILGPU.OptiX.AccelStructures;
 using System;
 using System.Numerics;
 
-namespace ILGPU.OptiX
+namespace ILGPU.OptiX.DeviceApi
 {
     /// <summary>
     /// Helpers for Axis-Aligned Bounding Box (AABB) construction and custom-primitive

@@ -2,6 +2,8 @@ using ILGPU;
 using ILGPU.Algorithms;
 using ILGPU.OptiX;
 using ILGPU.OptiX.Device;
+using ILGPU.OptiX.DeviceApi;
+using ILGPU.OptiX.AccelStructures;
 
 namespace Sample06
 {
@@ -33,7 +35,7 @@ namespace Sample06
                 1e20f,
                 0.0f,
                 0xff,
-                OptixRayFlags.OPTIX_RAY_FLAG_DISABLE_ANYHIT,
+                OptixRayFlags.DisableAnyHit,
                 0,
                 0, // SBTstride=0: all meshes share the one hitgroup record (index
                    // = SBToffset + SBTstride*OptixGetSbtGASIndex() must stay 0

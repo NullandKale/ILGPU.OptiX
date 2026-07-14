@@ -15,7 +15,7 @@ namespace Sample13
 {
     // ILGPU compiles device kernels against one concrete unmanaged struct layout, so this
     // must stay a single superset shape across every scene the runtime scene-switcher can
-    // select (docs/SAMPLE13_PLAN.md, "LaunchParams superset design"). Unused buffers on a
+    // select. Unused buffers on a
     // given scene are left invalid/zero-length (OptixDeviceView<T>.IsValid == false)
     // rather than changing the struct itself.
     //

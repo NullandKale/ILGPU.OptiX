@@ -12,6 +12,8 @@
 using System;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
+using ILGPU.OptiX.DeviceApi;
+using ILGPU.OptiX.Native;
 
 #pragma warning disable CA1051 // Do not declare visible instance fields
 

@@ -34,7 +34,3 @@ pipeline.Launch(launchParams, width, height);
 ## Samples
 
 `Samples/Sample01` through `Samples/Sample15` are a tutorial progression from "initialize the library" through a full interactive PBR path tracer, each adding one concept (acceleration structures, textures, multiple ray types, denoising, instancing, curves). See [`tutorials/readme.md`](tutorials/readme.md) for the walkthroughs written so far.
-
-## Documentation
-
-Design notes and roadmap documents live in `docs/` (internal, not user-facing API docs).

@@ -22,9 +22,9 @@ namespace Sample15
         public float Intensity;
     }
 
-    // One entry in the unified NEE light list (docs/SAMPLE15_PLAN.md Milestone M4,
-    // Design Decision 4) - built host-side at scene-load time by Scenes/LightList.cs,
-    // uploaded as LaunchParams.NeeLights/NeeLightCdf. Kind distinguishes which
+    // One entry in the unified NEE light list - built host-side at scene-load time
+    // by Scenes/LightList.cs, uploaded as LaunchParams.NeeLights/NeeLightCdf. Kind
+    // distinguishes which
     // reference array RefIndex points into; Pdf is this light's power-weighted picking
     // probability (Pdf_i = power_i / totalPower), read directly by device code so it
     // never needs to re-derive it from the cumulative Cdf array.
@@ -32,8 +32,8 @@ namespace Sample15
     {
         public const int KindPoint = 0;
         public const int KindTriangle = 1;
-        // The shared HDRI environment map (docs/SAMPLE15_PLAN.md Milestone M5) - at
-        // most one entry of this kind ever exists in a light list; RefIndex is unused
+        // The shared HDRI environment map - at most one entry of this kind ever
+        // exists in a light list; RefIndex is unused
         // (-1) since there's only the one, scene-independent environment map.
         public const int KindEnvMap = 2;
 

@@ -1,3 +1,4 @@
+using ILGPU.OptiX.Cuda;
 namespace Sample15
 {
     /// <summary>
@@ -62,10 +63,9 @@ namespace Sample15
             // 4: glass panel (Transmission > 0 dispatches to the dielectric branch) -
             // exercises the M2 bounce loop and multi-hit shadow transmittance.
             uint glass = (uint)b.AddMaterial(MaterialPresets.Glass(1.5f, new Vec3(0.9f, 0.97f, 0.95f)));
-            // Frosted glass (docs/SAMPLE15_PLAN.md Milestone M7) - same IOR/tint as
-            // the clear glass sphere above, just with TransmissionRoughness > 0, so
-            // the two can be compared side by side for the rough-BTDF verification
-            // pass the plan calls for ("plausible frosted transmission").
+            // Frosted glass - same IOR/tint as the clear glass sphere above, just
+            // with TransmissionRoughness > 0, so the two can be compared side by
+            // side for plausible frosted transmission.
             uint frostedGlass = (uint)b.AddMaterial(new MaterialSbtData
             {
                 BaseColor = new Vec3(1f, 1f, 1f),
@@ -183,8 +183,8 @@ namespace Sample15
         }
 
         // Ambient-only lit, single textured quad - reuses Sample08's CudaTextureObject/
-        // CudaTex2D pattern (trivial, per docs/SAMPLE13_PLAN.md's M7 scope) via one
-        // texture already bundled for Sponza, rather than fetching a new asset.
+        // CudaTex2D pattern (trivial) via one texture already bundled for Sponza,
+        // rather than fetching a new asset.
         public static SceneData BuildTextureTestScene()
         {
             var b = new SceneBuilder
@@ -218,7 +218,7 @@ namespace Sample15
             return b.Build();
         }
 
-        // GGX validation scene (docs/SAMPLE15_PLAN.md Milestone M2): a grid of spheres
+        // GGX validation scene: a grid of spheres
         // sweeping Roughness across columns (0 = mirror-like at the left edge, 1 = fully
         // diffuse-like at the right) and Metallic across rows (dielectric red on top,
         // conductor gold on the bottom), lit only by point lights (no NEE/env light of
@@ -237,10 +237,9 @@ namespace Sample15
                 AmbientIntensity = 0.1f,
                 BackgroundTop = new Vec3(0.1f, 0.1f, 0.12f),
                 BackgroundBottom = new Vec3(0.02f, 0.02f, 0.03f),
-                // Widened/pulled back from the original two-row framing (docs/
-                // SAMPLE15_PLAN.md Milestone M7) - a third (glass) row and the
-                // per-material Bunny instances roughly triple this scene's vertical
-                // and depth extent.
+                // Widened/pulled back from the original two-row framing - a third
+                // (glass) row and the per-material Bunny instances roughly triple
+                // this scene's vertical and depth extent.
                 CameraOrigin = new Vec3(0f, 4.5f, 15f),
                 CameraLookAt = new Vec3(0f, 2.5f, -3f),
                 CameraUp = new Vec3(0f, 1f, 0f),
@@ -284,8 +283,8 @@ namespace Sample15
                 }
             }
 
-            // Third row: rough dielectric (glass) sweep (docs/SAMPLE15_PLAN.md
-            // Milestone M7) - same column layout, sweeping TransmissionRoughness
+            // Third row: rough dielectric (glass) sweep - same column layout,
+            // sweeping TransmissionRoughness
             // instead of the opaque Roughness/Metallic pair (0 = clear glass at the
             // left edge, 1 = fully frosted at the right), each column again getting
             // both a sphere and a matching Bunny instance of the same material.

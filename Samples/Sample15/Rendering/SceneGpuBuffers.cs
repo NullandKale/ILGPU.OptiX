@@ -27,7 +27,7 @@ namespace Sample15
         public MemoryBuffer1D<uint, Stride1D.Dense> TriangleMaterialIds { get; private set; }
         public MemoryBuffer1D<PointLightGpu, Stride1D.Dense> Lights { get; private set; }
 
-        // Unified NEE light list (docs/SAMPLE15_PLAN.md Milestone M4) - see
+        // Unified NEE light list - see
         // Scenes/LightList.cs/LaunchParams.NeeLights.
         public MemoryBuffer1D<LightGpu, Stride1D.Dense> NeeLights { get; private set; }
         public MemoryBuffer1D<float, Stride1D.Dense> NeeLightCdf { get; private set; }
@@ -37,7 +37,7 @@ namespace Sample15
         // called DisposeAll() first (scene switches always tear down before uploading).
         public void Upload(SceneData scene)
         {
-            // Defensive fallback (docs/SAMPLE15_PLAN.md Milestone M6 postmortem) -
+            // Defensive fallback -
             // Rays/RadianceRay.cs reads launchParams.Tangents[tri.x] unconditionally
             // for every triangle hit, with no NumNeeLights-style empty-buffer guard
             // (tangents are structural per-vertex mesh data, not an optional feature

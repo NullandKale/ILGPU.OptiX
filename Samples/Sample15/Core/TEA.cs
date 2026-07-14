@@ -14,9 +14,9 @@ namespace Sample15
     // Tiny Encryption Algorithm hash (16 rounds, matching optixIntro_04's tea<16> and
     // optix7course's gdt::LCG<16> seeding step) - a deterministic, well-mixed uint pair ->
     // uint hash used to seed an RNG stream from arbitrary integer keys (pixel coordinates,
-    // frame index, bounce depth, ...). Extracted as its own function (docs/SAMPLE15_PLAN.md
-    // Milestone M3) so any device code needing a fresh, uncorrelated seed - not just
-    // LCG's own constructor - can call it directly.
+    // frame index, bounce depth, ...). Extracted as its own function so any device code
+    // needing a fresh, uncorrelated seed - not just LCG's own constructor - can call it
+    // directly.
     internal static class TEA
     {
         internal static uint Hash(uint val0, uint val1)

@@ -1,11 +1,11 @@
 using ILGPU.Algorithms;
 using ILGPU.OptiX;
+using ILGPU.OptiX.DeviceApi;
 
 namespace Sample14
 {
-    // One __intersection__ program per custom-primitive type (docs/SAMPLE13_PLAN.md
-    // design (a)) - kept in its own file since more primitive types (Box, CylinderY,
-    // Disk, rects) accumulate here in M4.
+    // One __intersection__ program per custom-primitive type - kept in its own file
+    // since more primitive types (Box, CylinderY, Disk, rects) accumulate here in M4.
     public static class IntersectionPrograms
     {
         // Custom-primitive hit-kind tags passed to OptixReportIntersection - must stay
@@ -60,7 +60,7 @@ namespace Sample14
         }
 
         // 3-axis slab test (direct port of the standard ray-AABB intersection, used in
-        // place of the reference's 6-rect-face proxy Box - see docs/SAMPLE13_PLAN.md).
+        // place of the reference's 6-rect-face proxy Box).
         public unsafe static void __intersection__box(LaunchParams launchParams)
         {
             uint primId = OptixGetPrimitiveIndex.Value;
@@ -233,10 +233,10 @@ namespace Sample14
         }
 
         // Amanatides & Woo fast voxel traversal against a flat row-major solid-voxel
-        // occupancy grid (docs/SAMPLE13_PLAN.md's volume grid design - the DDA
-        // *technique* is ported from the reference's VolumeGrid.cs; its 8x8x8
-        // Morton-brick storage is a CPU-cache optimization not carried over here, a flat
-        // array suits GPU access patterns better). The whole grid is ONE custom
+        // occupancy grid (the DDA *technique* is ported from the reference's
+        // VolumeGrid.cs; its 8x8x8 Morton-brick storage is a CPU-cache optimization not
+        // carried over here, a flat array suits GPU access patterns better). The whole
+        // grid is ONE custom
         // primitive (NumPrimitives=1 in its GAS build input) - the loop walks voxels
         // entirely inside this one intersection-program invocation.
         public unsafe static void __intersection__volumeGrid(LaunchParams launchParams)

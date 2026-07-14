@@ -22,7 +22,7 @@ namespace Sample15
     {
         public uint State;
 
-        // TEA-seeded (docs/SAMPLE15_PLAN.md Milestone M3, Core/TEA.cs) - the two integer
+        // TEA-seeded (see Core/TEA.cs) - the two integer
         // keys are hashed into a well-mixed initial state.
         public LCG(uint val0, uint val1)
         {

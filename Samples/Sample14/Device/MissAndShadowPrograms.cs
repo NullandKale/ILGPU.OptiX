@@ -1,5 +1,6 @@
 using ILGPU;
 using ILGPU.OptiX;
+using ILGPU.OptiX.DeviceApi;
 
 namespace Sample14
 {
@@ -38,8 +39,8 @@ namespace Sample14
         { }
 
         // Accumulates colored transmittance through transparent occluders instead of a
-        // plain binary occlusion test (docs/SAMPLE13_PLAN.md design (f)). Opaque hits are
-        // a no-op here, which leaves OptiX's default any-hit behavior in effect: accept
+        // plain binary occlusion test. Opaque hits are a no-op here, which leaves
+        // OptiX's default any-hit behavior in effect: accept
         // the hit and terminate the ray, i.e. fully block the light - exactly matching
         // the reference's "opaque fully blocks" rule. Alpha-cutout geometry (see
         // __anyhit__radiance above) gets the same treatment here first, so alpha-cut

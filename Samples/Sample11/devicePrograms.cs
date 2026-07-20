@@ -21,9 +21,8 @@ namespace Sample11
             var iy = OptixGetLaunchIndex.Y;
             var camera = launchParams.camera;
 
-            // Matches the reference's prd.random.init(ix + width*iy, frameID) -
-            // different from Sample10's per-pixel-per-frame seed, but equivalent in
-            // spirit (still decorrelated across pixels and frames).
+            // Matches the reference's prd.random.init(ix + width*iy, frameID) - seeded
+            // per pixel per frame, decorrelated across pixels and frames.
             LCG rng = new LCG((uint)(ix + (camera.width * iy)), (uint)launchParams.FrameID);
 
             int numPixelSamples = launchParams.NumPixelSamples;
@@ -200,10 +199,9 @@ namespace Sample11
         }
 
         // Tonemaps the denoised (or raw, if the denoiser is off) HDR accumulation
-        // buffer to display bytes, flipping rows for WPF - combines what Sample07-10
-        // did in two passes (a display-format conversion in raygen, then flipBitmap)
-        // into one, since here the HDR->display conversion can't happen until after
-        // the denoiser has run on the host.
+        // buffer to display bytes, flipping rows for WPF, in one pass - the
+        // HDR->display conversion can't happen until after the denoiser has run on
+        // the host.
         public static void tonemapAndFlip(Index1D index, int width, int height, ArrayView<Vec4> hdr, ArrayView<byte> dest)
         {
             int x = index % width;

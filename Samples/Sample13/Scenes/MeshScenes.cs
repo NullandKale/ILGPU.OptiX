@@ -8,7 +8,7 @@ namespace Sample13
     /// </summary>
     public static class MeshScenes
     {
-        // Shared by every single-mesh scene (M6) - reuses the existing triangle GAS
+        // Shared by every single-mesh scene - reuses the existing triangle GAS
         // pipeline as-is (meshes are pure triangle geometry, no new subsystem needed),
         // auto-fits the camera/lights to each mesh's own bounding box since these 4 OBJs
         // (cow, stanford-bunny, teapot, xyzrgb_dragon) are at
@@ -74,9 +74,9 @@ namespace Sample13
             MaterialPresets.Solid(new Vec3(0.6f, 0.05f, 0.08f)),
             new Vec3(1f, 0.95f, 0.85f), new Vec3(0.6f, 0.7f, 1f));
 
-        // Mirror (Reflectivity >= 0.9) rather than diffuse - exercises the M2 bounce
-        // loop against a real high-poly mesh, matching the reference's own
-        // sapphire-mirror dragon.
+        // Mirror (Reflectivity >= 0.9) rather than diffuse - exercises the bounce loop
+        // against a real high-poly mesh, matching the reference's own sapphire-mirror
+        // dragon.
         public static SceneData BuildDragonScene() => BuildMeshScene(
             "Mesh: XYZRGB Dragon (mirror)",
             "xyzrgb_dragon.obj",

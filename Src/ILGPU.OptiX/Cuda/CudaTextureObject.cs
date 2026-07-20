@@ -134,11 +134,10 @@ namespace ILGPU.OptiX.Cuda
         // Captured at construction (cuCtxGetCurrent) and re-asserted (cuCtxSetCurrent)
         // at the start of every later driver call - CUDA driver contexts are
         // thread-affinitized (current-per-OS-thread, not per-process), so a raw
-        // nvcuda.dll call from a different thread than the one that created this
-        // object (e.g. Update() called from Sample13's dedicated render thread, while
-        // construction happened on the UI thread during SwitchToScene) would otherwise
-        // fail with CUDA_ERROR_INVALID_CONTEXT (201) - ILGPU's own accelerator calls
-        // self-manage this, but this class's direct P/Invokes don't unless told to.
+        // nvcuda.dll call from a thread other than the one that created this object
+        // would otherwise fail with CUDA_ERROR_INVALID_CONTEXT (201) - ILGPU's own
+        // accelerator calls self-manage this, but this class's direct P/Invokes don't
+        // unless told to.
         private IntPtr context;
 
         /// <summary>
@@ -150,9 +149,9 @@ namespace ILGPU.OptiX.Cuda
         /// <summary>
         /// Creates a bindless CUDA texture object from RGBA8 pixel data. Assumes the
         /// calling thread's current CUDA context is the one the texture will be
-        /// sampled from (true for the single-accelerator samples in this repo) - that
-        /// context is captured here and re-asserted on every subsequent driver call
-        /// regardless of which thread makes it (see the `context` field comment).
+        /// sampled from - that context is captured here and re-asserted on every
+        /// subsequent driver call regardless of which thread makes it (see the
+        /// `context` field comment).
         /// </summary>
         /// <param name="rgba">Tightly-packed RGBA8 pixel data, row-major, top-to-bottom.</param>
         /// <param name="width">Texture width in pixels.</param>

@@ -16,10 +16,10 @@ namespace Sample10
 {
     // Per-material data (diffuse color, texture handle) is looked up via
     // OptixGetSbtDataPointer against one hitgroup record per material per ray type
-    // (see MaterialSbtData.cs/SampleRenderer.cs's buildAccel/constructor) - see
-    // Sample07's LaunchParams.cs for why. LaunchParams itself only carries the
-    // quad-light description (origin + two edge vectors + power, matching the C++
-    // reference's QuadLight) plus the global merged-buffer geometry arrays.
+    // (see MaterialSbtData.cs/SampleRenderer.cs's buildAccel/constructor).
+    // LaunchParams itself only carries the quad-light description (origin + two edge
+    // vectors + power, matching the C++ reference's QuadLight) plus the global
+    // merged-buffer geometry arrays.
     public struct LaunchParams
     {
         public int FrameID;

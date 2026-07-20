@@ -15,6 +15,7 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
+using ILGPU.OptiX.Cuda;
 
 namespace Sample14
 {
@@ -25,10 +26,25 @@ namespace Sample14
 
         // Relative to the .obj's directory, or null if the material has no diffuse map.
         public string? DiffuseTexturePath;
+
+        // PBR extensions - none of this repo's bundled MTLs (confirmed: Sponza's)
+        // actually populate these, so they're parsed correctly but exercised only
+        // once a scene supplies an asset that has them. RoughnessTexturePath/
+        // MetallicTexturePath are parsed for completeness but not wired to any
+        // MaterialSbtData field - this sample's OrmTexture expects one already-packed
+        // (occlusion.r/roughness.g/metallic.b) texture (an artist/tool convention, not
+        // something reconstructed from separate map_Pr/map_Pm grayscale maps at load
+        // time - no bundled asset needs that composition step, so it isn't built).
+        public string? NormalTexturePath;
+        public string? RoughnessTexturePath;
+        public string? MetallicTexturePath;
+        public float? Roughness;
+        public float? Metallic;
+        public Vec3 Emission = new Vec3(0f, 0f, 0f);
     }
 
-    // A minimal, from-scratch Wavefront OBJ/MTL loader, ported from Sample07's Model.cs -
-    // one merged vertex/index buffer for the whole model, per-material data looked up via
+    // A minimal, from-scratch Wavefront OBJ/MTL loader - one merged vertex/index
+    // buffer for the whole model, per-material data looked up via
     // optixGetSbtDataPointer against one hitgroup record per material (see
     // SampleRenderer.cs), same convention as every other scene in this sample.
     public class OBJModel
@@ -36,6 +52,11 @@ namespace Sample14
         public Vec3[] Vertices = Array.Empty<Vec3>();
         public Vec3[] Normals = Array.Empty<Vec3>();
         public Vec2[] TexCoords = Array.Empty<Vec2>();
+        // Per-vertex tangent - always computed (ComputeTangents), independent of
+        // whether any material on this model
+        // actually has a normal map; unused device-side unless MaterialSbtData.
+        // NormalTexture is nonzero for the triangle being shaded.
+        public Vec3[] Tangents = Array.Empty<Vec3>();
         public Vec3i[] Indices = Array.Empty<Vec3i>();
 
         // One entry per triangle (same length as Indices), indexing into Materials.
@@ -117,16 +138,19 @@ namespace Sample14
                         break;
 
                     case "vt":
-                        // OBJ's vt convention is V=0 at the image's bottom row, but
-                        // TextureLoader.LoadRgba8 (and the CUDA array it uploads into)
-                        // store pixel data top-to-bottom, i.e. V=0 = the top row. Left
-                        // unflipped, every OBJ-sourced texture sample (diffuse color
-                        // and, critically, an alpha-cutout mask like Sponza's leaf
-                        // texture) reads the wrong row - flip here once at load time so
-                        // every consumer (SampleAlbedo/SampleAlpha) just works.
+                        // No V-flip: this bundled Sponza .obj's own "vt" v-values are
+                        // already authored against a top-left texture origin (matching
+                        // TextureLoader.LoadRgba8/CudaTextureObject's own row 0 = top
+                        // convention), not the raw OBJ-spec bottom-left origin. No
+                        // other place in the pipeline touches V (SampleAlbedo/
+                        // SampleAlpha/SampleOrm/ApplyNormalMap all use the interpolated
+                        // uv.y as-is - see MaterialShading.cs). If a *different* OBJ
+                        // asset is ever added that genuinely does follow the spec's
+                        // bottom-left convention, it will need its own per-asset flip
+                        // instead of a global one here.
                         texcoords.Add(new Vec2(
                             ParseFloat(tokens[1]),
-                            1f - ParseFloat(tokens[2])));
+                            ParseFloat(tokens[2])));
                         break;
 
                     case "vn":
@@ -153,8 +177,8 @@ namespace Sample14
                 }
             }
 
-            // cow.obj/stanford-bunny.obj/teapot.obj/xyzrgb_dragon.obj (M6's mesh scenes)
-            // are all confirmed to have zero vn lines - without this fallback, every
+            // cow.obj/stanford-bunny.obj/teapot.obj/xyzrgb_dragon.obj are all confirmed
+            // to have zero vn lines - without this fallback, every
             // vertex would keep ResolveVertex's default (0,1,0) normal below, which
             // visibly breaks shading (every triangle would light as if facing straight
             // up regardless of its actual orientation). Compute smooth per-vertex
@@ -164,12 +188,15 @@ namespace Sample14
                 ? ComputeSmoothNormals(combinedVertices, combinedIndices)
                 : combinedNormals.ToArray();
 
+            var resolvedTexCoords = combinedTexCoords.ToArray();
+            var resolvedIndices = combinedIndices.ToArray();
             var model = new OBJModel
             {
                 Vertices = combinedVertices.ToArray(),
                 Normals = resolvedNormals,
-                TexCoords = combinedTexCoords.ToArray(),
-                Indices = combinedIndices.ToArray(),
+                TexCoords = resolvedTexCoords,
+                Tangents = ComputeTangents(combinedVertices, resolvedNormals, resolvedTexCoords, resolvedIndices),
+                Indices = resolvedIndices,
                 TriangleMaterialIds = combinedMaterialIds.ToArray(),
                 Materials = materialOrder.ToArray()
             };
@@ -207,11 +234,23 @@ namespace Sample14
             }
         }
 
-        // Area-weighted (unnormalized face-normal accumulation, so larger adjacent
-        // triangles contribute more) smooth per-vertex normals. Vertices are already
-        // deduped by (posIdx,vtIdx,vnIdx) in ResolveVertex - since a vn-less file has no
-        // vt/vn either for these meshes, every occurrence of the same position collapses
-        // to one shared vertex, so this naturally accumulates over every triangle
+        // Angle-weighted (not area-weighted) smooth per-vertex normals - each
+        // triangle's *normalized* face normal is scaled by the subtended angle at
+        // each of its own three vertices before accumulating, rather than by the
+        // triangle's raw (unnormalized-cross-product) area. Area-weighting lets a
+        // handful of large, thin, near-degenerate triangles dominate a vertex's
+        // normal regardless of the actual surface angle there - exactly the failure
+        // mode on thin, elongated geometry like the Stanford Bunny's ears (no vn data
+        // to fall back to - see Load()), where it produces visibly wavy GGX specular
+        // highlights instead of smooth curves under sharp specular lighting.
+        // Angle-weighting is the standard fix (Max, N.
+        // "Weights for Computing Vertex Normals from Facet Vectors", 1999) but doesn't
+        // eliminate linear barycentric normal interpolation's own inherent waviness on
+        // curved surfaces - only finer tessellation or a higher-order interpolation
+        // scheme would do that, both out of scope here. Vertices are already deduped by
+        // (posIdx,vtIdx,vnIdx) in ResolveVertex - since a vn-less file has no vt/vn
+        // either for these meshes, every occurrence of the same position collapses to
+        // one shared vertex, so this naturally accumulates over every triangle
         // touching that position.
         private static Vec3[] ComputeSmoothNormals(List<Vec3> vertices, List<Vec3i> indices)
         {
@@ -221,10 +260,14 @@ namespace Sample14
                 Vec3 a = vertices[tri.x];
                 Vec3 b = vertices[tri.y];
                 Vec3 c = vertices[tri.z];
-                Vec3 faceNormal = Vec3.cross(b - a, c - a);
-                accum[tri.x] += faceNormal;
-                accum[tri.y] += faceNormal;
-                accum[tri.z] += faceNormal;
+                Vec3 rawFaceNormal = Vec3.cross(b - a, c - a);
+                if (rawFaceNormal.lengthSquared() <= 1e-20f)
+                    continue; // degenerate (zero-area) triangle - contributes nothing
+                Vec3 faceNormal = Vec3.unitVector(rawFaceNormal);
+
+                accum[tri.x] += faceNormal * VertexAngle(a, b, c);
+                accum[tri.y] += faceNormal * VertexAngle(b, c, a);
+                accum[tri.z] += faceNormal * VertexAngle(c, a, b);
             }
 
             var result = new Vec3[vertices.Count];
@@ -234,6 +277,68 @@ namespace Sample14
                 result[i] = lengthSq > 1e-12f ? Vec3.unitVector(accum[i]) : new Vec3(0f, 1f, 0f);
             }
             return result;
+        }
+
+        // The interior angle of triangle (at, b, c) measured at vertex `at`.
+        private static float VertexAngle(Vec3 at, Vec3 b, Vec3 c)
+        {
+            Vec3 u = Vec3.unitVector(b - at);
+            Vec3 v = Vec3.unitVector(c - at);
+            float cosAngle = Math.Clamp(Vec3.dot(u, v), -1f, 1f);
+            return MathF.Acos(cosAngle);
+        }
+
+        // Per-triangle UV-gradient tangent solve (Lengyel's formula), area-weighted-
+        // accumulated per vertex (same shape as ComputeSmoothNormals - the raw,
+        // unnormalized per-triangle tangent already scales with triangle area since
+        // it's built from the unnormalized edge vectors), then Gram-Schmidt-
+        // orthogonalized against each vertex's own final shading normal so the result
+        // is always perpendicular to it regardless of which normal source (vn data or
+        // ComputeSmoothNormals' fallback) was used. A degenerate UV parameterization
+        // (duplicate/collapsed texcoords, or a
+        // model with no vt data at all) falls back to an arbitrary tangent orthogonal
+        // to the normal - never a zero vector, so device-side TBN construction never
+        // divides by zero.
+        private static Vec3[] ComputeTangents(List<Vec3> vertices, Vec3[] normals, Vec2[] texCoords, Vec3i[] indices)
+        {
+            var accum = new Vec3[vertices.Count];
+            foreach (var tri in indices)
+            {
+                Vec3 v0 = vertices[tri.x], v1 = vertices[tri.y], v2 = vertices[tri.z];
+                Vec2 uv0 = texCoords[tri.x], uv1 = texCoords[tri.y], uv2 = texCoords[tri.z];
+
+                Vec3 e1 = v1 - v0, e2 = v2 - v0;
+                float du1 = uv1.x - uv0.x, dv1 = uv1.y - uv0.y;
+                float du2 = uv2.x - uv0.x, dv2 = uv2.y - uv0.y;
+
+                float denom = (du1 * dv2) - (du2 * dv1);
+                if (MathF.Abs(denom) <= 1e-12f)
+                    continue;
+                float r = 1f / denom;
+                Vec3 tangent = ((e1 * dv2) - (e2 * dv1)) * r;
+
+                accum[tri.x] += tangent;
+                accum[tri.y] += tangent;
+                accum[tri.z] += tangent;
+            }
+
+            var result = new Vec3[vertices.Count];
+            for (int i = 0; i < result.Length; i++)
+            {
+                Vec3 n = normals[i];
+                Vec3 t = accum[i];
+                // Gram-Schmidt: remove any component of t along n, then normalize.
+                t -= n * Vec3.dot(n, t);
+                float lengthSq = t.lengthSquared();
+                result[i] = lengthSq > 1e-12f ? Vec3.unitVector(t) : ArbitraryOrthogonal(n);
+            }
+            return result;
+        }
+
+        private static Vec3 ArbitraryOrthogonal(Vec3 n)
+        {
+            Vec3 up = MathF.Abs(n.y) < 0.999f ? new Vec3(0f, 1f, 0f) : new Vec3(1f, 0f, 0f);
+            return Vec3.unitVector(Vec3.cross(up, n));
         }
 
         // OBJ indices are 1-based, or negative to mean "relative to the current count".
@@ -286,6 +391,44 @@ namespace Sample14
                         {
                             current.DiffuseTexturePath = tokens[tokens.Length - 1];
                             Console.WriteLine($"[MTL]   Found texture: {current.DiffuseTexturePath}");
+                        }
+                        break;
+
+                    // map_Bump/norm are the two conventional MTL tag spellings for a
+                    // tangent-space normal map.
+                    case "map_Bump":
+                    case "norm":
+                        if (current != null)
+                            current.NormalTexturePath = tokens[tokens.Length - 1];
+                        break;
+
+                    case "map_Pr":
+                        if (current != null)
+                            current.RoughnessTexturePath = tokens[tokens.Length - 1];
+                        break;
+
+                    case "map_Pm":
+                        if (current != null)
+                            current.MetallicTexturePath = tokens[tokens.Length - 1];
+                        break;
+
+                    case "Pr":
+                        if (current != null && tokens.Length >= 2)
+                            current.Roughness = ParseFloat(tokens[1]);
+                        break;
+
+                    case "Pm":
+                        if (current != null && tokens.Length >= 2)
+                            current.Metallic = ParseFloat(tokens[1]);
+                        break;
+
+                    case "Ke":
+                        if (current != null && tokens.Length >= 4)
+                        {
+                            current.Emission = new Vec3(
+                                ParseFloat(tokens[1]),
+                                ParseFloat(tokens[2]),
+                                ParseFloat(tokens[3]));
                         }
                         break;
                 }

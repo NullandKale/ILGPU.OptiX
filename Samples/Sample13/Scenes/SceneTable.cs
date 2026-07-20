@@ -26,8 +26,9 @@ namespace Sample13
             MeshScenes.BuildCowScene,
             MeshScenes.BuildDragonScene,
             MeshScenes.BuildSponzaScene,
-            MuseumScene.BuildMuseumScene,
-            RadialMuseumScene.BuildRadialMuseumScene,
+            // MuseumScene/RadialMuseumScene are video-textured and not implemented here
+            // - they need Media/VideoReader.cs + VideoTexture.cs + OpenCvSharp +
+            // ffmpeg.exe, none of which this sample has.
         };
     }
 }

@@ -42,9 +42,8 @@ namespace Sample12
     }
 
     // Color (3) + shading normal (3) + diffuse albedo (3) - the 9-payload radiance
-    // ray, matching the old NumPayloadValues = 9 (see devicePrograms.cs's
-    // __raygen__renderFrame comment on why this binding's OptixTrace wrapper caps out
-    // here).
+    // ray (see devicePrograms.cs's __raygen__renderFrame comment on why this
+    // binding's OptixTrace wrapper caps out here).
     [StructLayout(LayoutKind.Sequential)]
     struct RadiancePayload
     {
@@ -180,13 +179,9 @@ namespace Sample12
             builtAccel = accelBuilder.Build();
             traversable = builtAccel.TraversableHandle;
 
-            // Unlike Sample11, guideAlbedo/guideNormal are enabled - the denoiser uses
-            // the AOV buffers below to separate real geometric detail from noise.
-            // Matches example12_denoiseSeparateChannels/SampleRenderer.cpp's
-            // optixDenoiserCreate call (denoiserOptions.inputKind ==
-            // OPTIX_DENOISER_INPUT_RGB_ALBEDO_NORMAL in the pre-7.3 API this ported
-            // from - the modern API expresses the same thing via these two flags).
-            // Denoiser will be created in resize() when dimensions are known
+            // guideAlbedo/guideNormal are enabled below - the denoiser uses the AOV
+            // buffers to separate real geometric detail from noise. Denoiser will be
+            // created in resize() when dimensions are known.
 
             resize(width, height);
             tonemapAndFlip = accelerator.LoadAutoGroupedStreamKernel<Index1D, int, int, ArrayView<Vec4>, ArrayView<byte>>(devicePrograms.tonemapAndFlip);
@@ -229,9 +224,8 @@ namespace Sample12
             return result.ToArray();
         }
 
-        // Matches example12_denoiseSeparateChannels/main.cpp exactly (same camera/light
-        // as Sample09-11) - valid because this sample bundles the identical,
-        // untransformed sponza.obj.
+        // Fixed camera/light values valid for this sample's bundled, untransformed
+        // sponza.obj.
         private static Camera FitCameraToModel(OBJModel model, int width, int height)
         {
             var (min, max) = ComputeBounds(model);

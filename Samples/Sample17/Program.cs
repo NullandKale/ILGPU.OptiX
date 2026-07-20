@@ -23,7 +23,7 @@ namespace Sample17
             var nativeWindowSettings = new NativeWindowSettings
             {
                 ClientSize = new Vector2i(1024, 768),
-                Title = "Sample17 - Task-Based Module Compilation",
+                Title = "Sample17 - Motion Blur (Rigid-Body Transform)",
                 Flags = ContextFlags.ForwardCompatible,
                 Profile = ContextProfile.Core,
                 APIVersion = new System.Version(3, 3),

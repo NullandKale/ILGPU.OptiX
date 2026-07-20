@@ -10,12 +10,11 @@ using System;
 namespace Sample14
 {
     /// <summary>
-    /// M3: FPS camera (WASD + hold-left-mouse-drag look) and the keyboard-only control
-    /// scheme replacing Sample13's WPF button panel. M7 adds an ImGui-based visual
-    /// panel (UI/UiPanel.cs) mirroring the same controls - the keymap stays as the
-    /// keyboard-only fallback it always was, ImGui is an additional, not replacement,
-    /// input path. GL context and CUDA/OptiX compute run on the same thread, driven by
-    /// OnRenderFrame/OnUpdateFrame - see the plan's threading-model section.
+    /// FPS camera (WASD + hold-left-mouse-drag look) and a keyboard-only control
+    /// scheme, plus an ImGui-based visual panel (UI/UiPanel.cs) mirroring the same
+    /// controls - the keymap is the keyboard-only fallback, ImGui is an additional,
+    /// not replacement, input path. GL context and CUDA/OptiX compute run on the
+    /// same thread, driven by OnRenderFrame/OnUpdateFrame.
     /// </summary>
     public sealed class RenderWindow : GameWindow
     {
@@ -23,13 +22,13 @@ namespace Sample14
         FullscreenQuad quad;
         int frameCount;
 
-        // FPS camera state - same math as Sample13's MainWindow.xaml.cs
-        // UpdateFPSMovement/UpdateFPSCamera (written entirely against the UI-framework-
-        // agnostic Camera/Vec3/CameraMotion types, so it ports with no math changes,
-        // only the input-source glue below). Mouse delta is computed manually from
-        // absolute MouseState.X/Y (no MouseState.Delta convenience property exists in
-        // OpenTK 4.8 - same pattern example/OpenTKSplat/OpenTKSplat/Graphics/Camera.cs
-        // uses).
+        readonly bool benchMode;
+        BenchmarkRunner benchmarkRunner;
+
+        // FPS camera state, written entirely against the UI-framework-agnostic
+        // Camera/Vec3 types. Mouse delta is computed manually from absolute
+        // MouseState.X/Y (no MouseState.Delta convenience property exists in OpenTK
+        // 4.8 - same pattern example/OpenTKSplat/OpenTKSplat/Graphics/Camera.cs uses).
         float cameraYaw;
         float cameraPitch;
         bool wasLeftMouseDown;
@@ -39,9 +38,10 @@ namespace Sample14
         const float MouseSensitivity = 0.1f;
         const float MoveSpeedFraction = 0.01f;
 
-        public RenderWindow(GameWindowSettings gameWindowSettings, NativeWindowSettings nativeWindowSettings)
+        public RenderWindow(GameWindowSettings gameWindowSettings, NativeWindowSettings nativeWindowSettings, bool benchMode = false)
             : base(gameWindowSettings, nativeWindowSettings)
         {
+            this.benchMode = benchMode;
         }
 
         protected override void OnLoad()
@@ -58,11 +58,11 @@ namespace Sample14
             // ImGui.CreateContext() must run before either backend Init() call, and
             // the platform backend (input) must be initialized before the renderer
             // backend. Docking/multi-viewport support
-            // (ImGuiConfigFlags.DockingEnable/ViewportsEnable) is
-            // deliberately not enabled - Sample14 only needs one overlay panel, and
-            // multi-viewport requires OpenTK APIs (window.MousePassthrough, several
-            // MouseCursor shapes) not present in the OpenTK 4.8.2 version referenced
-            // here (see UI/Backends/ImguiImplOpenTK4.cs's patches).
+            // (ImGuiConfigFlags.DockingEnable/ViewportsEnable) is deliberately not
+            // enabled - this sample only needs one overlay panel, and multi-viewport
+            // requires OpenTK APIs (window.MousePassthrough, several MouseCursor
+            // shapes) not present in the OpenTK 4.8.2 version referenced here (see
+            // UI/Backends/ImguiImplOpenTK4.cs's patches).
             ImGui.CreateContext();
             ImGuiIOPtr io = ImGui.GetIO();
             io.ConfigFlags |= ImGuiConfigFlags.NavEnableKeyboard;
@@ -70,14 +70,27 @@ namespace Sample14
             ImguiImplOpenTK4.Init(this);
             ImguiImplOpenGL3.Init();
 
-            PrintControls();
+            if (benchMode)
+            {
+                // Uncapped frame rate - VSync would otherwise clamp wall-clock frame
+                // time at the monitor refresh rate, hiding any actual GPU-side
+                // speedup/regression the benchmark exists to measure (see
+                // BenchmarkRunner's own doc comment).
+                VSync = VSyncMode.Off;
+                benchmarkRunner = new BenchmarkRunner();
+                benchmarkRunner.Start(sampleRenderer);
+            }
+            else
+            {
+                PrintControls();
+            }
         }
 
         static void PrintControls()
         {
             Console.WriteLine("[Controls] W/A/S/D move, hold Left Mouse to look, [/] prev/next scene,");
             Console.WriteLine("[Controls] M toggle merged-GAS, Space denoiser, Tab accumulate,");
-            Console.WriteLine("[Controls] 1/2 mirror bounces -/+, 3/4 refraction -/+, 5/6 diffuse -/+, Esc quit");
+            Console.WriteLine("[Controls] R auto render-scale, 1/2 bounces -/+, T tonemap operator, Esc quit");
         }
 
         protected override void OnUpdateFrame(FrameEventArgs args)
@@ -115,8 +128,7 @@ namespace Sample14
             {
                 // Just pressed - initialize yaw/pitch from the camera's current look
                 // direction (so the view doesn't snap on the first drag frame) and
-                // reset the delta baseline, mirroring Sample13's Frame_MouseDown fix
-                // for the "lookAt flips on first click" bug.
+                // reset the delta baseline.
                 Camera current = sampleRenderer.camera;
                 Vec3 forward = Vec3.unitVector(current.lookAt - current.origin);
                 cameraYaw = MathF.Atan2(forward.x, forward.z) * 180f / MathF.PI;
@@ -217,34 +229,35 @@ namespace Sample14
                 sampleRenderer.Accumulate = !sampleRenderer.Accumulate;
                 Console.WriteLine($"[Accumulate] {sampleRenderer.Accumulate}");
             }
+            if (IsKeyPressed(Keys.R))
+            {
+                sampleRenderer.AutoScaleEnabled = !sampleRenderer.AutoScaleEnabled;
+                Console.WriteLine($"[AutoScale] {sampleRenderer.AutoScaleEnabled}");
+            }
 
-            if (IsKeyPressed(Keys.D1)) AdjustMirrorBounces(-1);
-            if (IsKeyPressed(Keys.D2)) AdjustMirrorBounces(1);
-            if (IsKeyPressed(Keys.D3)) AdjustRefractionBounces(-1);
-            if (IsKeyPressed(Keys.D4)) AdjustRefractionBounces(1);
-            if (IsKeyPressed(Keys.D5)) AdjustDiffuseBounces(-1);
-            if (IsKeyPressed(Keys.D6)) AdjustDiffuseBounces(1);
+            if (IsKeyPressed(Keys.D1)) AdjustMaxBounces(-1);
+            if (IsKeyPressed(Keys.D2)) AdjustMaxBounces(1);
+
+            // Tonemap controls - Exposure/env
+            // rotation/env intensity are continuous slider values with no natural
+            // keyboard equivalent (unlike the discrete toggles here), so they stay
+            // UI-panel-only.
+            if (IsKeyPressed(Keys.T))
+            {
+                sampleRenderer.TonemapOperator = sampleRenderer.TonemapOperator == TonemapKernel.OperatorReinhard
+                    ? TonemapKernel.OperatorAces
+                    : TonemapKernel.OperatorReinhard;
+                Console.WriteLine($"[Tonemap] {(sampleRenderer.TonemapOperator == TonemapKernel.OperatorAces ? "ACES" : "Reinhard")}");
+            }
         }
 
-        void AdjustMirrorBounces(int delta)
+        // Every material kind shares one raygen bounce loop terminated by Russian
+        // roulette, so a single unified bounce budget covers all of them.
+        void AdjustMaxBounces(int delta)
         {
-            sampleRenderer.MaxMirrorBounces = Math.Clamp(sampleRenderer.MaxMirrorBounces + delta, 0, 8);
+            sampleRenderer.MaxBounces = Math.Clamp(sampleRenderer.MaxBounces + delta, 1, 32);
             sampleRenderer.setCamera(sampleRenderer.camera);
-            Console.WriteLine($"[MirrorBounces] {sampleRenderer.MaxMirrorBounces}");
-        }
-
-        void AdjustRefractionBounces(int delta)
-        {
-            sampleRenderer.MaxRefractionBounces = Math.Clamp(sampleRenderer.MaxRefractionBounces + delta, 0, 8);
-            sampleRenderer.setCamera(sampleRenderer.camera);
-            Console.WriteLine($"[RefractionBounces] {sampleRenderer.MaxRefractionBounces}");
-        }
-
-        void AdjustDiffuseBounces(int delta)
-        {
-            sampleRenderer.MaxDiffuseBounces = Math.Clamp(sampleRenderer.MaxDiffuseBounces + delta, 0, 8);
-            sampleRenderer.setCamera(sampleRenderer.camera);
-            Console.WriteLine($"[DiffuseBounces] {sampleRenderer.MaxDiffuseBounces}");
+            Console.WriteLine($"[MaxBounces] {sampleRenderer.MaxBounces}");
         }
 
         protected override void OnRenderFrame(FrameEventArgs args)
@@ -271,6 +284,14 @@ namespace Sample14
 
             SwapBuffers();
 
+            if (benchmarkRunner != null)
+            {
+                benchmarkRunner.OnFrameRendered(sampleRenderer);
+                if (benchmarkRunner.Finished)
+                    Close();
+                return;
+            }
+
             // Console stats logging stays in place
             // alongside the panel's own STATS section - useful when the panel is
             // hidden/off-screen or for scripted/headless runs.
@@ -292,12 +313,14 @@ namespace Sample14
             // GL viewport always matches the actual window/backbuffer size - the
             // fullscreen quad's textured draw (FullscreenQuad.Draw) already stretches
             // whatever resolution the render texture is (linear-filtered) to fill
-            // whatever viewport is set, so this just resizes the whole render.
+            // whatever viewport is set, so a lower-than-window render resolution
+            // (SampleRenderer.RenderScale) just softens the image, it never
+            // letterboxes or distorts it.
             GL.Viewport(0, 0, e.Width, e.Height);
 
             // OpenTK can fire an initial resize before OnLoad() has constructed
             // sampleRenderer yet.
-            sampleRenderer?.resize(e.Width, e.Height);
+            sampleRenderer?.OnWindowResized(e.Width, e.Height);
         }
 
         protected override void OnUnload()

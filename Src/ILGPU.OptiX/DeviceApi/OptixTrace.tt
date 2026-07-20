@@ -68,16 +68,11 @@ namespace ILGPU.OptiX.DeviceApi
 
     // The real ceiling here is not OptiX's own 32-payload hardware limit
     // (MaxPayloadValues above) - it's ILGPU's own CudaAsm.EmitRef, whose generated
-    // overloads only go up to 44 ref arguments (see numEmitRefArguments in
-    // example/ILGPU/Src/ILGPU/Runtime/Cuda/CudaAsm.Generated.tt). Every Trace() call
-    // spends NonPayloadArgCount (18) of those 44 on fixed arguments regardless of
-    // paramIdx, leaving 44 - 18 = 26 as the actual highest payload count an overload
-    // can support. Generating every count up to this true ceiling up front (rather
-    // than only as high as whatever a given sample happens to need today) means no
-    // sample should ever need to touch this loop bound again - a sample-specific bump
-    // here previously caused a silent mismatch against RendererPipeline.cs's own
-    // NumPayloadValues (a separate, unrelated number samples must still set
-    // themselves to match how many of these generated slots they actually use).
+    // overloads only go up to 44 ref arguments. Every Trace() call spends
+    // NonPayloadArgCount (18) of those 44 on fixed arguments regardless of paramIdx,
+    // leaving 44 - 18 = 26 as the actual highest payload count an overload can
+    // support - generate every count up to this true ceiling, not just what a
+    // consumer happens to need today.
     const int MaxEmitRefArguments = 44;
     const int MaxAchievablePayloadValues = MaxEmitRefArguments - NonPayloadArgCount;
 #>
@@ -96,8 +91,7 @@ namespace ILGPU.OptiX.DeviceApi
 <#
     // One entry per generated Trace(...) family: WrapperClassName == null emits the
     // root (untyped, OPTIX_PAYLOAD_TYPE_DEFAULT = 0) family directly in OptixTrace
-    // itself, unchanged from before item 5 - every existing sample's call sites keep
-    // working with zero changes. The others each emit their family nested inside a
+    // itself. The others each emit their family nested inside a
     // "public static class <name> { ... }" block, with TypeIdLiteral baked into the
     // PTX "mov.u32" instruction instead of 0.
     var variants = new[]

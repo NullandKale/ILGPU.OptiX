@@ -178,6 +178,168 @@ namespace ILGPU.OptiX.Pipeline
         }
 
         /// <summary>
+        /// Creates a new OptiX exception kernel - runs when the launch hits an
+        /// exception enabled via
+        /// <see cref="OptixPipelineCompileOptionsBuilder.WithExceptionFlags"/> (or a
+        /// user exception thrown via <c>OptixThrowException</c>). Read the exception
+        /// code/details inside via <c>OptixGetExceptionInfo</c>.
+        /// </summary>
+        /// <param name="deviceContext">The OptiX device context.</param>
+        /// <param name="exceptionKernel">The exception kernel.</param>
+        /// <param name="moduleCompileOptions">The module compile options.</param>
+        /// <param name="pipelineCompileOptions">The pipeline compile options.</param>
+        /// <returns>The exception kernel.</returns>
+        [CLSCompliant(false)]
+        public static OptixKernel CreateExceptionKernel<TLaunchParams>(
+            this OptixDeviceContext deviceContext,
+            Action<TLaunchParams> exceptionKernel,
+            OptixModuleCompileOptions moduleCompileOptions,
+            OptixPipelineCompileOptions pipelineCompileOptions)
+            where TLaunchParams : unmanaged
+        {
+            if (deviceContext == null)
+                throw new ArgumentNullException(nameof(deviceContext));
+
+            using var module = deviceContext.CreateModule(
+                exceptionKernel,
+                OptixKernel.EXCEPTION_PREFIX,
+                moduleCompileOptions,
+                pipelineCompileOptions,
+                out var exceptionEntryFunctionName);
+            using var name = SafeHGlobal.FromString(exceptionEntryFunctionName);
+
+            using var programGroup = deviceContext.CreateProgramGroup(
+                new OptixProgramGroupDesc()
+                {
+                    Kind = OptixProgramGroupKind.Exception,
+                    Exception =
+                        new OptixProgramGroupSingleModule()
+                        {
+                            Module = module.ModulePtr,
+                            EntryFunctionName = name
+                        }
+                });
+            return new OptixKernel(
+                new[] { module.Transfer() },
+                programGroup.Transfer());
+        }
+
+        /// <summary>
+        /// Creates a new OptiX direct-callable (DC) kernel, invokable from device
+        /// code via <c>OptixCallables.DirectCall(sbtIndex)</c> after registering the
+        /// kernel's program group in the SBT callables table
+        /// (<see cref="OptixSbtBuilder.SetCallableRecords"/>). The callable receives
+        /// the launch params like any other program; see
+        /// <c>OptixCallables</c> for the current zero-argument calling convention.
+        /// </summary>
+        /// <param name="deviceContext">The OptiX device context.</param>
+        /// <param name="callableKernel">The direct callable kernel.</param>
+        /// <param name="moduleCompileOptions">The module compile options.</param>
+        /// <param name="pipelineCompileOptions">The pipeline compile options.</param>
+        /// <returns>The callable kernel.</returns>
+        [CLSCompliant(false)]
+        public static OptixKernel CreateDirectCallableKernel<TLaunchParams>(
+            this OptixDeviceContext deviceContext,
+            Action<TLaunchParams> callableKernel,
+            OptixModuleCompileOptions moduleCompileOptions,
+            OptixPipelineCompileOptions pipelineCompileOptions)
+            where TLaunchParams : unmanaged
+        {
+            if (deviceContext == null)
+                throw new ArgumentNullException(nameof(deviceContext));
+
+            var ptxAssembly = deviceContext.GenerateCallablePTX(
+                callableKernel,
+                OptixKernel.DIRECT_CALLABLE_PREFIX,
+                out var entryFunctionName);
+
+            if (DumpGeneratedPtx)
+            {
+                System.IO.File.WriteAllText(
+                    System.IO.Path.Combine(
+                        System.IO.Path.GetTempPath(),
+                        $"ilgpu-optix-debug-{OptixKernel.DIRECT_CALLABLE_PREFIX}-{entryFunctionName}.ptx"),
+                    ptxAssembly);
+            }
+
+            using var module = deviceContext.CreateModule(
+                moduleCompileOptions, pipelineCompileOptions, ptxAssembly);
+            using var name = SafeHGlobal.FromString(entryFunctionName);
+
+            using var programGroup = deviceContext.CreateProgramGroup(
+                new OptixProgramGroupDesc()
+                {
+                    Kind = OptixProgramGroupKind.Callables,
+                    Callables =
+                        new OptixProgramGroupCallables()
+                        {
+                            ModuleDC = module.ModulePtr,
+                            EntryFunctionNameDC = name
+                        }
+                });
+            return new OptixKernel(
+                new[] { module.Transfer() },
+                programGroup.Transfer());
+        }
+
+        /// <summary>
+        /// Creates a new OptiX continuation-callable (CC) kernel, invokable from
+        /// device code via <c>OptixCallables.ContinuationCall(sbtIndex)</c> after
+        /// registering the kernel's program group in the SBT callables table
+        /// (<see cref="OptixSbtBuilder.SetCallableRecords"/>). Continuation callables
+        /// consume continuation stack - account for them in the pipeline stack sizes.
+        /// </summary>
+        /// <param name="deviceContext">The OptiX device context.</param>
+        /// <param name="callableKernel">The continuation callable kernel.</param>
+        /// <param name="moduleCompileOptions">The module compile options.</param>
+        /// <param name="pipelineCompileOptions">The pipeline compile options.</param>
+        /// <returns>The callable kernel.</returns>
+        [CLSCompliant(false)]
+        public static OptixKernel CreateContinuationCallableKernel<TLaunchParams>(
+            this OptixDeviceContext deviceContext,
+            Action<TLaunchParams> callableKernel,
+            OptixModuleCompileOptions moduleCompileOptions,
+            OptixPipelineCompileOptions pipelineCompileOptions)
+            where TLaunchParams : unmanaged
+        {
+            if (deviceContext == null)
+                throw new ArgumentNullException(nameof(deviceContext));
+
+            var ptxAssembly = deviceContext.GenerateCallablePTX(
+                callableKernel,
+                OptixKernel.CONTINUATION_CALLABLE_PREFIX,
+                out var entryFunctionName);
+
+            if (DumpGeneratedPtx)
+            {
+                System.IO.File.WriteAllText(
+                    System.IO.Path.Combine(
+                        System.IO.Path.GetTempPath(),
+                        $"ilgpu-optix-debug-{OptixKernel.CONTINUATION_CALLABLE_PREFIX}-{entryFunctionName}.ptx"),
+                    ptxAssembly);
+            }
+
+            using var module = deviceContext.CreateModule(
+                moduleCompileOptions, pipelineCompileOptions, ptxAssembly);
+            using var name = SafeHGlobal.FromString(entryFunctionName);
+
+            using var programGroup = deviceContext.CreateProgramGroup(
+                new OptixProgramGroupDesc()
+                {
+                    Kind = OptixProgramGroupKind.Callables,
+                    Callables =
+                        new OptixProgramGroupCallables()
+                        {
+                            ModuleCC = module.ModulePtr,
+                            entryFunctionNameCC = name
+                        }
+                });
+            return new OptixKernel(
+                new[] { module.Transfer() },
+                programGroup.Transfer());
+        }
+
+        /// <summary>
         /// Creates a new OptiX hitgroup kernel.
         /// </summary>
         /// <param name="deviceContext">The OptiX device context.</param>
@@ -525,7 +687,7 @@ namespace ILGPU.OptiX.Pipeline
         // OptiX's own doc comment on optixTaskExecute doesn't specify a recommended
         // size, so this follows the pattern of a small fixed buffer (matches other
         // fixed-capacity out-array idioms already used elsewhere in this codebase).
-        private const int MaxAdditionalTasksPerExecute = 4;
+        private const int MaxAdditionalTasksPerExecute = 32;
 
         /// <summary>
         /// Creates a new OptiX module using task-based (parallelizable) compilation -
@@ -598,8 +760,13 @@ namespace ILGPU.OptiX.Pipeline
                 if (numCreated == 0)
                     return;
 
-                var children = new System.Threading.Tasks.Task[numCreated];
-                for (int i = 0; i < numCreated; i++)
+                // optixTaskExecute's contract caps numCreated at the maxNumAdditionalTasks
+                // we passed in, but clamp defensively anyway - an unexpectedly large task
+                // graph should surface as the ModuleCompileState.Completed check failing
+                // with a clear message below, not an out-of-bounds array read here.
+                int count = System.Math.Min((int)numCreated, MaxAdditionalTasksPerExecute);
+                var children = new System.Threading.Tasks.Task[count];
+                for (int i = 0; i < count; i++)
                 {
                     var childTask = additionalTasks[i];
                     children[i] = System.Threading.Tasks.Task.Run(() => Recurse(childTask));
@@ -782,13 +949,12 @@ namespace ILGPU.OptiX.Pipeline
         }
 
         /// <summary>
-        /// Compacts a previously built acceleration structure into a smaller output
-        /// buffer, returning the new (compacted) traversable handle. The input handle
-        /// must come from an AccelBuild call whose accelOptions included
-        /// AllowCompaction and whose emittedProperties included an
-        /// CompactedSize entry - outputBuffer must be at least
-        /// that emitted size (read back from device memory by the caller after the
-        /// original build's stream has been synchronized).
+        /// Compacts an acceleration structure into a smaller output buffer, returning
+        /// the new (compacted) traversable handle. The input handle must come from an
+        /// AccelBuild call whose accelOptions included AllowCompaction and whose
+        /// emittedProperties included a CompactedSize entry - outputBuffer must be at
+        /// least that emitted size (read back from device memory by the caller after
+        /// the build's stream has been synchronized).
         /// </summary>
         /// <param name="deviceContext">The OptiX device context.</param>
         /// <param name="stream">The current cuda stream.</param>
@@ -822,8 +988,8 @@ namespace ILGPU.OptiX.Pipeline
         }
 
         /// <summary>
-        /// Retrieves relocation info for a previously built acceleration structure -
-        /// opaque data describing which devices/drivers it can be relocated to/between.
+        /// Retrieves relocation info for an acceleration structure - opaque data
+        /// describing which devices/drivers it can be relocated to/between.
         /// </summary>
         /// <param name="deviceContext">The OptiX device context.</param>
         /// <param name="handle">The traversable handle of the built acceleration structure.</param>
@@ -869,11 +1035,10 @@ namespace ILGPU.OptiX.Pipeline
         }
 
         /// <summary>
-        /// Relocates a previously built acceleration structure into
-        /// <paramref name="targetAccel"/>, returning the relocated traversable handle.
-        /// <paramref name="relocateInputs"/> must have exactly one entry per build input
-        /// the source acceleration structure was originally built with, in the same
-        /// order.
+        /// Relocates an acceleration structure into <paramref name="targetAccel"/>,
+        /// returning the relocated traversable handle. <paramref name="relocateInputs"/>
+        /// must have exactly one entry per build input the source acceleration
+        /// structure was built with, in the same order.
         /// </summary>
         /// <param name="deviceContext">The OptiX device context.</param>
         /// <param name="stream">The current CUDA stream.</param>
@@ -919,8 +1084,8 @@ namespace ILGPU.OptiX.Pipeline
 
         /// <summary>
         /// Emits a single post-build property (e.g. <see cref="OptixAccelPropertyType.Aabbs"/>)
-        /// for a previously built acceleration structure, outside of the
-        /// emittedProperties list passed to the original AccelBuild call.
+        /// for an acceleration structure, outside of the emittedProperties list passed
+        /// to its AccelBuild call.
         /// </summary>
         /// <param name="deviceContext">The OptiX device context.</param>
         /// <param name="stream">The current CUDA stream.</param>
@@ -1046,6 +1211,299 @@ namespace ILGPU.OptiX.Pipeline
                 out var denoiser);
             OptixException.ThrowIfFailed(result);
             return new OptixDenoiser(denoiser);
+        }
+
+        /// <summary>
+        /// Creates a new OptiX denoiser from a user-supplied model blob
+        /// (optixDenoiserCreateWithUserModel) instead of a built-in model kind.
+        /// </summary>
+        /// <param name="deviceContext">The OptiX device context.</param>
+        /// <param name="userModelData">The user model training data blob.</param>
+        /// <returns>The denoiser.</returns>
+        [CLSCompliant(false)]
+        public static OptixDenoiser CreateDenoiserWithUserModel(
+            this OptixDeviceContext deviceContext,
+            byte[] userModelData)
+        {
+            if (deviceContext == null)
+                throw new ArgumentNullException(nameof(deviceContext));
+            if (userModelData == null || userModelData.Length == 0)
+                throw new ArgumentException(
+                    "User model data must not be null or empty.", nameof(userModelData));
+
+            using var dataPtr = SafeHGlobal.AllocFrom<byte>(userModelData);
+            var result = OptixAPI.Current.DenoiserCreateWithUserModel(
+                deviceContext.DeviceContextPtr,
+                dataPtr,
+                (ulong)userModelData.Length,
+                out var denoiser);
+            OptixException.ThrowIfFailed(result);
+            return new OptixDenoiser(denoiser);
+        }
+
+        /// <summary>
+        /// Queries a device/driver property (optixDeviceContextGetProperty) - driver
+        /// limits like max trace depth, RT core version, or feature support flags
+        /// (SER, cooperative vectors, cluster accels). Every property is a 4-byte
+        /// unsigned value.
+        /// </summary>
+        /// <param name="deviceContext">The OptiX device context.</param>
+        /// <param name="property">The property to query.</param>
+        [CLSCompliant(false)]
+        public static uint GetProperty(
+            this OptixDeviceContext deviceContext,
+            OptixDeviceProperty property)
+        {
+            if (deviceContext == null)
+                throw new ArgumentNullException(nameof(deviceContext));
+
+            OptixException.ThrowIfFailed(
+                OptixAPI.Current.DeviceContextGetProperty(
+                    deviceContext.DeviceContextPtr, property, out var value));
+            return value;
+        }
+
+        /// <summary>
+        /// Enables or disables the OptiX compilation disk cache
+        /// (optixDeviceContextSetCacheEnabled).
+        /// </summary>
+        [CLSCompliant(false)]
+        public static void SetCacheEnabled(
+            this OptixDeviceContext deviceContext,
+            bool enabled)
+        {
+            if (deviceContext == null)
+                throw new ArgumentNullException(nameof(deviceContext));
+
+            OptixException.ThrowIfFailed(
+                OptixAPI.Current.DeviceContextSetCacheEnabled(
+                    deviceContext.DeviceContextPtr, enabled));
+        }
+
+        /// <summary>
+        /// Queries whether the OptiX compilation disk cache is enabled
+        /// (optixDeviceContextGetCacheEnabled).
+        /// </summary>
+        [CLSCompliant(false)]
+        public static bool GetCacheEnabled(this OptixDeviceContext deviceContext)
+        {
+            if (deviceContext == null)
+                throw new ArgumentNullException(nameof(deviceContext));
+
+            OptixException.ThrowIfFailed(
+                OptixAPI.Current.DeviceContextGetCacheEnabled(
+                    deviceContext.DeviceContextPtr, out var enabled));
+            return enabled;
+        }
+
+        /// <summary>
+        /// Sets the disk cache directory (optixDeviceContextSetCacheLocation) - the
+        /// directory is created if it does not exist. Throws
+        /// OPTIX_ERROR_DISK_CACHE_INVALID_PATH for an unusable path.
+        /// </summary>
+        [CLSCompliant(false)]
+        public static void SetCacheLocation(
+            this OptixDeviceContext deviceContext,
+            string location)
+        {
+            if (deviceContext == null)
+                throw new ArgumentNullException(nameof(deviceContext));
+            if (string.IsNullOrEmpty(location))
+                throw new ArgumentException(
+                    "Cache location must not be null or empty.", nameof(location));
+
+            OptixException.ThrowIfFailed(
+                OptixAPI.Current.DeviceContextSetCacheLocation(
+                    deviceContext.DeviceContextPtr, location));
+        }
+
+        /// <summary>
+        /// Queries the disk cache directory (optixDeviceContextGetCacheLocation).
+        /// </summary>
+        [CLSCompliant(false)]
+        public static string GetCacheLocation(this OptixDeviceContext deviceContext)
+        {
+            if (deviceContext == null)
+                throw new ArgumentNullException(nameof(deviceContext));
+
+            OptixException.ThrowIfFailed(
+                OptixAPI.Current.DeviceContextGetCacheLocation(
+                    deviceContext.DeviceContextPtr, out var location));
+            return location ?? string.Empty;
+        }
+
+        /// <summary>
+        /// Sets the disk cache garbage-collection watermarks in bytes
+        /// (optixDeviceContextSetCacheDatabaseSizes). Both 0 disables garbage
+        /// collection; otherwise highWaterMark must exceed lowWaterMark.
+        /// </summary>
+        [CLSCompliant(false)]
+        public static void SetCacheDatabaseSizes(
+            this OptixDeviceContext deviceContext,
+            ulong lowWaterMark,
+            ulong highWaterMark)
+        {
+            if (deviceContext == null)
+                throw new ArgumentNullException(nameof(deviceContext));
+
+            OptixException.ThrowIfFailed(
+                OptixAPI.Current.DeviceContextSetCacheDatabaseSizes(
+                    deviceContext.DeviceContextPtr, lowWaterMark, highWaterMark));
+        }
+
+        /// <summary>
+        /// Queries the disk cache garbage-collection watermarks in bytes
+        /// (optixDeviceContextGetCacheDatabaseSizes).
+        /// </summary>
+        [CLSCompliant(false)]
+        public static (ulong LowWaterMark, ulong HighWaterMark) GetCacheDatabaseSizes(
+            this OptixDeviceContext deviceContext)
+        {
+            if (deviceContext == null)
+                throw new ArgumentNullException(nameof(deviceContext));
+
+            OptixException.ThrowIfFailed(
+                OptixAPI.Current.DeviceContextGetCacheDatabaseSizes(
+                    deviceContext.DeviceContextPtr, out var low, out var high));
+            return (low, high);
+        }
+
+        /// <summary>
+        /// Computes the buffer sizes for a cluster acceleration build
+        /// (optixClusterAccelComputeMemoryUsage). tempUpdateSizeInBytes is always 0.
+        /// Requires driver support - check
+        /// <see cref="GetProperty"/>(<see cref="OptixDeviceProperty.ClusterAccel"/>)
+        /// first.
+        /// </summary>
+        /// <param name="deviceContext">The OptiX device context.</param>
+        /// <param name="buildMode">The build mode the later build will use.</param>
+        /// <param name="buildInput">The build type and per-object limits.</param>
+        [CLSCompliant(false)]
+        public static OptixAccelBufferSizes ClusterAccelComputeMemoryUsage(
+            this OptixDeviceContext deviceContext,
+            OptixClusterAccelBuildMode buildMode,
+            in OptixClusterAccelBuildInput buildInput)
+        {
+            if (deviceContext == null)
+                throw new ArgumentNullException(nameof(deviceContext));
+
+            using var buildInputPtr = SafeHGlobal.AllocFrom(buildInput);
+            OptixException.ThrowIfFailed(
+                OptixAPI.Current.ClusterAccelComputeMemoryUsage(
+                    deviceContext.DeviceContextPtr,
+                    buildMode,
+                    buildInputPtr,
+                    out var bufferSizes));
+            return bufferSizes;
+        }
+
+        /// <summary>
+        /// Builds cluster objects - CLASes from triangles, cluster templates, or
+        /// GASes over clusters - from device-side argument arrays
+        /// (optixClusterAccelBuild). This is an indirect multi-build: the per-object
+        /// <c>*Args</c> records (e.g.
+        /// <see cref="OptixClusterAccelBuildInputTrianglesArgs"/>) live in device
+        /// memory at <paramref name="argsArray"/>. The pipeline consuming the
+        /// result must be compiled with
+        /// <see cref="OptixPipelineCompileOptionsBuilder.WithAllowClusteredGeometry"/>.
+        /// </summary>
+        /// <param name="deviceContext">The OptiX device context.</param>
+        /// <param name="stream">The current CUDA stream.</param>
+        /// <param name="buildModeDesc">Where to write output for the selected mode.</param>
+        /// <param name="buildInput">The build type and per-object limits.</param>
+        /// <param name="argsArray">Device pointer to the per-object args array.</param>
+        /// <param name="argsCountDevicePointer">
+        /// Optional device pointer to a uint object count; 0 uses the build input's
+        /// maxArgCount.
+        /// </param>
+        /// <param name="argsStrideInBytes">Optional args stride; 0 uses the natural stride.</param>
+        [CLSCompliant(false)]
+        public static void ClusterAccelBuild(
+            this OptixDeviceContext deviceContext,
+            AcceleratorStream stream,
+            in OptixClusterAccelBuildModeDesc buildModeDesc,
+            in OptixClusterAccelBuildInput buildInput,
+            ulong argsArray,
+            ulong argsCountDevicePointer = 0,
+            uint argsStrideInBytes = 0)
+        {
+            if (deviceContext == null)
+                throw new ArgumentNullException(nameof(deviceContext));
+            if (stream == null)
+                throw new ArgumentNullException(nameof(stream));
+            if (stream is not CudaStream cudaStream)
+                throw new ArgumentOutOfRangeException(nameof(stream));
+
+            using var buildModeDescPtr = SafeHGlobal.AllocFrom(buildModeDesc);
+            using var buildInputPtr = SafeHGlobal.AllocFrom(buildInput);
+            OptixException.ThrowIfFailed(
+                OptixAPI.Current.ClusterAccelBuild(
+                    deviceContext.DeviceContextPtr,
+                    cudaStream.StreamPtr,
+                    buildModeDescPtr,
+                    buildInputPtr,
+                    argsArray,
+                    argsCountDevicePointer,
+                    argsStrideInBytes));
+        }
+
+        /// <summary>
+        /// Retrieves relocation info for an opacity micromap array - the OMM
+        /// counterpart of <see cref="AccelGetRelocationInfo"/>.
+        /// </summary>
+        /// <param name="deviceContext">The OptiX device context.</param>
+        /// <param name="opacityMicromapArray">Device pointer of the built OMM array.</param>
+        [CLSCompliant(false)]
+        public unsafe static OptixRelocationInfo OpacityMicromapArrayGetRelocationInfo(
+            this OptixDeviceContext deviceContext,
+            ulong opacityMicromapArray)
+        {
+            if (deviceContext == null)
+                throw new ArgumentNullException(nameof(deviceContext));
+
+            var info = stackalloc OptixRelocationInfo[1];
+            OptixException.ThrowIfFailed(
+                OptixAPI.Current.OpacityMicromapArrayGetRelocationInfo(
+                    deviceContext.DeviceContextPtr,
+                    opacityMicromapArray,
+                    new IntPtr(info)));
+            return info[0];
+        }
+
+        /// <summary>
+        /// Updates a relocated opacity micromap array - the OMM counterpart of
+        /// <see cref="AccelRelocate"/>. Does not copy the array bytes; the caller
+        /// must have copied them into <paramref name="targetArray"/> first.
+        /// </summary>
+        /// <param name="deviceContext">The OptiX device context.</param>
+        /// <param name="stream">The current CUDA stream.</param>
+        /// <param name="info">Relocation info from <see cref="OpacityMicromapArrayGetRelocationInfo"/>.</param>
+        /// <param name="targetArray">
+        /// The target device buffer holding the copied OMM array bytes - must be
+        /// exactly as large as the source array.
+        /// </param>
+        [CLSCompliant(false)]
+        public static void OpacityMicromapArrayRelocate(
+            this OptixDeviceContext deviceContext,
+            AcceleratorStream stream,
+            OptixRelocationInfo info,
+            ArrayView1D<byte, Stride1D.Dense> targetArray)
+        {
+            if (deviceContext == null)
+                throw new ArgumentNullException(nameof(deviceContext));
+            if (stream == null)
+                throw new ArgumentNullException(nameof(stream));
+            if (stream is not CudaStream cudaStream)
+                throw new ArgumentOutOfRangeException(nameof(stream));
+
+            using var infoPtr = SafeHGlobal.AllocFrom(info);
+            OptixException.ThrowIfFailed(
+                OptixAPI.Current.OpacityMicromapArrayRelocate(
+                    deviceContext.DeviceContextPtr,
+                    cudaStream.StreamPtr,
+                    infoPtr,
+                    unchecked((ulong)targetArray.BaseView.LoadEffectiveAddressAsPtr().ToInt64()),
+                    (ulong)targetArray.LengthInBytes));
         }
     }
 }

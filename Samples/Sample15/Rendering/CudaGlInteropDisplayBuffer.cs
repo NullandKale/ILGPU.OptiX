@@ -8,17 +8,18 @@ using System.Diagnostics;
 namespace Sample15
 {
     /// <summary>
-    /// Zero-copy CUDA-GL interop for a full-frame BGRA display buffer - the same
-    /// register/map/GetMappedPointer/unmap pattern as OpenTKSplat's
-    /// CudaGlInteropIndexBuffer (example/OpenTKSplat/OpenTKSplat/Compute/
-    /// ILGPUOpenGLExchangeBuffer.cs), but targeting a GL pixel-unpack buffer (PBO)
-    /// instead of an element-array buffer, since Sample14 needs to hand a whole
-    /// tonemapped image to OpenGL each frame rather than a sorted index list.
+    /// Zero-copy CUDA-GL interop for a full-window BGRA display buffer - same
+    /// register/map/GetMappedPointer/unmap pattern as Sample13's
+    /// Rendering/CudaGlInteropDisplayBuffer.cs, copied per-sample rather than
+    /// shared from Src/ILGPU.OptiX (that library deliberately stays
+    /// windowing-library-agnostic - no OpenTK/GL dependency - so anything that
+    /// calls GL.* lives in the sample, not the core library).
     ///
-    /// Per-frame usage: MapCuda -> GetCudaArrayView (pass to TonemapKernel.tonemapAndFlip
-    /// as its `dest` parameter, exactly like Sample13's plain GPU buffer) -> UnmapCuda ->
-    /// BlitToTexture (lets the GL driver blit PBO -> texture, still no CPU copy) -> bind
-    /// GlTextureHandle and draw the fullscreen quad.
+    /// Unlike Sample13 (one raygen pipeline covering the whole window), this
+    /// sample's window is N simultaneous tiles, each its own OptiX pipeline. All N
+    /// pipelines write into different offset/stride windows of this SAME buffer
+    /// every frame (no per-tile buffer, no host round-trip) - see RenderWindow's
+    /// per-tile LaunchParams.XOffset/Stride fields.
     /// </summary>
     public sealed class CudaGlInteropDisplayBuffer : MemoryBuffer
     {
@@ -39,16 +40,11 @@ namespace Sample15
             this.height = height;
             byteCount = width * height * 4;
 
-            // PBO: rewritten in full every frame (the tonemap kernel writes every
-            // pixel), so StreamDraw is the right usage hint - unlike the reference
-            // class's DynamicDraw index buffer, which is only reordered, not replaced.
             GlBufferHandle = GL.GenBuffer();
             GL.BindBuffer(BufferTarget.PixelUnpackBuffer, GlBufferHandle);
             GL.BufferData(BufferTarget.PixelUnpackBuffer, byteCount, IntPtr.Zero, BufferUsageHint.StreamDraw);
             GL.BindBuffer(BufferTarget.PixelUnpackBuffer, 0);
 
-            // Display texture, allocated once - BlitToTexture() re-fills it from the
-            // PBO every frame via TexSubImage2D, never reallocated.
             GlTextureHandle = GL.GenTexture();
             GL.BindTexture(TextureTarget.Texture2D, GlTextureHandle);
             GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMinFilter, (int)TextureMinFilter.Linear);

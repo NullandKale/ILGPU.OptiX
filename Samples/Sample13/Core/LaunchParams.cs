@@ -15,14 +15,13 @@ namespace Sample13
 {
     // ILGPU compiles device kernels against one concrete unmanaged struct layout, so this
     // must stay a single superset shape across every scene the runtime scene-switcher can
-    // select. Unused buffers on a
-    // given scene are left invalid/zero-length (OptixDeviceView<T>.IsValid == false)
-    // rather than changing the struct itself.
+    // select. Unused buffers on a given scene are left invalid/zero-length
+    // (OptixDeviceView<T>.IsValid == false) rather than changing the struct itself.
     //
-    // Triangle geometry + multi-point-light Oren-Nayar/ambient shading (M1), mirror/
-    // dielectric materials (M2), custom primitives - Sphere/Box/CylinderY/Disk/rects/
-    // volume grid (M3-M5), mesh scenes (M6, reusing the triangle buffers as-is), and
-    // AOV/denoiser buffers (M7) are all wired up.
+    // Covers triangle geometry with multi-point-light Oren-Nayar/ambient shading,
+    // mirror/dielectric materials, custom primitives (Sphere/Box/CylinderY/Disk/rects/
+    // volume grid), mesh scenes (reusing the triangle buffers as-is), and AOV/denoiser
+    // buffers.
     public struct LaunchParams
     {
         public int NumPixelSamples;

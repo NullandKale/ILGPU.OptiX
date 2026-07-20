@@ -12,20 +12,18 @@
 
 using ILGPU.Runtime.Cuda;
 using System;
+using System.Numerics;
 
 namespace ILGPU.OptiX.DeviceApi
 {
     /// <summary>
-    /// Provides the functionality of optixTraverse - the first step of the
-    /// Shader Execution Reordering (SER) 3-step pattern: traverse-then-reorder-then-invoke instead of a single optixTrace call,
-    /// letting the driver batch coherent hits together (via <see cref="OptixReorder"/>)
-    /// before running any hit/miss program (<see cref="Invoke"/>). Traverse() alone
-    /// does NOT run the hit/miss program - it only finds the closest hit and leaves the
-    /// result in an implicit per-thread "hit object" state, same underlying registers
-    /// optixTrace itself uses (confirmed via internal/optix_device_impl.h:
-    /// _optix_hitobject_traverse has the exact same pseudo-call argument shape as
-    /// _optix_trace_typed_32 - this template mirrors OptixTrace.tt's generation
-    /// approach directly for that reason).
+    /// Provides the functionality of optixTraverse - the first step of the Shader
+    /// Execution Reordering (SER) 3-step pattern: traverse-then-reorder-then-invoke
+    /// instead of a single optixTrace call, letting the driver batch coherent hits
+    /// together (via <see cref="OptixReorder"/>) before running any hit/miss program
+    /// (<see cref="Invoke"/>). Traverse() alone does NOT run the hit/miss program - it
+    /// only finds the closest hit and leaves the result in an implicit per-thread "hit
+    /// object" state, the same underlying registers optixTrace itself uses.
     /// </summary>
     public static partial class OptixHitObject
     {
@@ -3134,5 +3132,121 @@ namespace ILGPU.OptiX.DeviceApi
             p25 = _p25.Value;
         }
 
+        /// <summary>
+        /// Traverses a ray carrying a single struct-typed payload instead of individual
+        /// <c>ref uint</c> registers - same convention as
+        /// <see cref="OptixTrace.Trace{T}"/>, dispatching to one of the fixed-count
+        /// <see cref="Traverse"/> overloads above based on <c>sizeof(T)/4</c>. Pass the
+        /// same <typeparamref name="T"/> to the matching <see cref="OptixHitObject.Invoke{T}"/>
+        /// call after <see cref="OptixReorder"/>.
+        /// </summary>
+        public static unsafe void Traverse<T>(
+            ulong traversableHandle,
+            Vector3 rayOrigin,
+            Vector3 rayDirection,
+            float tmin,
+            float tmax,
+            ref T payload,
+            float rayTime = 0f,
+            uint visibilityMask = 0xff,
+            OptixRayFlags rayFlags = OptixRayFlags.None,
+            uint sbtOffset = 0,
+            uint sbtStride = 1,
+            uint missSbtIndex = 0)
+            where T : unmanaged
+        {
+            var origin = (rayOrigin.X, rayOrigin.Y, rayOrigin.Z);
+            var direction = (rayDirection.X, rayDirection.Y, rayDirection.Z);
+            int count = sizeof(T) / 4;
+            T local = payload;
+            uint* w = (uint*)&local;
+
+            switch (count)
+            {
+                case 0:
+                    Traverse(traversableHandle, origin, direction, tmin, tmax, rayTime, visibilityMask, rayFlags, sbtOffset, sbtStride, missSbtIndex);
+                    break;
+                case 1:
+                    Traverse(traversableHandle, origin, direction, tmin, tmax, rayTime, visibilityMask, rayFlags, sbtOffset, sbtStride, missSbtIndex, ref w[0]);
+                    break;
+                case 2:
+                    Traverse(traversableHandle, origin, direction, tmin, tmax, rayTime, visibilityMask, rayFlags, sbtOffset, sbtStride, missSbtIndex, ref w[0], ref w[1]);
+                    break;
+                case 3:
+                    Traverse(traversableHandle, origin, direction, tmin, tmax, rayTime, visibilityMask, rayFlags, sbtOffset, sbtStride, missSbtIndex, ref w[0], ref w[1], ref w[2]);
+                    break;
+                case 4:
+                    Traverse(traversableHandle, origin, direction, tmin, tmax, rayTime, visibilityMask, rayFlags, sbtOffset, sbtStride, missSbtIndex, ref w[0], ref w[1], ref w[2], ref w[3]);
+                    break;
+                case 5:
+                    Traverse(traversableHandle, origin, direction, tmin, tmax, rayTime, visibilityMask, rayFlags, sbtOffset, sbtStride, missSbtIndex, ref w[0], ref w[1], ref w[2], ref w[3], ref w[4]);
+                    break;
+                case 6:
+                    Traverse(traversableHandle, origin, direction, tmin, tmax, rayTime, visibilityMask, rayFlags, sbtOffset, sbtStride, missSbtIndex, ref w[0], ref w[1], ref w[2], ref w[3], ref w[4], ref w[5]);
+                    break;
+                case 7:
+                    Traverse(traversableHandle, origin, direction, tmin, tmax, rayTime, visibilityMask, rayFlags, sbtOffset, sbtStride, missSbtIndex, ref w[0], ref w[1], ref w[2], ref w[3], ref w[4], ref w[5], ref w[6]);
+                    break;
+                case 8:
+                    Traverse(traversableHandle, origin, direction, tmin, tmax, rayTime, visibilityMask, rayFlags, sbtOffset, sbtStride, missSbtIndex, ref w[0], ref w[1], ref w[2], ref w[3], ref w[4], ref w[5], ref w[6], ref w[7]);
+                    break;
+                case 9:
+                    Traverse(traversableHandle, origin, direction, tmin, tmax, rayTime, visibilityMask, rayFlags, sbtOffset, sbtStride, missSbtIndex, ref w[0], ref w[1], ref w[2], ref w[3], ref w[4], ref w[5], ref w[6], ref w[7], ref w[8]);
+                    break;
+                case 10:
+                    Traverse(traversableHandle, origin, direction, tmin, tmax, rayTime, visibilityMask, rayFlags, sbtOffset, sbtStride, missSbtIndex, ref w[0], ref w[1], ref w[2], ref w[3], ref w[4], ref w[5], ref w[6], ref w[7], ref w[8], ref w[9]);
+                    break;
+                case 11:
+                    Traverse(traversableHandle, origin, direction, tmin, tmax, rayTime, visibilityMask, rayFlags, sbtOffset, sbtStride, missSbtIndex, ref w[0], ref w[1], ref w[2], ref w[3], ref w[4], ref w[5], ref w[6], ref w[7], ref w[8], ref w[9], ref w[10]);
+                    break;
+                case 12:
+                    Traverse(traversableHandle, origin, direction, tmin, tmax, rayTime, visibilityMask, rayFlags, sbtOffset, sbtStride, missSbtIndex, ref w[0], ref w[1], ref w[2], ref w[3], ref w[4], ref w[5], ref w[6], ref w[7], ref w[8], ref w[9], ref w[10], ref w[11]);
+                    break;
+                case 13:
+                    Traverse(traversableHandle, origin, direction, tmin, tmax, rayTime, visibilityMask, rayFlags, sbtOffset, sbtStride, missSbtIndex, ref w[0], ref w[1], ref w[2], ref w[3], ref w[4], ref w[5], ref w[6], ref w[7], ref w[8], ref w[9], ref w[10], ref w[11], ref w[12]);
+                    break;
+                case 14:
+                    Traverse(traversableHandle, origin, direction, tmin, tmax, rayTime, visibilityMask, rayFlags, sbtOffset, sbtStride, missSbtIndex, ref w[0], ref w[1], ref w[2], ref w[3], ref w[4], ref w[5], ref w[6], ref w[7], ref w[8], ref w[9], ref w[10], ref w[11], ref w[12], ref w[13]);
+                    break;
+                case 15:
+                    Traverse(traversableHandle, origin, direction, tmin, tmax, rayTime, visibilityMask, rayFlags, sbtOffset, sbtStride, missSbtIndex, ref w[0], ref w[1], ref w[2], ref w[3], ref w[4], ref w[5], ref w[6], ref w[7], ref w[8], ref w[9], ref w[10], ref w[11], ref w[12], ref w[13], ref w[14]);
+                    break;
+                case 16:
+                    Traverse(traversableHandle, origin, direction, tmin, tmax, rayTime, visibilityMask, rayFlags, sbtOffset, sbtStride, missSbtIndex, ref w[0], ref w[1], ref w[2], ref w[3], ref w[4], ref w[5], ref w[6], ref w[7], ref w[8], ref w[9], ref w[10], ref w[11], ref w[12], ref w[13], ref w[14], ref w[15]);
+                    break;
+                case 17:
+                    Traverse(traversableHandle, origin, direction, tmin, tmax, rayTime, visibilityMask, rayFlags, sbtOffset, sbtStride, missSbtIndex, ref w[0], ref w[1], ref w[2], ref w[3], ref w[4], ref w[5], ref w[6], ref w[7], ref w[8], ref w[9], ref w[10], ref w[11], ref w[12], ref w[13], ref w[14], ref w[15], ref w[16]);
+                    break;
+                case 18:
+                    Traverse(traversableHandle, origin, direction, tmin, tmax, rayTime, visibilityMask, rayFlags, sbtOffset, sbtStride, missSbtIndex, ref w[0], ref w[1], ref w[2], ref w[3], ref w[4], ref w[5], ref w[6], ref w[7], ref w[8], ref w[9], ref w[10], ref w[11], ref w[12], ref w[13], ref w[14], ref w[15], ref w[16], ref w[17]);
+                    break;
+                case 19:
+                    Traverse(traversableHandle, origin, direction, tmin, tmax, rayTime, visibilityMask, rayFlags, sbtOffset, sbtStride, missSbtIndex, ref w[0], ref w[1], ref w[2], ref w[3], ref w[4], ref w[5], ref w[6], ref w[7], ref w[8], ref w[9], ref w[10], ref w[11], ref w[12], ref w[13], ref w[14], ref w[15], ref w[16], ref w[17], ref w[18]);
+                    break;
+                case 20:
+                    Traverse(traversableHandle, origin, direction, tmin, tmax, rayTime, visibilityMask, rayFlags, sbtOffset, sbtStride, missSbtIndex, ref w[0], ref w[1], ref w[2], ref w[3], ref w[4], ref w[5], ref w[6], ref w[7], ref w[8], ref w[9], ref w[10], ref w[11], ref w[12], ref w[13], ref w[14], ref w[15], ref w[16], ref w[17], ref w[18], ref w[19]);
+                    break;
+                case 21:
+                    Traverse(traversableHandle, origin, direction, tmin, tmax, rayTime, visibilityMask, rayFlags, sbtOffset, sbtStride, missSbtIndex, ref w[0], ref w[1], ref w[2], ref w[3], ref w[4], ref w[5], ref w[6], ref w[7], ref w[8], ref w[9], ref w[10], ref w[11], ref w[12], ref w[13], ref w[14], ref w[15], ref w[16], ref w[17], ref w[18], ref w[19], ref w[20]);
+                    break;
+                case 22:
+                    Traverse(traversableHandle, origin, direction, tmin, tmax, rayTime, visibilityMask, rayFlags, sbtOffset, sbtStride, missSbtIndex, ref w[0], ref w[1], ref w[2], ref w[3], ref w[4], ref w[5], ref w[6], ref w[7], ref w[8], ref w[9], ref w[10], ref w[11], ref w[12], ref w[13], ref w[14], ref w[15], ref w[16], ref w[17], ref w[18], ref w[19], ref w[20], ref w[21]);
+                    break;
+                case 23:
+                    Traverse(traversableHandle, origin, direction, tmin, tmax, rayTime, visibilityMask, rayFlags, sbtOffset, sbtStride, missSbtIndex, ref w[0], ref w[1], ref w[2], ref w[3], ref w[4], ref w[5], ref w[6], ref w[7], ref w[8], ref w[9], ref w[10], ref w[11], ref w[12], ref w[13], ref w[14], ref w[15], ref w[16], ref w[17], ref w[18], ref w[19], ref w[20], ref w[21], ref w[22]);
+                    break;
+                case 24:
+                    Traverse(traversableHandle, origin, direction, tmin, tmax, rayTime, visibilityMask, rayFlags, sbtOffset, sbtStride, missSbtIndex, ref w[0], ref w[1], ref w[2], ref w[3], ref w[4], ref w[5], ref w[6], ref w[7], ref w[8], ref w[9], ref w[10], ref w[11], ref w[12], ref w[13], ref w[14], ref w[15], ref w[16], ref w[17], ref w[18], ref w[19], ref w[20], ref w[21], ref w[22], ref w[23]);
+                    break;
+                case 25:
+                    Traverse(traversableHandle, origin, direction, tmin, tmax, rayTime, visibilityMask, rayFlags, sbtOffset, sbtStride, missSbtIndex, ref w[0], ref w[1], ref w[2], ref w[3], ref w[4], ref w[5], ref w[6], ref w[7], ref w[8], ref w[9], ref w[10], ref w[11], ref w[12], ref w[13], ref w[14], ref w[15], ref w[16], ref w[17], ref w[18], ref w[19], ref w[20], ref w[21], ref w[22], ref w[23], ref w[24]);
+                    break;
+                case 26:
+                    Traverse(traversableHandle, origin, direction, tmin, tmax, rayTime, visibilityMask, rayFlags, sbtOffset, sbtStride, missSbtIndex, ref w[0], ref w[1], ref w[2], ref w[3], ref w[4], ref w[5], ref w[6], ref w[7], ref w[8], ref w[9], ref w[10], ref w[11], ref w[12], ref w[13], ref w[14], ref w[15], ref w[16], ref w[17], ref w[18], ref w[19], ref w[20], ref w[21], ref w[22], ref w[23], ref w[24], ref w[25]);
+                    break;
+            }
+
+            payload = local;
+        }
     }
 }

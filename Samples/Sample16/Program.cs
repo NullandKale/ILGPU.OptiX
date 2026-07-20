@@ -23,7 +23,7 @@ namespace Sample16
             var nativeWindowSettings = new NativeWindowSettings
             {
                 ClientSize = new Vector2i(1024, 768),
-                Title = "Sample16 - Accel Relocation + Emitted AABBs",
+                Title = "Sample16 - Typed Payload Dispatch",
                 Flags = ContextFlags.ForwardCompatible,
                 Profile = ContextProfile.Core,
                 APIVersion = new System.Version(3, 3),

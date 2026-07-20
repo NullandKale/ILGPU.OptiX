@@ -6,7 +6,7 @@ namespace Sample14
     // Minimal GLSL program wrapper - same compile/link pattern as
     // example/OpenTKSplat/OpenTKSplat/Graphics/Shader.cs, trimmed to just what the
     // fullscreen display quad needs (source passed as strings, not loaded from files -
-    // Sample14 has no shader asset files to bundle for a two-shader passthrough).
+    // no shader asset files to bundle for a two-shader passthrough).
     public sealed class Shader : IDisposable
     {
         public int Handle { get; }

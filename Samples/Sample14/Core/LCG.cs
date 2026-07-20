@@ -22,19 +22,21 @@ namespace Sample14
     {
         public uint State;
 
+        // TEA-seeded (see Core/TEA.cs) - the two integer
+        // keys are hashed into a well-mixed initial state.
         public LCG(uint val0, uint val1)
         {
-            uint v0 = val0;
-            uint v1 = val1;
-            uint s0 = 0;
+            State = TEA.Hash(val0, val1);
+        }
 
-            for (uint n = 0; n < 16; n++)
-            {
-                s0 += 0x9e3779b9;
-                v0 += ((v1 << 4) + 0xa341316c) ^ (v1 + s0) ^ ((v1 >> 5) + 0xc8013ea4);
-                v1 += ((v0 << 4) + 0xad90777d) ^ (v0 + s0) ^ ((v0 >> 5) + 0x7e95761e);
-            }
-            State = v0;
+        // Resumes a stream from a state carried across an OptiX payload round-trip
+        // (Milestone M3's continuous raygen<->closesthit RNG stream), instead of
+        // reseeding a fresh TEA hash - reseeding per shading call from (pixel, frame,
+        // primitive) silently correlates rays that hit the same primitive on different
+        // bounces, which this constructor exists to avoid.
+        public LCG(uint state)
+        {
+            State = state;
         }
 
         // Returns the next random value in [0, 1) and advances the state.

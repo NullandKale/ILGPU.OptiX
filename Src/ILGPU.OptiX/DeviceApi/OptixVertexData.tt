@@ -1,0 +1,231 @@
+// ---------------------------------------------------------------------------------------
+//                                     ILGPU OptiX
+//                           Copyright (c) 2022 ILGPU Project
+//                                    www.ilgpu.net
+//
+// File: OptixVertexData.tt/OptixVertexData.cs
+//
+// This file is part of ILGPU and is distributed under the University of Illinois Open
+// Source License. See LICENSE.txt for details.
+// ---------------------------------------------------------------------------------------
+
+<#@ template debug="false" hostspecific="false" language="C#" #>
+<#@ assembly name="System.Core" #>
+<#@ import namespace="System.Linq" #>
+<#@ import namespace="System.Text" #>
+<#@ import namespace="System.Collections.Generic" #>
+<#@ output extension=".cs" #>
+
+using ILGPU.Runtime.Cuda;
+using System;
+using System.Numerics;
+
+// Generated vertex-data getters for every built-in primitive type - ports of the
+// optixGet*VertexData / optixGetSphereData family (optix_device.h). Each primitive
+// type gets three spellings, matching the SDK:
+//   FromHandle(gas, primIndex, sbtGasIndex, time, out ...) - fetch by GAS handle
+//     (requires the GAS to be built with OPTIX_BUILD_FLAG_ALLOW_RANDOM_VERTEX_ACCESS);
+//   CurrentHit(out ...) - the primitive of the current AH/CH invocation;
+//   OptixHitObject.Get* - the primitive recorded in the current SER hit object.
+// Curve control points and sphere data come back as float4s (xyz = position,
+// w = radius); triangles as three float3 vertices in object space.
+
+namespace ILGPU.OptiX.DeviceApi
+{
+<#
+    // ClassName, SDK function, PTX base name, float4 count (0 = triangle special
+    // case: 9 floats as 3x Vector3), has a dedicated doc line
+    var types = new[]
+    {
+        new VertexDataType("OptixGetTriangleVertexData", "optixGetTriangleVertexData",
+            "triangle_vertex_data", 0,
+            "The three object-space vertices of a triangle primitive."),
+        new VertexDataType("OptixGetSphereData", "optixGetSphereData",
+            "sphere_data", 1,
+            "The center (xyz) and radius (w) of a sphere primitive."),
+        new VertexDataType("OptixGetLinearCurveVertexData", "optixGetLinearCurveVertexData",
+            "linear_curve_vertex_data", 2,
+            "The two control points (xyz = position, w = radius) of a round linear curve segment."),
+        new VertexDataType("OptixGetQuadraticBSplineVertexData", "optixGetQuadraticBSplineVertexData",
+            "quadratic_bspline_vertex_data", 3,
+            "The three control points (xyz = position, w = radius) of a round quadratic B-spline segment."),
+        new VertexDataType("OptixGetQuadraticBSplineRocapsVertexData", "optixGetQuadraticBSplineRocapsVertexData",
+            "quadratic_bspline_rocaps_vertex_data", 3,
+            "The three control points (xyz = position, w = radius) of a round quadratic B-spline segment with rocaps."),
+        new VertexDataType("OptixGetCubicBSplineVertexData", "optixGetCubicBSplineVertexData",
+            "cubic_bspline_vertex_data", 4,
+            "The four control points (xyz = position, w = radius) of a round cubic B-spline segment."),
+        new VertexDataType("OptixGetCubicBSplineRocapsVertexData", "optixGetCubicBSplineRocapsVertexData",
+            "cubic_bspline_rocaps_vertex_data", 4,
+            "The four control points (xyz = position, w = radius) of a round cubic B-spline segment with rocaps."),
+        new VertexDataType("OptixGetCatmullRomVertexData", "optixGetCatmullRomVertexData",
+            "catmullrom_vertex_data", 4,
+            "The four control points (xyz = position, w = radius) of a round CatmullRom segment."),
+        new VertexDataType("OptixGetCatmullRomRocapsVertexData", "optixGetCatmullRomRocapsVertexData",
+            "catmullrom_rocaps_vertex_data", 4,
+            "The four control points (xyz = position, w = radius) of a round CatmullRom segment with rocaps."),
+        new VertexDataType("OptixGetCubicBezierVertexData", "optixGetCubicBezierVertexData",
+            "cubic_bezier_vertex_data", 4,
+            "The four control points (xyz = position, w = radius) of a round cubic Bezier segment."),
+        new VertexDataType("OptixGetCubicBezierRocapsVertexData", "optixGetCubicBezierRocapsVertexData",
+            "cubic_bezier_rocaps_vertex_data", 4,
+            "The four control points (xyz = position, w = radius) of a round cubic Bezier segment with rocaps."),
+        new VertexDataType("OptixGetRibbonVertexData", "optixGetRibbonVertexData",
+            "ribbon_vertex_data", 3,
+            "The three control points (xyz = position, w = width) of a flat quadratic B-spline (ribbon) segment."),
+    };
+
+    foreach (var type in types)
+    {
+#>
+    /// <summary>
+    /// Provides the functionality of the <#= type.SdkName #> built-in function
+    /// family. <#= type.Doc #>
+    /// </summary>
+    [CLSCompliant(false)]
+    public static class <#= type.ClassName #>
+    {
+        /// <summary>
+        /// Fetches by GAS traversable handle (<#= type.SdkName #>FromHandle). The
+        /// GAS must be built with OPTIX_BUILD_FLAG_ALLOW_RANDOM_VERTEX_ACCESS.
+        /// </summary>
+        public static void FromHandle(
+            ulong gas,
+            uint primitiveIndex,
+            uint sbtGasIndex,
+            float time,
+            <#= OutParams(type) #>)
+        {
+<#= OutputDecls(type, "            ") #>
+            Input<ulong> _gas = gas;
+            Input<uint> _primitiveIndex = primitiveIndex;
+            Input<uint> _sbtGasIndex = sbtGasIndex;
+            Input<float> _time = time;
+            CudaAsm.EmitRef(
+                "call (<#= OutputSlots(type) #>), " +
+                "_optix_get_<#= type.PtxBase #>_from_handle, " +
+                "(%<#= type.FloatCount #>, %<#= type.FloatCount + 1 #>, %<#= type.FloatCount + 2 #>, %<#= type.FloatCount + 3 #>);"
+<#= OutputRefs(type, "                ") #>,
+                ref _gas, ref _primitiveIndex, ref _sbtGasIndex, ref _time);
+<#= OutAssignments(type, "            ") #>
+        }
+
+        /// <summary>
+        /// Fetches the primitive of the current AH/CH invocation
+        /// (the parameterless <#= type.SdkName #>).
+        /// </summary>
+        public static void CurrentHit(<#= OutParams(type) #>)
+        {
+<#= OutputDecls(type, "            ") #>
+            CudaAsm.EmitRef(
+                "call (<#= OutputSlots(type) #>), " +
+                "_optix_get_<#= type.PtxBase #>_current_hit, ();"
+<#= OutputRefs(type, "                ") #>);
+<#= OutAssignments(type, "            ") #>
+        }
+    }
+
+<#
+    }
+#>
+    public static partial class OptixHitObject
+    {
+<#
+    foreach (var type in types)
+    {
+        string hitObjectMethod = type.SdkName.Replace("optix", "");
+#>
+        /// <summary>
+        /// Provides the functionality of optixHitObject<#= hitObjectMethod #> -
+        /// fetches the primitive recorded in the current SER hit object.
+        /// <#= type.Doc #>
+        /// </summary>
+        [CLSCompliant(false)]
+        public static void <#= hitObjectMethod #>(<#= OutParams(type) #>)
+        {
+<#= OutputDecls(type, "            ") #>
+            CudaAsm.EmitRef(
+                "call (<#= OutputSlots(type) #>), " +
+                "_optix_hitobject_get_<#= type.PtxBase #>, ();"
+<#= OutputRefs(type, "                ") #>);
+<#= OutAssignments(type, "            ") #>
+        }
+
+<#
+    }
+#>
+    }
+}
+<#+
+    private class VertexDataType
+    {
+        public string ClassName;
+        public string SdkName;
+        public string PtxBase;
+        // Number of float4 control points; 0 marks the triangle special case
+        // (9 floats returned as three Vector3 vertices).
+        public int Float4Count;
+        public string Doc;
+
+        public VertexDataType(string className, string sdkName, string ptxBase,
+            int float4Count, string doc)
+        {
+            ClassName = className;
+            SdkName = sdkName;
+            PtxBase = ptxBase;
+            Float4Count = float4Count;
+            Doc = doc;
+        }
+
+        public bool IsTriangle => Float4Count == 0;
+        public int FloatCount => IsTriangle ? 9 : Float4Count * 4;
+        public int VectorCount => IsTriangle ? 3 : Float4Count;
+        public string VectorType => IsTriangle ? "Vector3" : "Vector4";
+    }
+
+    private string OutParams(VertexDataType type)
+    {
+        if (type.VectorCount == 1)
+            return $"out {type.VectorType} data";
+        return string.Join(
+            ",\n            ",
+            Enumerable.Range(0, type.VectorCount)
+                .Select(i => $"out {type.VectorType} v{i}"));
+    }
+
+    private string OutputDecls(VertexDataType type, string indent)
+    {
+        var sb = new StringBuilder();
+        for (int i = 0; i < type.FloatCount; i++)
+            sb.AppendLine($"{indent}Output<float> _f{i} = default;");
+        return sb.ToString().TrimEnd('\r', '\n');
+    }
+
+    private string OutputSlots(VertexDataType type) =>
+        string.Join(", ", Enumerable.Range(0, type.FloatCount).Select(i => $"%{i}"));
+
+    private string OutputRefs(VertexDataType type, string indent)
+    {
+        var sb = new StringBuilder();
+        for (int i = 0; i < type.FloatCount; i++)
+        {
+            sb.Append($",\n{indent}ref _f{i}");
+        }
+        return sb.ToString();
+    }
+
+    private string OutAssignments(VertexDataType type, string indent)
+    {
+        var sb = new StringBuilder();
+        int components = type.IsTriangle ? 3 : 4;
+        for (int v = 0; v < type.VectorCount; v++)
+        {
+            string target = type.VectorCount == 1 ? "data" : $"v{v}";
+            var args = Enumerable.Range(0, components)
+                .Select(c => $"_f{v * components + c}.Value");
+            sb.AppendLine(
+                $"{indent}{target} = new {type.VectorType}({string.Join(", ", args)});");
+        }
+        return sb.ToString().TrimEnd('\r', '\n');
+    }
+#>

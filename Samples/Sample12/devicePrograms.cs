@@ -37,9 +37,9 @@ namespace Sample12
 
                 // Color (p0-2), shading normal (p3-5), diffuse albedo (p6-8) - 9
                 // payloads is the practical ceiling for this binding's OptixTrace
-                // wrapper (see OptixTrace.cs), so unlike Sample10/11 the RNG state
-                // isn't threaded through a payload here; __closest__radiance reseeds
-                // its own RNG instead (see below).
+                // wrapper (see OptixTrace.cs), so the RNG state isn't threaded through
+                // a payload here; __closest__radiance reseeds its own RNG instead (see
+                // below).
                 uint p0 = 0, p1 = 0, p2 = 0, p3 = 0, p4 = 0, p5 = 0, p6 = 0, p7 = 0, p8 = 0;
 
                 OptixTrace.Trace(
@@ -144,9 +144,8 @@ namespace Sample12
             Vec3 surfPos = (bw * a) + (bu * b) + (bv * c);
 
             // No RNG payload continuity from raygen here (see __raygen__renderFrame) -
-            // reseed from launch index/frame/primitive instead. Slightly less
-            // decorrelated across the outer pixel-sample loop than Sample10/11, but
-            // still decorrelated across pixels, frames, and hit surfaces.
+            // reseed from launch index/frame/primitive instead, still decorrelated
+            // across pixels, frames, and hit surfaces.
             var ix = OptixGetLaunchIndex.X;
             var iy = OptixGetLaunchIndex.Y;
             LCG rng = new LCG((uint)(ix + (1000003 * iy)), (uint)((launchParams.FrameID * 7919) + primId));
@@ -207,9 +206,8 @@ namespace Sample12
             OptixPayloadVec3Helper.SetVec3Registers(6, new Vector3(albedo.x, albedo.y, albedo.z));
         }
 
-        // Matches example12_denoiseSeparateChannels/toneMap.cu's
-        // computeFinalPixelColorsKernel: applies a sqrt gamma approximation (absent
-        // from Sample11's tonemap) before packing to display bytes and flipping rows.
+        // Applies a sqrt gamma approximation before packing to display bytes and
+        // flipping rows.
         public static void tonemapAndFlip(Index1D index, int width, int height, ArrayView<Vec4> hdr, ArrayView<byte> dest)
         {
             int x = index % width;

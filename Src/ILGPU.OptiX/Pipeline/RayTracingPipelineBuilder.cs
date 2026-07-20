@@ -23,8 +23,7 @@ namespace ILGPU.OptiX.Pipeline
     /// Configures one ray type within a <see cref="RayTracingPipelineBuilder{TLaunchParams}"/> -
     /// its payload struct (which determines its register count), miss program, and
     /// hit-group program(s). A ray type's position in the builder's declaration order
-    /// becomes its SBT index (<see cref="RayTracingPipeline{TLaunchParams}.RayTypeIndex"/>),
-    /// matching every sample's existing "radiance = 0, shadow = 1" convention.
+    /// becomes its SBT index (<see cref="RayTracingPipeline{TLaunchParams}.RayTypeIndex"/>).
     /// </summary>
     public sealed class RayTypeBuilder<TLaunchParams> where TLaunchParams : unmanaged
     {
@@ -94,8 +93,7 @@ namespace ILGPU.OptiX.Pipeline
         /// record data type. Equivalent to
         /// <see cref="HitGroup{TMaterial}(string, Action{TLaunchParams}, Action{TLaunchParams}?, Action{TLaunchParams}?)"/>
         /// with <see cref="HitGroupKind.Default"/> - the common case where a ray type
-        /// has exactly one hit group (every sample except Sample13/14's
-        /// custom-primitive geometry).
+        /// has exactly one hit group.
         /// <see cref="RayTracingPipeline{TLaunchParams}.SetHitRecords{TMaterial}(ReadOnlySpan{TMaterial}, int)"/>
         /// packs one <see cref="SbtRecord{TMaterial}"/> per material per ray type using
         /// this type - every ray type on the same pipeline must agree on it.
@@ -122,7 +120,7 @@ namespace ILGPU.OptiX.Pipeline
         /// Exists for geometry that needs multiple intersection programs sharing one
         /// ray type's closest-hit/any-hit logic - e.g. one custom-primitive kind per
         /// kind name, all dispatching through the same shared closest-hit function via
-        /// <c>OptixGetHitKind</c> (Sample13/14's pattern). <paramref name="closestHit"/>
+        /// <c>OptixGetHitKind</c>. <paramref name="closestHit"/>
         /// and <paramref name="anyHit"/> may be the exact same delegate passed to a
         /// previous <see cref="HitGroup{TMaterial}(string, Action{TLaunchParams}, Action{TLaunchParams}?, Action{TLaunchParams}?)"/>
         /// call on this ray type - the library still compiles a distinct program group
@@ -307,6 +305,10 @@ namespace ILGPU.OptiX.Pipeline
         private bool usesMotionBlur;
         private OptixPrimitiveTypeFlags primitiveTypeFlags;
         private bool allowOpacityMicromaps;
+        private bool allowClusteredGeometry;
+        private Action<TLaunchParams>? exceptionKernel;
+        private readonly List<(string Name, Action<TLaunchParams> Program, bool IsContinuation)> callables =
+            new List<(string, Action<TLaunchParams>, bool)>();
 
         /// <summary>
         /// Sets the raygen program. Required.
@@ -318,9 +320,7 @@ namespace ILGPU.OptiX.Pipeline
         }
 
         /// <summary>
-        /// Declares a ray type. Declaration order is the ray type's SBT index -
-        /// declare "radiance" before "shadow" to match every existing sample's
-        /// convention.
+        /// Declares a ray type. Declaration order is the ray type's SBT index.
         /// </summary>
         public RayTracingPipelineBuilder<TLaunchParams> RayType(
             string name,
@@ -358,8 +358,7 @@ namespace ILGPU.OptiX.Pipeline
         /// <summary>
         /// Overrides the module compile options (default:
         /// <see cref="OptixCompilePresets.Release"/>, which also means
-        /// <c>MaxRegisterCount = 0</c> - i.e. no limit - rather than the
-        /// cargo-culted 50 every sample used to hard-code).
+        /// <c>MaxRegisterCount = 0</c> - i.e. no limit).
         /// </summary>
         public RayTracingPipelineBuilder<TLaunchParams> ModuleOptions(OptixModuleCompileOptions options)
         {
@@ -401,6 +400,63 @@ namespace ILGPU.OptiX.Pipeline
         public RayTracingPipelineBuilder<TLaunchParams> WithExceptionFlags(OptixExceptionFlags flags)
         {
             exceptionFlags = flags;
+            return this;
+        }
+
+        /// <summary>
+        /// Sets the pipeline's exception program - runs when the launch hits an
+        /// exception enabled via <see cref="WithExceptionFlags"/> or thrown via
+        /// <c>OptixThrowException</c>; read the code/details inside via
+        /// <c>OptixGetExceptionInfo</c>. Most exception flags additionally need
+        /// device-context validation mode to fire.
+        /// </summary>
+        public RayTracingPipelineBuilder<TLaunchParams> WithExceptionProgram(
+            Action<TLaunchParams> exception)
+        {
+            exceptionKernel = exception ?? throw new ArgumentNullException(nameof(exception));
+            return this;
+        }
+
+        /// <summary>
+        /// Declares a direct callable (DC) program. Declaration order across all
+        /// <see cref="WithDirectCallable"/>/<see cref="WithContinuationCallable"/>
+        /// calls is the callable's SBT index - resolve it by name afterwards via
+        /// <see cref="RayTracingPipeline{TLaunchParams}.CallableIndex"/> and invoke
+        /// from device code via <c>OptixCallables.DirectCall(index)</c>.
+        /// </summary>
+        public RayTracingPipelineBuilder<TLaunchParams> WithDirectCallable(
+            string name,
+            Action<TLaunchParams> program)
+        {
+            if (string.IsNullOrEmpty(name))
+                throw new ArgumentException("Callable name must not be null or empty.", nameof(name));
+            if (program == null)
+                throw new ArgumentNullException(nameof(program));
+            if (callables.Exists(c => c.Name == name))
+                throw new ArgumentException($"A callable named '{name}' is already declared.", nameof(name));
+
+            callables.Add((name, program, false));
+            return this;
+        }
+
+        /// <summary>
+        /// Declares a continuation callable (CC) program - same declaration-order
+        /// SBT indexing as <see cref="WithDirectCallable"/>, invoked from device code
+        /// via <c>OptixCallables.ContinuationCall(index)</c>. Continuation callables
+        /// consume continuation stack.
+        /// </summary>
+        public RayTracingPipelineBuilder<TLaunchParams> WithContinuationCallable(
+            string name,
+            Action<TLaunchParams> program)
+        {
+            if (string.IsNullOrEmpty(name))
+                throw new ArgumentException("Callable name must not be null or empty.", nameof(name));
+            if (program == null)
+                throw new ArgumentNullException(nameof(program));
+            if (callables.Exists(c => c.Name == name))
+                throw new ArgumentException($"A callable named '{name}' is already declared.", nameof(name));
+
+            callables.Add((name, program, true));
             return this;
         }
 
@@ -456,6 +512,20 @@ namespace ILGPU.OptiX.Pipeline
             return this;
         }
 
+        /// <summary>
+        /// Marks this pipeline's traversable graph as possibly containing cluster
+        /// acceleration structures
+        /// (<see cref="OptixDeviceContextExtensions.ClusterAccelBuild"/>). Requires
+        /// driver support - query
+        /// <see cref="OptixDeviceContextExtensions.GetProperty"/> with
+        /// <see cref="OptixDeviceProperty.ClusterAccel"/> first.
+        /// </summary>
+        public RayTracingPipelineBuilder<TLaunchParams> AllowClusteredGeometry()
+        {
+            allowClusteredGeometry = true;
+            return this;
+        }
+
         internal RayTracingPipeline<TLaunchParams> Build(OptixDeviceContext deviceContext)
         {
             if (raygenKernel == null)
@@ -497,6 +567,7 @@ namespace ILGPU.OptiX.Pipeline
                 .WithUsesMotionBlur(usesMotionBlur)
                 .WithUsesPrimitiveTypeFlags(primitiveTypeFlags)
                 .WithAllowOpacityMicromaps(allowOpacityMicromaps)
+                .WithAllowClusteredGeometry(allowClusteredGeometry)
                 .Build();
 
             var linkOptions = new OptixPipelineLinkOptions { MaxTraceDepth = maxTraceDepth };
@@ -512,13 +583,8 @@ namespace ILGPU.OptiX.Pipeline
             // compile down to optixGetPayload_N/optixSetPayload_N) - the driver
             // validates those calls against EVERY type a module declares (there's no
             // device-side optixSetPayloadTypes() call wrapped here to restrict a
-            // module to a subset), so declaring the full set for e.g. a 1-payload-value
-            // "shadow" miss module would make its (in-range-for-radiance's-3-values,
-            // out-of-range-for-shadow's-1-value) index checks fail - confirmed via a
-            // real GPU run: "Requested payload value 2 of payload type 1 in
-            // optixSetPayload, but only 1 values are configured in the type." Each
-            // ray type's miss/hitgroup modules are therefore compiled with ONLY that
-            // ray type's own single OptixPayloadType declared instead.
+            // module to a subset), so each ray type's miss/hitgroup modules are
+            // compiled with ONLY that ray type's own single OptixPayloadType declared.
             using var raygenPayloadHandles = usesTypedPayloads
                 ? BuildPayloadTypeHandles(rayTypes)
                 : null;
@@ -583,6 +649,29 @@ namespace ILGPU.OptiX.Pipeline
                         rt.HitGroupDataType!));
                 }
 
+                // Exception and callable programs never touch payload registers, so
+                // they compile with the plain module options even on typed-payload
+                // pipelines (a module declaring no payload types supports all types).
+                OptixKernel? exception = null;
+                if (exceptionKernel != null)
+                {
+                    exception = deviceContext.CreateExceptionKernel(
+                        exceptionKernel, moduleOptions, pipelineOptions);
+                    allKernels.Add(exception);
+                }
+
+                var builtCallables = new List<(string Name, OptixKernel Kernel)>();
+                foreach (var (name, program, isContinuation) in callables)
+                {
+                    var callableKernel = isContinuation
+                        ? deviceContext.CreateContinuationCallableKernel(
+                            program, moduleOptions, pipelineOptions)
+                        : deviceContext.CreateDirectCallableKernel(
+                            program, moduleOptions, pipelineOptions);
+                    allKernels.Add(callableKernel);
+                    builtCallables.Add((name, callableKernel));
+                }
+
                 var pipeline = deviceContext.CreatePipeline(
                     pipelineOptions,
                     linkOptions,
@@ -600,7 +689,9 @@ namespace ILGPU.OptiX.Pipeline
                     pipeline,
                     raygen,
                     builtRayTypes,
-                    raygenCompileTaskCount);
+                    raygenCompileTaskCount,
+                    exception,
+                    builtCallables);
             }
             catch
             {

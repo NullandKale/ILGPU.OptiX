@@ -14,7 +14,28 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\Src\ILGPU.OptiX\ILGPU.OptiX.csproj" />
+    <!-- Build-only dependency: patches this project's own output exe after every
+         build, so ReferenceOutputAssembly is off (we don't want its assembly on
+         our reference list, just its build output on disk before PatchGpuExports
+         runs). -->
+    <ProjectReference Include="..\..\Tools\GpuExportPatcher\GpuExportPatcher.csproj" ReferenceOutputAssembly="false" />
   </ItemGroup>
+
+  <!-- True zero-copy CUDA-GL interop (see Rendering/CudaGlInterop.cs) requires the
+       OpenGL context and the CUDA device to be on the same physical GPU. On
+       hybrid-graphics laptops, Windows may otherwise route the OpenGL context to
+       the integrated GPU while CUDA/OptiX use the discrete NVIDIA one, making
+       cuGraphicsGLRegisterBuffer fail. NvOptimusEnablement/
+       AmdPowerXpressRequestHighPerformance are the standard driver hints that
+       route a process to the discrete GPU automatically - C++ apps embed them via
+       __declspec(dllexport), but modern .NET's generated apphost has no
+       source-level way to add PE exports (see dotnet/runtime#60422), so this
+       patches them into the built exe after the fact instead. -->
+  <Target Name="PatchGpuExports" AfterTargets="Build">
+    <!-- $(TargetPath) is the managed assembly (Sample17.dll) - the apphost native
+         launcher the OS actually starts is always "<AssemblyName>.exe" next to it. -->
+    <Exec Command="dotnet &quot;$(MSBuildThisFileDirectory)..\..\Tools\GpuExportPatcher\bin\$(Configuration)\net8.0\GpuExportPatcher.dll&quot; &quot;$(TargetDir)$(TargetName).exe&quot;" />
+  </Target>
 
   <ItemGroup>
     <None Include="..\Models\meshes\cow.obj">

@@ -42,10 +42,7 @@ namespace Sample13
             animationClock.Restart();
         }
 
-        // Animated content includes video textures: they don't move geometry, but they
-        // do need a refresh (and an accumulation reset) every frame.
-        public bool IsAnimated(SceneData scene) =>
-            scene.HasAnyAnimation || textures.HasActiveVideos;
+        public bool IsAnimated(SceneData scene) => scene.HasAnyAnimation;
 
         // Called every rendered frame under the renderer's gpuLock, before OptixLaunch.
         public void Update(SceneData scene)
@@ -91,8 +88,6 @@ namespace Sample13
                 buffers.UpdateAnimatedSpheres(animatedSpheresHost);
                 accel.RefitCustomPrimitives(scene);
             }
-
-            textures.RefreshVideos();
         }
     }
 }

@@ -89,6 +89,23 @@ namespace ILGPU.OptiX.Native
         /// </summary>
         public OptixResult OptixResult { get; }
 
+        /// <summary>
+        /// Enriches the message with the driver's own name/description for the
+        /// result code (optixGetErrorName/optixGetErrorString) when the OptiX
+        /// function table is loaded.
+        /// </summary>
+        public override string Message
+        {
+            get
+            {
+                var driverName = OptixAPI.Current.GetErrorName(OptixResult);
+                var driverDescription = OptixAPI.Current.GetErrorString(OptixResult);
+                if (driverName == null && driverDescription == null)
+                    return base.Message;
+                return $"{base.Message} [{driverName}: {driverDescription}]";
+            }
+        }
+
         #endregion
 
         #region Methods

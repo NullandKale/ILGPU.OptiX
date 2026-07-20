@@ -10,12 +10,8 @@ namespace Sample14
     /// Per-scene texture ownership: loads image textures into CudaTextureObjects, keyed
     /// by relative path so a texture referenced by multiple materials is only loaded
     /// once. Cleared (all GPU objects disposed) on every scene switch - only the active
-    /// scene's textures stay resident.
-    ///
-    /// Unlike Sample13's TextureCache, video-texture support (VideoTexture/VideoReader,
-    /// which need OpenCvSharp + ffmpeg.exe on PATH) is deferred to a later milestone -
-    /// so museum-style scenes aren't in Sample14's SceneTable yet and this class only
-    /// ever loads static images.
+    /// scene's textures stay resident. Video-texture support is not implemented; this
+    /// class only ever loads static images.
     /// </summary>
     public sealed class TextureCache
     {
@@ -23,9 +19,9 @@ namespace Sample14
         readonly List<CudaTextureObject> textureObjects = new List<CudaTextureObject>();
 
         // Loads (or reuses an already-loaded) texture for a relative path under the
-        // output directory - same TextureLoader.LoadRgba8/CudaTextureObject pattern as
-        // Sample13/Sample08. A missing file degrades to handle 0 ("no texture") rather
-        // than crashing the scene switch.
+        // output directory via TextureLoader.LoadRgba8/CudaTextureObject. A missing
+        // file degrades to handle 0 ("no texture") rather than crashing the scene
+        // switch.
         public ulong GetOrLoad(string relativePath)
         {
             if (textureCache.TryGetValue(relativePath, out var cachedHandle))

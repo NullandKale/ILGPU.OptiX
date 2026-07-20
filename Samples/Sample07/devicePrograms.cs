@@ -21,8 +21,7 @@ namespace Sample07
                 new Vec3(screenX * camera.aspectRatio, screenY, camera.cameraPlaneDist)));
 
             // Per-ray color is passed back via payload registers as bit-reinterpreted
-            // floats - see Sample06's devicePrograms.cs for why (no pointer<->integer
-            // conversion support inside an ILGPU kernel).
+            // floats (no pointer<->integer conversion support inside an ILGPU kernel).
             uint p0 = 0, p1 = 0, p2 = 0;
 
             OptixTrace.Trace(

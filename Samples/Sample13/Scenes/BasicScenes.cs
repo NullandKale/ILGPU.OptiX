@@ -58,7 +58,7 @@ namespace Sample13
                 MaterialKind = MaterialSbtData.Solid,
             });
             // 4: glass panel (Transparency > 0 dispatches to the dielectric branch) -
-            // exercises the M2 bounce loop and multi-hit shadow transmittance.
+            // exercises the bounce loop and multi-hit shadow transmittance.
             uint glass = (uint)b.AddMaterial(MaterialPresets.Glass(1.5f, new Vec3(0.9f, 0.97f, 0.95f)));
             // 5: blue sphere.
             uint blue = (uint)b.AddMaterial(new MaterialSbtData
@@ -76,14 +76,14 @@ namespace Sample13
             uint teal = (uint)b.AddMaterial(MaterialPresets.Solid(new Vec3(0.1f, 0.55f, 0.45f)));   // 11: YZRect
 
             // Three spheres near the floor, between the mirror/glass panels - exercises
-            // the M3 custom-primitive pipeline against materials already proven on
+            // the custom-primitive pipeline against materials already proven on
             // triangles (mirror, glass, diffuse).
             b.AddSphere(new Vec3(-1.2f, 0.8f, 1f), 0.8f, mirror);
             b.AddSphere(new Vec3(1.2f, 0.8f, 1f), 0.8f, glass);
             b.AddSphere(new Vec3(0f, 0.6f, 2.5f), 0.6f, blue);
 
-            // M4 primitives - one of each new custom-primitive kind, scattered near the
-            // existing geometry for visual verification.
+            // One of each remaining custom-primitive kind, scattered near the existing
+            // geometry for visual verification.
             b.AddBox(new Vec3(-5.5f, 0f, 2.5f), new Vec3(-4.5f, 1f, 3.5f), orange);
             b.AddCylinderY(new Vec3(5f, 0f, 3f), 0.5f, 0f, 1.5f, yellow);
             b.AddDisk(new Vec3(0f, 0.02f, 6f), new Vec3(0f, 1f, 0f), 1f, purple);
@@ -163,9 +163,9 @@ namespace Sample13
             return b.Build();
         }
 
-        // Ambient-only lit, single textured quad - reuses Sample08's CudaTextureObject/
-        // CudaTex2D pattern (a trivial usage) via one
-        // texture already bundled for Sponza, rather than fetching a new asset.
+        // Ambient-only lit, single textured quad - a trivial CudaTextureObject/
+        // CudaTex2D usage via one texture already bundled for Sponza, rather than
+        // fetching a new asset.
         public static SceneData BuildTextureTestScene()
         {
             var b = new SceneBuilder

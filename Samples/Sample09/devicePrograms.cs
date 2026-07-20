@@ -14,10 +14,8 @@ namespace Sample09
         private const uint SHADOW_RAY_TYPE = OptixPayloadDefaults.SHADOW_RAY_TYPE;
         private const uint RAY_TYPE_COUNT = OptixPayloadDefaults.RAY_TYPE_COUNT;
 
-        // Matches example09_shadowRays/devicePrograms.cu exactly - a single hardcoded
-        // point light (no area-light sampling/RNG, unlike Sample10), valid for the
-        // same reason as Sample10's camera/light values: this sample bundles the
-        // identical, untransformed sponza.obj.
+        // A single hardcoded point light (no area-light sampling/RNG), valid for this
+        // sample's bundled, untransformed sponza.obj.
         private static readonly Vec3 LightPos = new Vec3(-907.108f, 2205.875f, -400.0267f);
 
         public static void __raygen__renderFrame(LaunchParams launchParams)
@@ -122,9 +120,8 @@ namespace Sample09
             }
 
             Vec3 surfPos = (bw * a) + (bu * b) + (bv * c);
-            // Unlike Sample10, lightDir is left un-normalized here - tmax=1-1e-3
-            // exploits that to mean "stop just short of the light position", matching
-            // the reference exactly (devicePrograms.cu:131-143).
+            // lightDir is left un-normalized here - tmax=1-1e-3 exploits that to mean
+            // "stop just short of the light position".
             Vec3 lightDir = LightPos - surfPos;
 
             uint shadowPayload = Interop.FloatAsInt(0f);

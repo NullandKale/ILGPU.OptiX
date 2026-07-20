@@ -23,7 +23,7 @@ namespace Sample20
             var nativeWindowSettings = new NativeWindowSettings
             {
                 ClientSize = new Vector2i(1024, 768),
-                Title = "Sample20 - Curve Primitives (Built-in Intersection)",
+                Title = "Sample20 - Cooperative Vectors (neural material)",
                 Flags = ContextFlags.ForwardCompatible,
                 Profile = ContextProfile.Core,
                 APIVersion = new System.Version(3, 3),

@@ -22,8 +22,8 @@ namespace Sample13
 
         /// <summary>
         /// Escape hatch for consumers that still talk to the raw device context
-        /// directly (acceleration structures, the denoiser) - <see cref="RayTracer"/>
-        /// only wraps pipeline/SBT/launch, not every OptiX surface.
+        /// directly (acceleration structures) - <see cref="RayTracer"/> only wraps
+        /// pipeline/SBT/launch, not every OptiX surface.
         /// </summary>
         public OptixDeviceContext DeviceContext => RayTracer.DeviceContext;
 

@@ -2,43 +2,51 @@
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
-    <TargetFrameworks>net471;net8.0-windows</TargetFrameworks>
-    <UseWPF>true</UseWPF>
+    <TargetFramework>net8.0</TargetFramework>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
-    <LangVersion>8.0</LangVersion>
   </PropertyGroup>
 
   <ItemGroup>
     <PackageReference Include="ILGPU" Version="1.5.3" />
     <PackageReference Include="ILGPU.Algorithms" Version="1.5.3" />
-    <!-- Only used by VideoReader.cs to probe a video file's width/height/fps before
-         handing off actual frame decode to an ffmpeg.exe child process - no managed
-         video decode dependency. -->
-    <PackageReference Include="OpenCvSharp4" Version="4.11.0.20250507" />
-    <PackageReference Include="OpenCvSharp4.runtime.win" Version="4.11.0.20250507" />
+    <PackageReference Include="OpenTK" Version="4.8.2" />
+    <PackageReference Include="StbImageSharp" Version="2.30.15" />
+    <PackageReference Include="ImGui.NET" Version="1.91.6.1" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\..\Src\ILGPU.OptiX\ILGPU.OptiX.csproj" />
+    <!-- Build-only dependency: patches this project's own output exe after every
+         build, so ReferenceOutputAssembly is off (we don't want its assembly on
+         our reference list, just its build output on disk before PatchGpuExports
+         runs). -->
+    <ProjectReference Include="..\..\Tools\GpuExportPatcher\GpuExportPatcher.csproj" ReferenceOutputAssembly="false" />
   </ItemGroup>
 
-  <ItemGroup>
-    <Page Update="MainWindow.xaml">
-      <XamlRuntime>$(DefaultXamlRuntime)</XamlRuntime>
-      <SubType>Designer</SubType>
-      <Generator>MSBuild:Compile</Generator>
-    </Page>
-  </ItemGroup>
+  <!-- True zero-copy CUDA-GL interop (see Rendering/CudaGlInterop.cs) requires the
+       OpenGL context and the CUDA device to be on the same physical GPU. On
+       hybrid-graphics laptops, Windows may otherwise route the OpenGL context to
+       the integrated GPU while CUDA/OptiX use the discrete NVIDIA one, making
+       cuGraphicsGLRegisterBuffer fail. NvOptimusEnablement/
+       AmdPowerXpressRequestHighPerformance are the standard driver hints that
+       route a process to the discrete GPU automatically - C++ apps embed them via
+       __declspec(dllexport), but modern .NET's generated apphost has no
+       source-level way to add PE exports (see dotnet/runtime#60422), so this
+       patches them into the built exe after the fact instead. -->
+  <Target Name="PatchGpuExports" AfterTargets="Build">
+    <!-- $(TargetPath) is the managed assembly (Sample13.dll) - the apphost native
+         launcher the OS actually starts is always "<AssemblyName>.exe" next to it. -->
+    <Exec Command="dotnet &quot;$(MSBuildThisFileDirectory)..\..\Tools\GpuExportPatcher\bin\$(Configuration)\net8.0\GpuExportPatcher.dll&quot; &quot;$(TargetDir)$(TargetName).exe&quot;" />
+  </Target>
 
   <ItemGroup>
-    <!-- cow.obj/stanford-bunny.obj/teapot.obj/xyzrgb_dragon.obj, bundled as-is matching
-         the Sponza precedent - fetched from example/YetAnotherConsoleGameEngine's own
-         bundled Assets (already vetted/committed there), not re-downloaded. -->
+    <!-- cow.obj/stanford-bunny.obj/teapot.obj/xyzrgb_dragon.obj + Sponza, same asset
+         set Sample13 bundles (see Sample13.csproj) - museum's video-textured scenes
+         are deferred, so no museum assets here yet. -->
     <None Include="..\Models\meshes\**\*.*">
       <Link>models\meshes\%(RecursiveDir)%(Filename)%(Extension)</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
-    <!-- Sponza model and textures -->
     <None Include="..\Models\sponza\sponza.obj">
       <Link>models\sponza\sponza.obj</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
@@ -49,31 +57,6 @@
     </None>
     <None Include="..\Models\sponza\textures\**\*.*">
       <Link>models\sponza\textures\%(RecursiveDir)%(Filename)%(Extension)</Link>
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
-  </ItemGroup>
-
-  <ItemGroup>
-    <!-- One texture reused from Sponza's already-bundled asset set (Sample07-12) for
-         the M7 texture-test scene - no new asset needed. -->
-    <None Include="..\Models\sponza\textures\spnza_bricks_a_diff.png">
-      <Link>models\sponza\textures\spnza_bricks_a_diff.png</Link>
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
-  </ItemGroup>
-
-  <ItemGroup>
-    <!-- Museum scene's video-textured boxes + demo texture, copied from
-         example/YetAnotherConsoleGameEngine's own bundled Assets (already vetted/
-         committed there, matching the meshes/Sponza precedent above). RTConsole.mp4
-         requires ffmpeg.exe on PATH at runtime to actually play (see VideoReader.cs) -
-         degrades to an untextured material if ffmpeg.exe or the file itself is missing. -->
-    <None Include="..\Models\museum\RTConsole.mp4">
-      <Link>models\museum\RTConsole.mp4</Link>
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
-    <None Include="..\Models\museum\RGBW-8k.png">
-      <Link>models\museum\RGBW-8k.png</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
   </ItemGroup>

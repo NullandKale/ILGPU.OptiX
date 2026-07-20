@@ -86,8 +86,7 @@ namespace Sample13
     // Mouse-driven orbit/pan/dolly camera controls, ported from the behavior of the
     // optix7course C++ reference's InspectModeManip ("inspect mode": left-drag orbits
     // around a fixed look-at point, right-drag dollies toward/away from it, middle-drag
-    // pans). Copy-pasted per sample by established convention (see Sample04-12's own
-    // Camera.cs) - no shared library project exists in this repo.
+    // pans).
     public static class CameraMotion
     {
         private const float DegreesPerDragFraction = 150f;

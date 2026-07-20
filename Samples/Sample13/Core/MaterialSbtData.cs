@@ -18,11 +18,9 @@ namespace Sample13
     // array. Only the radiance hitgroup record's data is ever read (the shadow ray's
     // closest-hit is an empty stub).
     //
-    // The full reference Material field set (matching host HitgroupRecord) is added in one
-    // pass even though Reflectivity/Transparency/
-    // IndexOfRefraction/TransmissionColor aren't read by any shading branch until mirror/
-    // dielectric materials are added - avoids repeated struct-layout churn across
-    // milestones.
+    // Matches the full reference Material field set - Reflectivity/Transparency/
+    // IndexOfRefraction/TransmissionColor are only read by the mirror/dielectric
+    // shading branches.
     //
     // Shading dispatch order (evaluated in __closest__radiance, mirrors the reference's
     // Material field-value dispatch exactly): Transparency > 0 -> dielectric; else
@@ -46,9 +44,8 @@ namespace Sample13
 
         // Alpha-cutout threshold sampled from TextureObject's alpha channel (e.g.
         // Sponza's leaf/thorn geometry, which is a solid quad with the leaf shape
-        // punched out via alpha) - 0 (the default) disables alpha testing entirely, so
-        // every existing opaque-textured material is unaffected. Read by
-        // __anyhit__radiance/__anyhit__shadow, which OptixIgnoreIntersection.Ignore()
+        // punched out via alpha) - 0 (the default) disables alpha testing entirely.
+        // Read by __anyhit__radiance/__anyhit__shadow, which OptixIgnoreIntersection.Ignore()
         // any triangle hit whose sampled alpha falls below this value.
         public float AlphaCutoff;
 

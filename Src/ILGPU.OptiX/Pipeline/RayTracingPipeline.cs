@@ -29,22 +29,29 @@ namespace ILGPU.OptiX.Pipeline
     /// Fixes the per-launch GPU-memory leak in <see cref="OptixLaunchExtensions"/> by
     /// construction: the launch-params buffer and the native SBT copy are allocated
     /// once and reused for every <see cref="Launch"/> call, not per call.
-    /// Not thread-safe - matches every sample's existing single-threaded-per-frame
-    /// render loop; do not call <see cref="Launch"/> or <see cref="SetHitRecords{TMaterial}"/>
-    /// from more than one thread concurrently.
+    /// Not thread-safe - do not call <see cref="Launch"/> or
+    /// <see cref="SetHitRecords{TMaterial}"/> from more than one thread concurrently.
     /// </summary>
     [CLSCompliant(false)]
     public sealed class RayTracingPipeline<TLaunchParams> : DisposeBase
         where TLaunchParams : unmanaged
     {
+        private static readonly uint LaunchParamsSizeInBytes =
+            (uint)Marshal.SizeOf<TLaunchParams>();
+
         private readonly OptixDeviceContext deviceContext;
         private readonly OptixKernel raygenKernel;
         private readonly List<BuiltRayType<TLaunchParams>> rayTypes;
         private readonly Dictionary<string, int> rayTypeIndicesByName;
+        private readonly OptixKernel? exceptionKernel;
+        private readonly List<(string Name, OptixKernel Kernel)> callableKernels;
+        private readonly Dictionary<string, int> callableIndicesByName;
 
         private MemoryBuffer? raygenBuffer;
         private MemoryBuffer? missBuffer;
         private MemoryBuffer? hitgroupBuffer;
+        private MemoryBuffer? exceptionBuffer;
+        private MemoryBuffer? callablesBuffer;
         private MemoryBuffer1D<TLaunchParams, Stride1D.Dense>? launchParamsBuffer;
         private readonly SafeHGlobal sbtHandle;
         private OptixShaderBindingTable sbt;
@@ -84,13 +91,20 @@ namespace ILGPU.OptiX.Pipeline
             OptixPipeline pipeline,
             OptixKernel raygenKernel,
             List<BuiltRayType<TLaunchParams>> rayTypes,
-            int raygenCompileTaskCount = 0)
+            int raygenCompileTaskCount = 0,
+            OptixKernel? exceptionKernel = null,
+            List<(string Name, OptixKernel Kernel)>? callableKernels = null)
         {
             this.deviceContext = deviceContext;
             Pipeline = pipeline;
             this.raygenKernel = raygenKernel;
             this.rayTypes = rayTypes;
             rayTypeIndicesByName = rayTypes.ToDictionary(rt => rt.Name, rt => rt.Index);
+            this.exceptionKernel = exceptionKernel;
+            this.callableKernels = callableKernels ?? new List<(string, OptixKernel)>();
+            callableIndicesByName = new Dictionary<string, int>();
+            for (var i = 0; i < this.callableKernels.Count; i++)
+                callableIndicesByName.Add(this.callableKernels[i].Name, i);
             RaygenCompileTaskCount = raygenCompileTaskCount;
 
             sbtHandle = SafeHGlobal.Alloc(Marshal.SizeOf<OptixShaderBindingTable>());
@@ -106,6 +120,18 @@ namespace ILGPU.OptiX.Pipeline
             rayTypeIndicesByName.TryGetValue(name, out var index)
                 ? index
                 : throw new ArgumentException($"Unknown ray type '{name}'.", nameof(name));
+
+        /// <summary>
+        /// Resolves a callable's SBT index (declaration order of
+        /// <c>WithDirectCallable</c>/<c>WithContinuationCallable</c> in the pipeline
+        /// builder) - the value to pass to <see cref="OptixCallables.DirectCall"/> /
+        /// <see cref="OptixCallables.ContinuationCall"/> (typically via a launch
+        /// param).
+        /// </summary>
+        public int CallableIndex(string name) =>
+            callableIndicesByName.TryGetValue(name, out var index)
+                ? index
+                : throw new ArgumentException($"Unknown callable '{name}'.", nameof(name));
 
         private void InitializeRaygenAndMissRecords()
         {
@@ -127,6 +153,27 @@ namespace ILGPU.OptiX.Pipeline
                 MissRecordStrideInBytes = (uint)OptixSbtRecords.StrideOf<byte>(),
                 MissRecordCount = (uint)missKernels.Length,
             };
+
+            if (exceptionKernel != null)
+            {
+                var exceptionBytes = OptixSbtRecords.Pack<byte>(
+                    new[] { exceptionKernel },
+                    new byte[] { 0 });
+                exceptionBuffer = accelerator.Allocate1D(exceptionBytes);
+                sbt.ExceptionRecord = exceptionBuffer.NativePtr;
+            }
+
+            if (callableKernels.Count > 0)
+            {
+                var callableProgramKernels = callableKernels.Select(c => c.Kernel).ToArray();
+                var callableBytes = OptixSbtRecords.Pack<byte>(
+                    callableProgramKernels, new byte[callableProgramKernels.Length]);
+                callablesBuffer = accelerator.Allocate1D(callableBytes);
+                sbt.CallablesRecordBase = callablesBuffer.NativePtr;
+                sbt.CallablesRecordStrideInBytes = (uint)OptixSbtRecords.StrideOf<byte>();
+                sbt.CallablesRecordCount = (uint)callableProgramKernels.Length;
+            }
+
             WriteSbt();
         }
 
@@ -157,8 +204,8 @@ namespace ILGPU.OptiX.Pipeline
         /// which of a ray type's (possibly several) declared
         /// <see cref="RayTypeBuilder{TLaunchParams}.HitGroup{TMaterial}(string, Action{TLaunchParams}, Action{TLaunchParams}?, Action{TLaunchParams}?)"/>
         /// program groups backs that record - the overload geometry with multiple
-        /// intersection programs per ray type needs (Sample13/14's custom-primitive
-        /// pattern: one kind per primitive type, sharing one closest-hit/any-hit pair).
+        /// intersection programs per ray type needs (one kind per primitive type,
+        /// sharing one closest-hit/any-hit pair).
         /// Layout and interleaving match the other overloads exactly - entries in
         /// order, ray types interleaved within each entry, the whole sequence repeated
         /// <paramref name="repeatCount"/> times - so
@@ -355,7 +402,7 @@ namespace ILGPU.OptiX.Pipeline
                     Pipeline.PipelinePtr,
                     stream.StreamPtr,
                     launchParamsBuffer.NativePtr,
-                    (uint)Marshal.SizeOf<TLaunchParams>(),
+                    LaunchParamsSizeInBytes,
                     sbtHandle.NativePtr,
                     (uint)width,
                     (uint)height,
@@ -381,9 +428,14 @@ namespace ILGPU.OptiX.Pipeline
                     foreach (var hitGroupKernel in rayType.HitGroupKernelsByKind.Values)
                         hitGroupKernel.Dispose();
                 }
+                exceptionKernel?.Dispose();
+                foreach (var (_, callableKernel) in callableKernels)
+                    callableKernel.Dispose();
                 raygenBuffer?.Dispose();
                 missBuffer?.Dispose();
                 hitgroupBuffer?.Dispose();
+                exceptionBuffer?.Dispose();
+                callablesBuffer?.Dispose();
                 launchParamsBuffer?.Dispose();
                 sbtHandle.Dispose();
             }

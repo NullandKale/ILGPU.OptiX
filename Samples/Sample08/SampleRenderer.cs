@@ -29,7 +29,7 @@ using System.Windows;
 
 namespace Sample08
 {
-    // Placeholder payload struct matching the old NumPayloadValues = 3 (see the three
+    // Placeholder payload struct matching NumPayloadValues = 3 (see the three
     // `ref` args - p0/p1/p2 - passed to OptixTrace.Trace in devicePrograms.cs).
     public struct RadiancePayload
     {

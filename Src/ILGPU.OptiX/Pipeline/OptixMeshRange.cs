@@ -27,9 +27,6 @@ namespace ILGPU.OptiX.Pipeline
 
     /// <summary>
     /// Resolves a scene's triangle geometry into per-mesh <see cref="OptixMeshRange"/>s.
-    /// Extracted from what used to be an identical, independently-hand-rolled
-    /// "SbtLayout.GetTriangleMeshRanges" per sample (Sample13/14/15) - the same ~15 lines
-    /// of boilerplate copy-pasted three times.
     /// </summary>
     public static class OptixSbtLayout
     {

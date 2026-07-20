@@ -29,7 +29,7 @@ namespace ILGPU.OptiX.Pipeline
     [SuppressMessage("Naming", "CA1711:Identifiers should not have incorrect suffix")]
     public enum OptixPayloadTypeID : uint
     {
-        /// <summary>Legacy untyped payload dispatch - the only ID every existing sample uses.</summary>
+        /// <summary>Legacy untyped payload dispatch.</summary>
         Default = 0,
         Id0 = 1u << 0,
         Id1 = 1u << 1,

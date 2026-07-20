@@ -11,24 +11,26 @@ namespace Sample14
     {
         public static Func<SceneData>[] Build() => new Func<SceneData>[]
         {
-            BasicScenes.BuildDebugOrenNayarScene,
+            BasicScenes.BuildDebugMaterialsScene,
+            BasicScenes.BuildGgxRoughnessSweepScene,
             BasicScenes.BuildTextureTestScene,
             BasicScenes.BuildSimpleTestScene,
+            BasicScenes.BuildNoAmbientLightDemoScene,
             ShowcaseScenes.BuildDemoScene,
             ShowcaseScenes.BuildCornellBox,
             ShowcaseScenes.BuildMirrorSpheresOnChecker,
             ShowcaseScenes.BuildCylindersDisksAndTriangles,
             ShowcaseScenes.BuildBoxesShowcase,
-            VolumeScenes.BuildVolumeGridTestScene,
             MeshScenes.BuildAllMeshesScene,
             MeshScenes.BuildBunnyScene,
             MeshScenes.BuildTeapotScene,
             MeshScenes.BuildCowScene,
             MeshScenes.BuildDragonScene,
             MeshScenes.BuildSponzaScene,
-            // MuseumScene/RadialMuseumScene are video-textured and deferred to a later
-            // milestone - they need Media/VideoReader.cs +
-            // VideoTexture.cs + OpenCvSharp + ffmpeg.exe, none of which are ported yet.
+            PbrShowcaseScene.BuildPbrShowcaseScene,
+            // MuseumScene/RadialMuseumScene are video-textured and deferred - they
+            // need Media/VideoReader.cs + VideoTexture.cs + OpenCvSharp + ffmpeg.exe,
+            // none of which are ported yet.
         };
     }
 }

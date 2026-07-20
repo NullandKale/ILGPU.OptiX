@@ -20,10 +20,18 @@ namespace Sample14
             var b = new SceneBuilder
             {
                 Name = "Demo scene (random spheres)",
-                AmbientColor = new Vec3(1f, 1f, 1f),
-                AmbientIntensity = 0.075f,
+                // Flat ambient is a fill term (see MaterialShading.ShadeSurface) -
+                // left non-zero here it would double-count diffuse illumination on top of
+                // the HDRI's own GI below, so it's zeroed the same way PbrShowcaseScene.cs
+                // does for its HDRI-lit scene.
+                AmbientColor = new Vec3(0f, 0f, 0f),
+                AmbientIntensity = 0f,
                 BackgroundTop = new Vec3(0.6f, 0.8f, 1.0f),
                 BackgroundBottom = new Vec3(0.9f, 0.95f, 1.0f),
+                // HDRI environment map test case - an outdoor scene with the widest
+                // mix of roughness/metallic on the random spheres, good for showing
+                // off HDRI-lit specular highlights.
+                EnvMapPath = "models/hdri/venice_sunset_1k.hdr",
                 CameraOrigin = new Vec3(0f, 1f, 0f),
                 CameraLookAt = new Vec3(0f, 1f, -10f),
                 CameraUp = new Vec3(0f, 1f, 0f),
@@ -33,16 +41,17 @@ namespace Sample14
 
             uint red = (uint)b.AddMaterial(MaterialPresets.Solid(new Vec3(0.9f, 0.2f, 0.2f), 0.2f));
             uint blue = (uint)b.AddMaterial(MaterialPresets.Solid(new Vec3(0.2f, 0.2f, 0.9f), 0.5f));
-            uint mirror = (uint)b.AddMaterial(new MaterialSbtData { Albedo = new Vec3(0.95f, 0.95f, 0.95f), Reflectivity = 0.9f, MaterialKind = MaterialSbtData.Solid });
-            uint sun = (uint)b.AddMaterial(new MaterialSbtData { Albedo = new Vec3(1f, 1f, 1f), Emission = new Vec3(8f, 8f, 8f), MaterialKind = MaterialSbtData.Solid });
+            uint mirror = (uint)b.AddMaterial(new MaterialSbtData { BaseColor = new Vec3(0.95f, 0.95f, 0.95f), Metallic = 0.9f, MaterialKind = MaterialSbtData.Solid });
+            uint sun = (uint)b.AddMaterial(new MaterialSbtData { BaseColor = new Vec3(1f, 1f, 1f), Emission = new Vec3(8f, 8f, 8f), EmissionStrength = 1f, Roughness = 1f, MaterialKind = MaterialSbtData.Solid });
 
             uint floor = (uint)b.AddMaterial(MaterialPresets.Checker(new Vec3(0.8f, 0.8f, 0.8f), new Vec3(0.1f, 0.1f, 0.1f), 0.5f));
-            b.AddXZRect(-10f, 10f, -11f, 2f, 0f, floor);
+            // XZRect(-10,10, -11,2, c=0): X in [-10,10], Z in [-11,2], Y = 0, facing +Y.
+            b.AddQuad(new Vec3(-10f, 0f, 2f), new Vec3(10f, 0f, 2f), new Vec3(10f, 0f, -11f), new Vec3(-10f, 0f, -11f), new Vec3(0f, 1f, 0f), floor);
 
-            b.AddSphere(new Vec3(-1.2f, 1f, 0f), 1f, red);
-            b.AddSphere(new Vec3(1.2f, 1f, -0.5f), 1f, blue);
-            b.AddSphere(new Vec3(0f, 0.5f, -2.5f), 0.5f, mirror);
-            b.AddSphere(new Vec3(0f, 5f, 2f), 0.5f, sun);
+            b.AddSphereMesh(new Vec3(-1.2f, 1f, 0f), 1f, red);
+            b.AddSphereMesh(new Vec3(1.2f, 1f, -0.5f), 1f, blue);
+            b.AddSphereMesh(new Vec3(0f, 0.5f, -2.5f), 0.5f, mirror);
+            b.AddSphereMesh(new Vec3(0f, 5f, 2f), 0.5f, sun);
 
             var rng = new Random();
             const int randomSphereCount = 100;
@@ -72,7 +81,12 @@ namespace Sample14
                     Vec3 color = MaterialPresets.HsvToRgb(hue, 0.65f, 0.9f);
                     bool isReflective = rng.NextDouble() < 0.2;
                     uint material = (uint)b.AddMaterial(MaterialPresets.Solid(color, isReflective ? 0.6f : 0.05f));
-                    b.AddSphere(center, radius, material);
+                    // Small background-filler spheres (radius 0.18-0.5, scattered across
+                    // 100 instances) - 24x24 is already smooth-shaded and imperceptibly
+                    // faceted at this size/distance, at ~14x fewer triangles than the
+                    // AddSphereMesh default (which is itself already trimmed from the
+                    // old unconditional 128x128).
+                    b.AddSphereMesh(center, radius, material, rings: 24, segments: 24);
                     break;
                 }
             }
@@ -106,17 +120,23 @@ namespace Sample14
             uint white = (uint)b.AddMaterial(MaterialPresets.Solid(new Vec3(0.82f, 0.82f, 0.82f)));
             uint red = (uint)b.AddMaterial(MaterialPresets.Solid(new Vec3(0.8f, 0.1f, 0.1f)));
             uint green = (uint)b.AddMaterial(MaterialPresets.Solid(new Vec3(0.1f, 0.8f, 0.1f)));
-            uint lightPanel = (uint)b.AddMaterial(new MaterialSbtData { Albedo = new Vec3(0f, 0f, 0f), Emission = new Vec3(0.6f, 0.6f, 0.6f), MaterialKind = MaterialSbtData.Solid });
+            uint lightPanel = (uint)b.AddMaterial(new MaterialSbtData { BaseColor = new Vec3(0f, 0f, 0f), Emission = new Vec3(0.6f, 0.6f, 0.6f), EmissionStrength = 1f, Roughness = 1f, MaterialKind = MaterialSbtData.Solid });
 
-            b.AddYZRect(0f, 5f, -5f, 0f, -3f, red);   // left wall
-            b.AddYZRect(0f, 5f, -5f, 0f, 3f, green);  // right wall
-            b.AddXZRect(-3f, 3f, -5f, 0f, 0f, white); // floor
-            b.AddXZRect(-3f, 3f, -5f, 0f, 5f, white); // ceiling
-            b.AddXZRect(-0.9f, 0.9f, -3.2f, -2.2f, 4.99f, lightPanel); // light panel
-            b.AddXYRect(-3f, 3f, 0f, 5f, -5f, white); // back wall
+            // left wall: Y in [0,5], Z in [-5,0], X = -3.
+            b.AddQuad(new Vec3(-3f, 0f, -5f), new Vec3(-3f, 0f, 0f), new Vec3(-3f, 5f, 0f), new Vec3(-3f, 5f, -5f), new Vec3(1f, 0f, 0f), red);
+            // right wall: Y in [0,5], Z in [-5,0], X = 3.
+            b.AddQuad(new Vec3(3f, 0f, -5f), new Vec3(3f, 0f, 0f), new Vec3(3f, 5f, 0f), new Vec3(3f, 5f, -5f), new Vec3(1f, 0f, 0f), green);
+            // floor: X in [-3,3], Z in [-5,0], Y = 0.
+            b.AddQuad(new Vec3(-3f, 0f, 0f), new Vec3(3f, 0f, 0f), new Vec3(3f, 0f, -5f), new Vec3(-3f, 0f, -5f), new Vec3(0f, 1f, 0f), white);
+            // ceiling: X in [-3,3], Z in [-5,0], Y = 5.
+            b.AddQuad(new Vec3(-3f, 5f, 0f), new Vec3(3f, 5f, 0f), new Vec3(3f, 5f, -5f), new Vec3(-3f, 5f, -5f), new Vec3(0f, 1f, 0f), white);
+            // light panel: X in [-0.9,0.9], Z in [-3.2,-2.2], Y = 4.99.
+            b.AddQuad(new Vec3(-0.9f, 4.99f, -2.2f), new Vec3(0.9f, 4.99f, -2.2f), new Vec3(0.9f, 4.99f, -3.2f), new Vec3(-0.9f, 4.99f, -3.2f), new Vec3(0f, 1f, 0f), lightPanel);
+            // back wall: X in [-3,3], Y in [0,5], Z = -5.
+            b.AddQuad(new Vec3(-3f, 0f, -5f), new Vec3(3f, 0f, -5f), new Vec3(3f, 5f, -5f), new Vec3(-3f, 5f, -5f), new Vec3(0f, 0f, 1f), white);
 
-            b.AddBox(new Vec3(-2.2f, 0f, -4.0f), new Vec3(-0.8f, 1.0f, -2.8f), white);
-            b.AddBox(new Vec3(0.6f, 0f, -3.3f), new Vec3(2.0f, 1.8f, -2.1f), white);
+            b.AddBoxMesh(new Vec3(-2.2f, 0f, -4.0f), new Vec3(-0.8f, 1.0f, -2.8f), white);
+            b.AddBoxMesh(new Vec3(0.6f, 0f, -3.3f), new Vec3(2.0f, 1.8f, -2.1f), white);
 
             b.AddLight(new Vec3(0f, 4.6f, -2.7f), new Vec3(1f, 1f, 1f), 20f);
 
@@ -133,7 +153,7 @@ namespace Sample14
             {
                 Name = "Mirror spheres on checker",
                 AmbientColor = new Vec3(1f, 1f, 1f),
-                AmbientIntensity = 0.075f,
+                AmbientIntensity = 0.1f,
                 BackgroundTop = new Vec3(0.55f, 0.75f, 1.0f),
                 BackgroundBottom = new Vec3(0.95f, 0.98f, 1.0f),
                 CameraOrigin = new Vec3(0f, 1f, 0f),
@@ -148,11 +168,12 @@ namespace Sample14
             uint glassy = (uint)b.AddMaterial(MaterialPresets.Solid(new Vec3(0.9f, 0.95f, 1.0f), 0.6f));
             uint mirror = (uint)b.AddMaterial(MaterialPresets.Mirror(0.85f));
 
-            b.AddXZRect(-8f, 8f, -8f, 4f, 0f, floor);
+            // XZRect(-8,8, -8,4, c=0): X in [-8,8], Z in [-8,4], Y = 0, facing +Y.
+            b.AddQuad(new Vec3(-8f, 0f, 4f), new Vec3(8f, 0f, 4f), new Vec3(8f, 0f, -8f), new Vec3(-8f, 0f, -8f), new Vec3(0f, 1f, 0f), floor);
 
-            b.AddSphere(new Vec3(-1.2f, 1f, -2.0f), 1f, gold);
-            b.AddSphere(new Vec3(1.3f, 1f, -2.6f), 1f, glassy);
-            b.AddSphere(new Vec3(0f, 0.5f, -4.2f), 0.5f, mirror);
+            b.AddSphereMesh(new Vec3(-1.2f, 1f, -2.0f), 1f, gold);
+            b.AddSphereMesh(new Vec3(1.3f, 1f, -2.6f), 1f, glassy);
+            b.AddSphereMesh(new Vec3(0f, 0.5f, -4.2f), 0.5f, mirror);
 
             b.AddLight(new Vec3(-2.5f, 3.5f, -1.5f), new Vec3(1f, 0.95f, 0.9f), 90f);
             b.AddLight(new Vec3(2.0f, 2.8f, -3.8f), new Vec3(0.9f, 0.95f, 1.0f), 70f);
@@ -163,14 +184,14 @@ namespace Sample14
         // Direct port of the reference's Scenes.BuildCylindersDisksAndTriangles() -
         // exercises a capped Y-cylinder, a disk, and a raw triangle together with the
         // custom-primitive GAS, over a checkered floor (mixed triangle+custom-primitive
-        // GAS, same combination already proven by BuildDebugOrenNayarScene).
+        // GAS, same combination already proven by BuildDebugMaterialsScene).
         public static SceneData BuildCylindersDisksAndTriangles()
         {
             var b = new SceneBuilder
             {
                 Name = "Cylinders, disks and triangles",
                 AmbientColor = new Vec3(1f, 1f, 1f),
-                AmbientIntensity = 0.075f,
+                AmbientIntensity = 0.1f,
                 BackgroundTop = new Vec3(0.58f, 0.78f, 1.0f),
                 BackgroundBottom = new Vec3(0.95f, 0.98f, 1.0f),
                 CameraOrigin = new Vec3(0f, 1f, 0f),
@@ -185,9 +206,10 @@ namespace Sample14
             uint matteRed = (uint)b.AddMaterial(MaterialPresets.Solid(new Vec3(0.9f, 0.25f, 0.25f))); // matte red (triangle)
             uint yellow = (uint)b.AddMaterial(MaterialPresets.Solid(new Vec3(0.8f, 0.8f, 0.1f)));  // yellow (disk)
 
-            b.AddXZRect(-10f, 10f, -10f, 4f, 0f, floor);
-            b.AddCylinderY(new Vec3(-1.2f, 0f, -3.0f), 0.6f, 0f, 1.6f, blue);
-            b.AddDisk(new Vec3(1.6f, 0.01f, -2.2f), new Vec3(0f, 1f, 0f), 0.9f, yellow);
+            // XZRect(-10,10, -10,4, c=0): X in [-10,10], Z in [-10,4], Y = 0, facing +Y.
+            b.AddQuad(new Vec3(-10f, 0f, 4f), new Vec3(10f, 0f, 4f), new Vec3(10f, 0f, -10f), new Vec3(-10f, 0f, -10f), new Vec3(0f, 1f, 0f), floor);
+            b.AddCylinderMesh(new Vec3(-1.2f, 0f, -3.0f), 0.6f, 0f, 1.6f, blue);
+            b.AddDiskMesh(new Vec3(1.6f, 0.01f, -2.2f), new Vec3(0f, 1f, 0f), 0.9f, yellow);
             b.AddTriangle(new Vec3(0.2f, 0f, -3.6f), new Vec3(1.3f, 1.4f, -3.0f), new Vec3(-0.7f, 0.7f, -2.8f), matteRed);
 
             b.AddLight(new Vec3(-2.2f, 3.2f, -2.0f), new Vec3(1f, 0.95f, 0.9f), 70f);
@@ -199,15 +221,15 @@ namespace Sample14
         // Direct port of the reference's Scenes.BuildBoxesShowcase() - three plain white
         // diffuse boxes over a checkered floor. The reference's box constructors pass
         // trailing reflectivity args that its own Solid() closure quirk always ignores -
-        // all 3 boxes render as diffuse white, matching the
-        // reference's actual behavior rather than its misleading constructor arguments.
+        // all 3 boxes render as diffuse white, matching the reference's actual
+        // behavior rather than its misleading constructor arguments.
         public static SceneData BuildBoxesShowcase()
         {
             var b = new SceneBuilder
             {
                 Name = "Boxes showcase",
                 AmbientColor = new Vec3(1f, 1f, 1f),
-                AmbientIntensity = 0.075f,
+                AmbientIntensity = 0.1f,
                 BackgroundTop = new Vec3(0.6f, 0.8f, 1.0f),
                 BackgroundBottom = new Vec3(0.95f, 0.98f, 1.0f),
                 CameraOrigin = new Vec3(0f, 1f, 0f),
@@ -220,11 +242,12 @@ namespace Sample14
             uint floor = (uint)b.AddMaterial(MaterialPresets.Checker(new Vec3(0.85f, 0.85f, 0.85f), new Vec3(0.15f, 0.15f, 0.15f), 0.7f));
             uint white = (uint)b.AddMaterial(MaterialPresets.Solid(new Vec3(0.86f, 0.86f, 0.86f)));
 
-            b.AddXZRect(-10f, 10f, -10f, 4f, 0f, floor);
+            // XZRect(-10,10, -10,4, c=0): X in [-10,10], Z in [-10,4], Y = 0, facing +Y.
+            b.AddQuad(new Vec3(-10f, 0f, 4f), new Vec3(10f, 0f, 4f), new Vec3(10f, 0f, -10f), new Vec3(-10f, 0f, -10f), new Vec3(0f, 1f, 0f), floor);
 
-            b.AddBox(new Vec3(-2.2f, 0f, -3.6f), new Vec3(-1.0f, 1.2f, -2.4f), white);
-            b.AddBox(new Vec3(-0.6f, 0f, -4.2f), new Vec3(0.6f, 0.6f, -3.0f), white);
-            b.AddBox(new Vec3(1.0f, 0f, -3.0f), new Vec3(2.4f, 2.0f, -1.8f), white);
+            b.AddBoxMesh(new Vec3(-2.2f, 0f, -3.6f), new Vec3(-1.0f, 1.2f, -2.4f), white);
+            b.AddBoxMesh(new Vec3(-0.6f, 0f, -4.2f), new Vec3(0.6f, 0.6f, -3.0f), white);
+            b.AddBoxMesh(new Vec3(1.0f, 0f, -3.0f), new Vec3(2.4f, 2.0f, -1.8f), white);
 
             b.AddLight(new Vec3(-2.0f, 3.0f, -2.0f), new Vec3(1f, 0.95f, 0.9f), 70f);
             b.AddLight(new Vec3(2.0f, 2.5f, -4.2f), new Vec3(0.9f, 0.95f, 1.0f), 50f);

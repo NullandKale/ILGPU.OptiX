@@ -14,13 +14,13 @@ using ILGPU.OptiX.DeviceApi;
 
 namespace Sample11
 {
-    // Unlike Sample10, ColorBuffer is the HDR accumulation target the denoiser reads
-    // from (float4/Vec4, not packed RGBA8) - raygen blends each frame's average sample
-    // into it (see devicePrograms.cs), and SampleRenderer denoises + tonemaps it to
-    // bytes for display after each optixLaunch. Per-material data (diffuse color,
-    // texture handle) is looked up via OptixGetSbtDataPointer against one hitgroup
-    // record per material per ray type (see MaterialSbtData.cs/SampleRenderer.cs's
-    // buildAccel/constructor) - see Sample07's LaunchParams.cs for why.
+    // ColorBuffer is the HDR accumulation target the denoiser reads from (float4/Vec4,
+    // not packed RGBA8) - raygen blends each frame's average sample into it (see
+    // devicePrograms.cs), and SampleRenderer denoises + tonemaps it to bytes for
+    // display after each optixLaunch. Per-material data (diffuse color, texture
+    // handle) is looked up via OptixGetSbtDataPointer against one hitgroup record per
+    // material per ray type (see MaterialSbtData.cs/SampleRenderer.cs's
+    // buildAccel/constructor).
     public struct LaunchParams
     {
         public int NumPixelSamples;

@@ -37,6 +37,8 @@ namespace ILGPU.OptiX.Pipeline
         private BufferData? raygenData;
         private BufferData? missData;
         private BufferData? hitgroupData;
+        private BufferData? exceptionData;
+        private BufferData? callablesData;
 
         /// <summary>
         /// Sets the accelerator for GPU memory allocation.
@@ -50,13 +52,11 @@ namespace ILGPU.OptiX.Pipeline
             return this;
         }
 
-        // OptixSbt.PackRecords<TRecord>() already validates this for the (only) record
-        // construction path every current sample uses, but a caller could in principle
-        // hand-build a records array without going through PackRecords - validate here
-        // too so a misaligned record is always a clean C# exception, never an unchecked
-        // native OptiX failure. Real alignment requirement is 16 bytes
-        // (OptixAPI.OPTIX_SBT_RECORD_ALIGNMENT), not 32 - the original design doc's "must
-        // be 32-byte aligned" text was never checked against the actual OptiX constant.
+        // OptixSbt.PackRecords<TRecord>() already validates this for records built
+        // through it, but a caller could in principle hand-build a records array
+        // without going through PackRecords - validate here too so a misaligned record
+        // is always a clean C# exception, never an unchecked native OptiX failure.
+        // Alignment requirement is OptixAPI.OPTIX_SBT_RECORD_ALIGNMENT (16 bytes).
         private static void ValidateAlignment<TRecord>() where TRecord : unmanaged
         {
             int size = Marshal.SizeOf<TRecord>();
@@ -217,6 +217,82 @@ namespace ILGPU.OptiX.Pipeline
         }
 
         /// <summary>
+        /// Sets the (single) exception record - the packed header of the program
+        /// group created via
+        /// <c>OptixDeviceContextExtensions.CreateExceptionKernel</c>. For kernel
+        /// collections, call OptixSbt.PackRecords{TRecord}(kernels) first and pass
+        /// the one-element array here.
+        /// </summary>
+        public OptixSbtBuilder SetExceptionRecord<TRecord>(TRecord record) where TRecord : unmanaged
+        {
+            if (accelerator == null)
+                throw new InvalidOperationException("Accelerator must be set via WithAccelerator() first.");
+            ValidateAlignment<TRecord>();
+
+            exceptionData?.Buffer.Dispose();
+
+            var buffer = accelerator.Allocate1D(new[] { record });
+            exceptionData = new BufferData
+            {
+                Buffer = buffer,
+                Count = 1,
+                Stride = (uint)Marshal.SizeOf<TRecord>()
+            };
+            return this;
+        }
+
+        /// <summary>
+        /// Sets callable records (already packed array) - the callables table
+        /// indexed by <c>OptixCallables.DirectCall</c>/<c>ContinuationCall</c>'s
+        /// sbtIndex. For kernel collections (from
+        /// <c>CreateDirectCallableKernel</c>/<c>CreateContinuationCallableKernel</c>),
+        /// call OptixSbt.PackRecords{TRecord}(kernels) first.
+        /// </summary>
+        public OptixSbtBuilder SetCallableRecords<TRecord>(TRecord[] records) where TRecord : unmanaged
+        {
+            if (records == null)
+                throw new ArgumentNullException(nameof(records));
+            if (accelerator == null)
+                throw new InvalidOperationException("Accelerator must be set via WithAccelerator() first.");
+            ValidateAlignment<TRecord>();
+
+            callablesData?.Buffer.Dispose();
+
+            var buffer = accelerator.Allocate1D(records);
+            callablesData = new BufferData
+            {
+                Buffer = buffer,
+                Count = (uint)records.Length,
+                Stride = (uint)Marshal.SizeOf<TRecord>()
+            };
+            return this;
+        }
+
+        /// <summary>
+        /// Sets callable records from a buffer packed by
+        /// <see cref="OptixSbtRecords.Pack{T}(System.Collections.Generic.IReadOnlyList{OptixKernel}, System.ReadOnlySpan{T})"/>.
+        /// </summary>
+        public OptixSbtBuilder SetCallableRecords<T>(byte[] packedRecordBytes) where T : unmanaged
+        {
+            if (packedRecordBytes == null)
+                throw new ArgumentNullException(nameof(packedRecordBytes));
+            if (accelerator == null)
+                throw new InvalidOperationException("Accelerator must be set via WithAccelerator() first.");
+
+            callablesData?.Buffer.Dispose();
+
+            var stride = (uint)OptixSbtRecords.StrideOf<T>();
+            var buffer = accelerator.Allocate1D(packedRecordBytes);
+            callablesData = new BufferData
+            {
+                Buffer = buffer,
+                Count = (uint)(packedRecordBytes.Length / stride),
+                Stride = stride
+            };
+            return this;
+        }
+
+        /// <summary>
         /// Builds the SBT with allocated GPU buffers.
         /// </summary>
         public BuiltSbt Build(CudaStream? stream = null)
@@ -231,15 +307,21 @@ namespace ILGPU.OptiX.Pipeline
                 var sbt = new OptixShaderBindingTable
                 {
                     RaygenRecord = raygenData.Buffer.NativePtr,
+                    ExceptionRecord = exceptionData?.Buffer.NativePtr ?? IntPtr.Zero,
                     MissRecordBase = missData?.Buffer.NativePtr ?? IntPtr.Zero,
                     MissRecordStrideInBytes = missData?.Stride ?? 0,
                     MissRecordCount = missData?.Count ?? 0,
                     HitgroupRecordBase = hitgroupData?.Buffer.NativePtr ?? IntPtr.Zero,
                     HitgroupRecordStrideInBytes = hitgroupData?.Stride ?? 0,
                     HitgroupRecordCount = hitgroupData?.Count ?? 0,
+                    CallablesRecordBase = callablesData?.Buffer.NativePtr ?? IntPtr.Zero,
+                    CallablesRecordStrideInBytes = callablesData?.Stride ?? 0,
+                    CallablesRecordCount = callablesData?.Count ?? 0,
                 };
 
-                var built = new BuiltSbt(sbt, raygenData.Buffer, missData?.Buffer, hitgroupData?.Buffer, accelerator, stream);
+                var built = new BuiltSbt(
+                    sbt, raygenData.Buffer, missData?.Buffer, hitgroupData?.Buffer,
+                    exceptionData?.Buffer, callablesData?.Buffer, accelerator, stream);
 
                 // Ownership of the buffers has transferred to `built` - clear our own
                 // references so Dispose() below (if this now-spent builder is later
@@ -247,6 +329,8 @@ namespace ILGPU.OptiX.Pipeline
                 raygenData = null;
                 missData = null;
                 hitgroupData = null;
+                exceptionData = null;
+                callablesData = null;
 
                 return built;
             }
@@ -259,9 +343,13 @@ namespace ILGPU.OptiX.Pipeline
                 raygenData?.Buffer.Dispose();
                 missData?.Buffer.Dispose();
                 hitgroupData?.Buffer.Dispose();
+                exceptionData?.Buffer.Dispose();
+                callablesData?.Buffer.Dispose();
                 raygenData = null;
                 missData = null;
                 hitgroupData = null;
+                exceptionData = null;
+                callablesData = null;
                 throw;
             }
         }
@@ -278,9 +366,13 @@ namespace ILGPU.OptiX.Pipeline
                 raygenData?.Buffer.Dispose();
                 missData?.Buffer.Dispose();
                 hitgroupData?.Buffer.Dispose();
+                exceptionData?.Buffer.Dispose();
+                callablesData?.Buffer.Dispose();
                 raygenData = null;
                 missData = null;
                 hitgroupData = null;
+                exceptionData = null;
+                callablesData = null;
             }
             base.Dispose(disposing);
         }
@@ -297,15 +389,20 @@ namespace ILGPU.OptiX.Pipeline
         private readonly MemoryBuffer raygenBuffer;
         private readonly MemoryBuffer? missBuffer;
         private readonly MemoryBuffer? hitgroupBuffer;
+        private readonly MemoryBuffer? exceptionBuffer;
+        private readonly MemoryBuffer? callablesBuffer;
         private readonly CudaAccelerator accelerator;
 
         internal BuiltSbt(OptixShaderBindingTable sbt, MemoryBuffer raygenBuffer, MemoryBuffer? missBuffer,
-            MemoryBuffer? hitgroupBuffer, CudaAccelerator accelerator, CudaStream? stream)
+            MemoryBuffer? hitgroupBuffer, MemoryBuffer? exceptionBuffer, MemoryBuffer? callablesBuffer,
+            CudaAccelerator accelerator, CudaStream? stream)
         {
             Sbt = sbt;
             this.raygenBuffer = raygenBuffer;
             this.missBuffer = missBuffer;
             this.hitgroupBuffer = hitgroupBuffer;
+            this.exceptionBuffer = exceptionBuffer;
+            this.callablesBuffer = callablesBuffer;
             this.accelerator = accelerator;
 
             // If stream is null, synchronize device
@@ -320,6 +417,8 @@ namespace ILGPU.OptiX.Pipeline
             if (!disposed)
             {
                 disposed = true;
+                callablesBuffer?.Dispose();
+                exceptionBuffer?.Dispose();
                 hitgroupBuffer?.Dispose();
                 missBuffer?.Dispose();
                 raygenBuffer?.Dispose();

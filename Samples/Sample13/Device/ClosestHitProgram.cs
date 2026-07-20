@@ -32,11 +32,10 @@ namespace Sample13
             }
 
             // Geometry is recovered analytically here rather than threaded through
-            // intersection-program attributes - a built-in triangle hit
-            // (hitKind >= TriangleFrontFace) interpolates from the
-            // triangle buffers as before; any other hitKind is a custom primitive
-            // recomputed from its own per-primitive parameter buffer plus the hit
-            // distance/ray.
+            // intersection-program attributes - a built-in triangle hit (hitKind >=
+            // TriangleFrontFace) interpolates from the triangle buffers as before; any
+            // other hitKind is a custom primitive recomputed from its own per-primitive
+            // parameter buffer plus the hit distance/ray.
             Vec3 surfPos;
             Vec3 rawGeometricNormal;
             Vec3 shadingNormal;

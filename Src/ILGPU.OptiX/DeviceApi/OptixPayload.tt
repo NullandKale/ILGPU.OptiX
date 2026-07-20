@@ -122,13 +122,10 @@ namespace ILGPU.OptiX.DeviceApi
         /// <param name="value">The float value to write (stored bit-for-bit, not converted).</param>
         public static void SetFloat(int index, float value) => Set(index, ILGPU.Interop.FloatAsInt(value));
 
-        // SetRange/GetRange (a runtime for-loop calling Set(startIndex+i, ...)/
-        // Get(startIndex+i)) used to live here, "for bulk payload access when the
-        // register count is not a compile-time constant." That premise is impossible
-        // to satisfy correctly - see Get(int)'s remarks - so they were deleted rather
-        // than left as a working-in-ILGPU, failing-in-OptiX trap for the next caller.
-        // Use Read{T}/Write{T} (a whole struct at once, literal index per register) or
-        // the individually named Payload0/Payload1/... properties instead.
+        // Do not add a SetRange/GetRange helper that loops Get(i)/Set(i) with a
+        // runtime index - see Get(int)'s remarks for why OptiX requires a literal
+        // index. Use Read{T}/Write{T} or the individually named Payload0/Payload1/...
+        // properties instead.
 
         /// <summary>
         /// Reads payload registers 0..(sizeof(T)/4 - 1) into a single struct, so a hit

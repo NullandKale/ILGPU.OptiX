@@ -106,36 +106,24 @@ namespace ILGPU.OptiX.CooperativeVectors
             if (outputBuffer == null)
                 throw new ArgumentNullException(nameof(outputBuffer));
 
-            // OptixNetworkDescription.layers is itself a pointer, so this needs two
-            // marshaling levels: the per-layer descriptor array first, then the network
-            // descriptor struct embedding a pointer to it (same two-level pattern
-            // OptixAccelBuilder.Build uses for its per-build-input pointer arrays).
-            using var inputLayersHandle = SafeHGlobal.AllocFrom<OptixCoopVecMatrixDescription>(inputLayerDescriptions);
-            using var outputLayersHandle = SafeHGlobal.AllocFrom<OptixCoopVecMatrixDescription>(outputLayerDescriptions);
-
-            var inputNetwork = new OptixNetworkDescriptionNative { Layers = inputLayersHandle, NumLayers = (uint)inputLayerDescriptions.Length };
-            var outputNetwork = new OptixNetworkDescriptionNative { Layers = outputLayersHandle, NumLayers = (uint)outputLayerDescriptions.Length };
-            using var inputNetworkHandle = SafeHGlobal.AllocFrom(inputNetwork);
-            using var outputNetworkHandle = SafeHGlobal.AllocFrom(outputNetwork);
-
-            OptixException.ThrowIfFailed(
-                OptixAPI.Current.CoopVecMatrixConvert(
-                    deviceContext.DeviceContextPtr,
-                    cudaStream.StreamPtr,
-                    numNetworks,
-                    inputNetworkHandle,
-                    inputBuffer.GetDeviceAddress(),
-                    inputNetworkStrideInBytes,
-                    outputNetworkHandle,
-                    outputBuffer.GetDeviceAddress(),
-                    outputNetworkStrideInBytes));
+            // One-shot path: marshals the descriptions, converts, and frees them
+            // again. Callers converting the same network topology repeatedly (e.g.
+            // once or more per frame) should build an OptixCoopVecConversionPlan once
+            // and reuse it instead - this overload pays four AllocHGlobal/Free pairs
+            // plus per-element marshaling on every call.
+            using var plan = new OptixCoopVecConversionPlan(
+                deviceContext, inputLayerDescriptions, outputLayerDescriptions);
+            plan.Convert(
+                cudaStream, numNetworks,
+                inputBuffer, inputNetworkStrideInBytes,
+                outputBuffer, outputNetworkStrideInBytes);
         }
 
         /// <summary>
         /// Converts a single matrix (a one-layer, one-instance network) already uploaded
         /// at <paramref name="inputBuffer"/> into <paramref name="outputBuffer"/> - a
         /// convenience wrapper over <see cref="ConvertMatrices"/> for the common case
-        /// (e.g. one weight matrix at a time, as Sample24 does for each MLP layer).
+        /// of converting one weight matrix at a time.
         /// </summary>
         /// <param name="deviceContext">The OptiX device context.</param>
         /// <param name="stream">The CUDA stream.</param>
@@ -163,9 +151,8 @@ namespace ILGPU.OptiX.CooperativeVectors
 
     /// <summary>
     /// Extension for getting a cooperative-vector-usable device address (a plain
-    /// <see cref="ulong"/> "CUdeviceptr") out of an ILGPU device buffer, without a
-    /// sample ever touching <see cref="IntPtr"/>/<c>unsafe</c> directly (hard
-    /// constraint). The coop-vec device intrinsics
+    /// <see cref="ulong"/> "CUdeviceptr") out of an ILGPU device buffer, without callers
+    /// ever touching <see cref="IntPtr"/>/<c>unsafe</c> directly. The coop-vec device intrinsics
     /// (<see cref="DeviceApi.OptixCoopVec"/>) take these addresses as ordinary
     /// <see cref="ulong"/> kernel parameters - flowing through a LaunchParams struct
     /// exactly like an <c>OptixTraversableHandle</c> already does - rather than trying

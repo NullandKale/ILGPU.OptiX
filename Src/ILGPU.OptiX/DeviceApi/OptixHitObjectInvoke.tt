@@ -102,5 +102,32 @@ namespace ILGPU.OptiX.DeviceApi
         }
 
 <# } #>
+        /// <summary>
+        /// Runs the hit/miss program found by a matching-payload-count
+        /// <see cref="Traverse{T}"/> call, carrying a single struct-typed payload
+        /// instead of individual <c>ref uint</c> registers - same convention as
+        /// <see cref="OptixTrace.Trace{T}"/>, dispatching to one of the fixed-count
+        /// <see cref="Invoke"/> overloads above based on <c>sizeof(T)/4</c>.
+        /// </summary>
+        public static unsafe void Invoke<T>(ref T payload)
+            where T : unmanaged
+        {
+            int count = sizeof(T) / 4;
+            T local = payload;
+            uint* w = (uint*)&local;
+
+            switch (count)
+            {
+<#  for (int paramIdx = 0; paramIdx <= effectiveMax; paramIdx++) {
+        var refArgs = string.Join(", ", Enumerable.Range(0, paramIdx).Select(i => $"ref w[{i}]"));
+#>
+                case <#= paramIdx #>:
+                    Invoke(<#= refArgs #>);
+                    break;
+<#  } #>
+            }
+
+            payload = local;
+        }
     }
 }

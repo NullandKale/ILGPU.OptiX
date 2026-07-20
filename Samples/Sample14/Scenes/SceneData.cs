@@ -11,7 +11,6 @@
 
 using MeshRange = ILGPU.OptiX.Pipeline.OptixMeshRange;
 using System;
-using ILGPU.OptiX.AccelStructures;
 using ILGPU.OptiX.Cuda;
 
 namespace Sample14
@@ -46,19 +45,10 @@ namespace Sample14
         public float Speed;
     }
 
-    public struct BobbingSphereAnim
-    {
-        public int SphereIndex;
-        public float BaseY;
-        public float Amplitude;
-        public float Speed;
-        public float Phase;
-    }
-
     // Host-side POCO a Scenes.cs builder method returns; SampleRenderer.SwitchToScene
     // consumes it to (re)allocate device buffers, rebuild the GAS/SBT, and reset FrameID -
-    // mirrors the reference's own lazy-built, cached-per-index Scene objects. Grows a field per
-    // milestone as new primitive kinds/volume grid/mesh support come online; unused
+    // mirrors the reference's own lazy-built, cached-per-index Scene objects. Grows a
+    // field as new primitive kinds/volume grid/mesh support come online; unused
     // fields on a given scene are left null/default.
     public class SceneData
     {
@@ -67,10 +57,13 @@ namespace Sample14
         public Vec3[] Vertices = Array.Empty<Vec3>();
         public Vec3[] Normals = Array.Empty<Vec3>();
         public Vec2[] TexCoords = Array.Empty<Vec2>();
+        // Per-vertex tangent - see Model.cs's ComputeTangents/SceneBuilder's
+        // TangentFromTriangle for how each geometry source computes it.
+        public Vec3[] Tangents = Array.Empty<Vec3>();
         public Vec3i[] Indices = Array.Empty<Vec3i>();
 
         // One entry per triangle (same length as Indices), indexing into Materials -
-        // also the GAS build input's SbtIndexOffsetBuffer, same convention as Sample07-12.
+        // also the GAS build input's SbtIndexOffsetBuffer.
         public uint[] TriangleMaterialIds = Array.Empty<uint>();
 
         // Per-mesh triangle-index ranges within Indices/TriangleMaterialIds - one
@@ -87,62 +80,49 @@ namespace Sample14
 
         // Optional, index-aligned with Materials - a relative path (under the output
         // directory, e.g. "models/sponza/textures/x.png") to load into a
-        // CudaTextureObject and assign to that material's HitgroupRecord.TextureObject
-        // (see SampleRenderer.cs's BuildHitgroupSbt). Shorter than Materials or an empty/
-        // null entry means "no texture" for that material index - matches Sample08's
-        // TextureObject==0 convention.
+        // CudaTextureObject and assign to that material's MaterialSbtData.BaseColorTexture
+        // (see SbtBuilder.cs's Build/FillMaterialRecords). Shorter than Materials or an empty/
+        // null entry means "no texture" for that material index (TextureObject==0).
         public string[] MaterialTexturePaths = Array.Empty<string>();
 
-        // Custom primitives - each *MaterialIds array indexes into the SAME shared
-        // Materials[] list as triangles (one merged material palette per scene, not a
-        // separate one per primitive kind).
-        public SphereData[] Spheres = Array.Empty<SphereData>();
-        public uint[] SphereMaterialIds = Array.Empty<uint>();
-
-        public BoxData[] Boxes = Array.Empty<BoxData>();
-        public uint[] BoxMaterialIds = Array.Empty<uint>();
-
-        public CylinderYData[] CylindersY = Array.Empty<CylinderYData>();
-        public uint[] CylinderYMaterialIds = Array.Empty<uint>();
-
-        public DiskData[] Disks = Array.Empty<DiskData>();
-        public uint[] DiskMaterialIds = Array.Empty<uint>();
-
-        public RectData[] XYRects = Array.Empty<RectData>();
-        public uint[] XYRectMaterialIds = Array.Empty<uint>();
-
-        public RectData[] XZRects = Array.Empty<RectData>();
-        public uint[] XZRectMaterialIds = Array.Empty<uint>();
-
-        public RectData[] YZRects = Array.Empty<RectData>();
-        public uint[] YZRectMaterialIds = Array.Empty<uint>();
-
-        // Volume grid - one flat row-major (x*Dims.y*Dims.z + y*Dims.z + z) array; 0 =
-        // empty/air, N = Materials[N-1] (see devicePrograms.cs's ShadeVolumeGrid).
-        // VoxelMaterialIds.Length == 0 means "no volume grid in this scene".
-        public uint[] VoxelMaterialIds = Array.Empty<uint>();
-        public Vec3 VolumeGridMin;
-        public Vec3 VolumeVoxelSize = new Vec3(1f, 1f, 1f);
-        public Vec3i VolumeDims;
+        // Same convention as MaterialTexturePaths, for MaterialSbtData.NormalTexture
+        // (tangent-space normal map) and .OrmTexture (a single already-packed
+        // occlusion.r/roughness.g/metallic.b texture - not composed from separate
+        // grayscale maps at load time, see Model.cs's OBJMaterial doc comment).
+        public string[] MaterialNormalTexturePaths = Array.Empty<string>();
+        public string[] MaterialOrmTexturePaths = Array.Empty<string>();
 
         public PointLightGpu[] Lights = Array.Empty<PointLightGpu>();
+
+        // NEE light list - computed by Scenes/LightList.cs from this SceneData's own Lights/Indices/
+        // TriangleMaterialIds/Materials once they're final (see SceneBuilder.Build);
+        // never populated by a scene builder directly. NeeLightAreaPdf is parallel to
+        // Indices/TriangleMaterialIds (one entry per triangle, 0 = not a registered
+        // light).
+        public LightGpu[] NeeLights = Array.Empty<LightGpu>();
+        public float[] NeeLightCdf = Array.Empty<float>();
+        public float[] NeeLightAreaPdf = Array.Empty<float>();
         public Vec3 AmbientColor = new Vec3(1f, 1f, 1f);
-        public float AmbientIntensity = 0.05f;
+        public float AmbientIntensity = 0.1f;
 
         // Per-frame animation (museum/radial-museum scenes only) - see
-        // SampleRenderer.ApplyAnimation. BobbingSpheres requires refitting the custom-
-        // primitives GAS every frame (OptixBuildOperation.Update), so its presence
-        // also drives BuildOrUpdateCustomPrimitivesGas's ALLOW_UPDATE flag and forces
-        // progressive accumulation off for the scene (see HasAnimatedGeometry/render()).
+        // SampleRenderer.ApplyAnimation.
         public OrbitingLightAnim[] OrbitingLights = Array.Empty<OrbitingLightAnim>();
         public PulsingLightAnim[] PulsingLights = Array.Empty<PulsingLightAnim>();
-        public BobbingSphereAnim[] BobbingSpheres = Array.Empty<BobbingSphereAnim>();
 
-        public bool HasAnimatedGeometry => BobbingSpheres.Length > 0;
-        public bool HasAnyAnimation => OrbitingLights.Length > 0 || PulsingLights.Length > 0 || BobbingSpheres.Length > 0;
+        public bool HasAnyAnimation => OrbitingLights.Length > 0 || PulsingLights.Length > 0;
 
         public Vec3 BackgroundTop = new Vec3(0.4f, 0.55f, 0.8f);
         public Vec3 BackgroundBottom = new Vec3(0.05f, 0.05f, 0.08f);
+
+        // HDRI environment map - a path relative to AppContext.BaseDirectory
+        // (matching MaterialTexturePaths' convention), or
+        // null/empty for "no environment map, use the flat BackgroundTop/Bottom
+        // gradient instead" (this sample's scene-dependent design: not every scene
+        // opts in). SampleRenderer caches the loaded/uploaded GPU data per unique path
+        // so scenes sharing the same HDRI don't reload it on every switch.
+        public string EnvMapPath;
+        public float EnvMapIntensity = 1f;
 
         public Vec3 CameraOrigin;
         public Vec3 CameraLookAt;

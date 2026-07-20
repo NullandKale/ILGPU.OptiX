@@ -37,6 +37,7 @@ namespace ILGPU.OptiX.AccelStructures
             public long IndexStart { get; set; }
             public long IndexCount { get; set; }
             public BuiltOpacityMicromapArray OpacityMicromapArray { get; set; }
+            public OptixGeometryFlags[] PerSbtRecordFlags { get; set; }
         }
 
         private class CustomPrimitive
@@ -55,17 +56,26 @@ namespace ILGPU.OptiX.AccelStructures
             public OptixCurveEndcapFlags EndcapFlags { get; set; }
         }
 
+        private class Sphere
+        {
+            public MemoryBuffer Centers { get; set; }
+            public MemoryBuffer Radii { get; set; }
+            public bool SingleRadius { get; set; }
+        }
+
         private OptixDeviceContext deviceContext;
         private CudaAccelerator accelerator;
         private readonly List<TriangleMesh> triangles = new List<TriangleMesh>();
         private readonly List<CustomPrimitive> customPrimitives = new List<CustomPrimitive>();
         private readonly List<Curve> curves = new List<Curve>();
+        private readonly List<Sphere> spheres = new List<Sphere>();
         private (MemoryBuffer buffer, uint count)? instances;
         private bool allowCompaction;
         private bool preferFastTrace;
         private bool preferFastBuild;
         private bool allowUpdate;
         private bool emitAabbs;
+        private bool allowRandomVertexAccess;
 
         /// <summary>
         /// Sets the device context for acceleration structure building.
@@ -125,10 +135,19 @@ namespace ILGPU.OptiX.AccelStructures
         /// mesh (<paramref name="indexCount"/>) if supplied. Null (default) attaches no
         /// opacity micromap - ordinary opaque triangle behavior.
         /// </param>
+        /// <param name="perSbtRecordFlags">
+        /// Per-SBT-record <see cref="OptixGeometryFlags"/> (length must equal
+        /// <paramref name="numSbtRecords"/> when supplied) - lets individual materials
+        /// opt out of anyhit invocation (<see cref="OptixGeometryFlags.DisableAnyHit"/>)
+        /// while others keep it, without splitting the mesh into separate build inputs.
+        /// Null (default) means <see cref="OptixGeometryFlags.None"/> for every record -
+        /// the pre-existing behavior.
+        /// </param>
         public OptixAccelBuilder AddTriangleMesh(MemoryBuffer vertices, MemoryBuffer indices,
             MemoryBuffer materialIds = null, uint numSbtRecords = 1,
             long indexStart = 0, long indexCount = -1,
-            BuiltOpacityMicromapArray opacityMicromapArray = null)
+            BuiltOpacityMicromapArray opacityMicromapArray = null,
+            OptixGeometryFlags[] perSbtRecordFlags = null)
         {
             if (vertices == null || vertices.Length == 0)
                 throw new ArgumentException("Vertices buffer must not be null or empty.", nameof(vertices));
@@ -136,6 +155,10 @@ namespace ILGPU.OptiX.AccelStructures
                 throw new ArgumentException("Indices buffer must not be null or empty.", nameof(indices));
             if (indexStart < 0)
                 throw new ArgumentOutOfRangeException(nameof(indexStart), "Index start must be >= 0.");
+            if (perSbtRecordFlags != null && perSbtRecordFlags.Length != numSbtRecords)
+                throw new ArgumentException(
+                    $"perSbtRecordFlags must have exactly numSbtRecords ({numSbtRecords}) entries, got {perSbtRecordFlags.Length}.",
+                    nameof(perSbtRecordFlags));
 
             long resolvedIndexCount = indexCount < 0 ? indices.Length - indexStart : indexCount;
             if (resolvedIndexCount <= 0)
@@ -149,7 +172,8 @@ namespace ILGPU.OptiX.AccelStructures
                 NumSbtRecords = numSbtRecords,
                 IndexStart = indexStart,
                 IndexCount = resolvedIndexCount,
-                OpacityMicromapArray = opacityMicromapArray
+                OpacityMicromapArray = opacityMicromapArray,
+                PerSbtRecordFlags = perSbtRecordFlags
             });
             return this;
         }
@@ -218,7 +242,9 @@ namespace ILGPU.OptiX.AccelStructures
             MemoryBuffer indices,
             OptixCurveEndcapFlags endcapFlags = OptixCurveEndcapFlags.Default)
         {
-            if (curveType == OptixPrimitiveType.Custom || curveType == OptixPrimitiveType.Triangle)
+            if (curveType == OptixPrimitiveType.Custom ||
+                curveType == OptixPrimitiveType.Triangle ||
+                curveType == OptixPrimitiveType.Sphere)
                 throw new ArgumentException(
                     "curveType must be one of the Round*/Flat* curve types.", nameof(curveType));
             if (vertices == null || vertices.Length == 0)
@@ -235,6 +261,53 @@ namespace ILGPU.OptiX.AccelStructures
                 Widths = widths,
                 Indices = indices,
                 EndcapFlags = endcapFlags
+            });
+            return this;
+        }
+
+        /// <summary>
+        /// Adds built-in sphere primitives (one sphere per center vertex) as one build
+        /// input within the resulting GAS - call multiple times to combine several
+        /// sphere sets, same rule as <see cref="AddCustomPrimitives"/>. Spheres use
+        /// OptiX's own built-in intersection program - see
+        /// <see cref="Pipeline.RayTracingPipelineBuilder{TLaunchParams}.HitGroupWithBuiltinIS"/>
+        /// (via <c>RayTypeBuilder.HitGroupWithBuiltinIS</c> with
+        /// <see cref="OptixPrimitiveType.Sphere"/>) to wire the matching hitgroup. The
+        /// pipeline must be compiled with
+        /// <see cref="OptixPrimitiveTypeFlags.Sphere"/> in its UsesPrimitiveTypeFlags
+        /// and NumAttributeValues of at least 1. Like curves, each sphere build input
+        /// uses exactly one SBT record here - combine multiple materials via multiple
+        /// <see cref="AddSpheres"/> calls.
+        /// </summary>
+        /// <param name="centers">Sphere center points (float3, one per sphere).</param>
+        /// <param name="radii">
+        /// Per-sphere float radii - same length as <paramref name="centers"/>, or a
+        /// single float shared by all spheres when <paramref name="singleRadius"/> is
+        /// true.
+        /// </param>
+        /// <param name="singleRadius">
+        /// When true, <paramref name="radii"/> holds a single radius applied to every
+        /// sphere instead of one per center.
+        /// </param>
+        public OptixAccelBuilder AddSpheres(
+            MemoryBuffer centers,
+            MemoryBuffer radii,
+            bool singleRadius = false)
+        {
+            if (centers == null || centers.Length == 0)
+                throw new ArgumentException("Centers buffer must not be null or empty.", nameof(centers));
+            if (radii == null || radii.Length == 0)
+                throw new ArgumentException("Radii buffer must not be null or empty.", nameof(radii));
+            if (!singleRadius && radii.Length != centers.Length)
+                throw new ArgumentException(
+                    "Radii buffer must have the same length as centers (or pass singleRadius: true).",
+                    nameof(radii));
+
+            spheres.Add(new Sphere
+            {
+                Centers = centers,
+                Radii = radii,
+                SingleRadius = singleRadius
             });
             return this;
         }
@@ -290,6 +363,18 @@ namespace ILGPU.OptiX.AccelStructures
         }
 
         /// <summary>
+        /// Builds with OPTIX_BUILD_FLAG_ALLOW_RANDOM_VERTEX_ACCESS - required for the
+        /// device-side vertex-data fetch intrinsics
+        /// (e.g. <c>OptixGetTriangleVertexData</c>, <c>OptixGetSphereData</c>).
+        /// May increase memory usage and impact performance.
+        /// </summary>
+        public OptixAccelBuilder AllowRandomVertexAccess()
+        {
+            allowRandomVertexAccess = true;
+            return this;
+        }
+
+        /// <summary>
         /// Requests that the built acceleration structure's world-space AABB(s) be
         /// emitted and read back to the host, available afterwards via
         /// <see cref="BuiltAccelStructure.Aabbs"/>. Forces a device synchronization
@@ -315,17 +400,19 @@ namespace ILGPU.OptiX.AccelStructures
             bool hasTriangles = triangles.Count > 0;
             bool hasCustomPrimitives = customPrimitives.Count > 0;
             bool hasCurves = curves.Count > 0;
+            bool hasSpheres = spheres.Count > 0;
             bool hasInstances = instances.HasValue;
 
-            if (!hasTriangles && !hasCustomPrimitives && !hasCurves && !hasInstances)
+            if (!hasTriangles && !hasCustomPrimitives && !hasCurves && !hasSpheres && !hasInstances)
                 throw new InvalidOperationException(
-                    "At least one of AddTriangleMesh(), AddCustomPrimitives(), AddCurves(), or AddInstances() must be called.");
+                    "At least one of AddTriangleMesh(), AddCustomPrimitives(), AddCurves(), AddSpheres(), or AddInstances() must be called.");
 
             // Cannot mix GAS and IAS types
-            int gasCount = (hasTriangles ? 1 : 0) + (hasCustomPrimitives ? 1 : 0) + (hasCurves ? 1 : 0);
+            int gasCount = (hasTriangles ? 1 : 0) + (hasCustomPrimitives ? 1 : 0) +
+                (hasCurves ? 1 : 0) + (hasSpheres ? 1 : 0);
             if (gasCount > 0 && hasInstances)
                 throw new InvalidOperationException(
-                    "Cannot mix geometry (triangles/custom-primitives/curves) with instances; choose one type.");
+                    "Cannot mix geometry (triangles/custom-primitives/curves/spheres) with instances; choose one type.");
 
             MemoryBuffer1D<byte, Dense> tempBuffer = null;
             MemoryBuffer1D<byte, Dense> outputBuffer = null;
@@ -385,9 +472,14 @@ namespace ILGPU.OptiX.AccelStructures
                         // NumSbtRecords was always 1, but reading past it once a mesh
                         // has multiple materials returns garbage flag bits and OptiX
                         // rejects the build with OPTIX_ERROR_INVALID_VALUE.
+                        // Caller-supplied per-record flags (AddTriangleMesh's
+                        // perSbtRecordFlags - e.g. DisableAnyHit for opaque materials)
+                        // fill the slots when present; None otherwise.
                         var meshFlags = stackalloc uint[(int)mesh.NumSbtRecords];
                         for (int flagIndex = 0; flagIndex < mesh.NumSbtRecords; flagIndex++)
-                            meshFlags[flagIndex] = 0; // OPTIX_GEOMETRY_FLAG_NONE
+                            meshFlags[flagIndex] = mesh.PerSbtRecordFlags != null
+                                ? (uint)mesh.PerSbtRecordFlags[flagIndex]
+                                : 0; // OPTIX_GEOMETRY_FLAG_NONE
 
                         input.TriangleArray.Flags = meshFlags;
                         input.TriangleArray.NumSbtRecords = mesh.NumSbtRecords;
@@ -512,6 +604,56 @@ namespace ILGPU.OptiX.AccelStructures
                     }
                 }
 
+                // Add spheres
+                if (hasSpheres)
+                {
+                    // One pointer slot per sphere set for each of center/radius buffers
+                    // - same "must outlive this whole method" reasoning as the curve
+                    // loop above (vertexBuffers/radiusBuffers are per-motion-key arrays
+                    // of device pointers per optix_types.h, size 1 for no motion).
+                    var centerPtrs = stackalloc IntPtr[spheres.Count];
+                    var radiusPtrs = stackalloc IntPtr[spheres.Count];
+
+                    // Single SBT record per sphere build input (same simplification
+                    // as curves) - one flags entry per input, allocated up front so
+                    // every slot outlives the whole method like the pointer arrays.
+                    var sphereFlags = stackalloc uint[spheres.Count];
+
+                    for (int sphereIndex = 0; sphereIndex < spheres.Count; sphereIndex++)
+                    {
+                        var sphere = spheres[sphereIndex];
+                        centerPtrs[sphereIndex] = sphere.Centers.NativePtr;
+                        radiusPtrs[sphereIndex] = sphere.Radii.NativePtr;
+                        sphereFlags[sphereIndex] = 0; // OPTIX_GEOMETRY_FLAG_NONE
+
+                        var input = new OptixBuildInput
+                        {
+                            Type = OptixBuildInputType.Spheres
+                        };
+
+                        input.SphereArray.VertexBuffers = new IntPtr(centerPtrs + sphereIndex);
+                        input.SphereArray.VertexStrideInBytes = 0;
+                        input.SphereArray.NumVertices = (uint)sphere.Centers.Length;
+                        input.SphereArray.RadiusBuffers = new IntPtr(radiusPtrs + sphereIndex);
+                        input.SphereArray.RadiusStrideInBytes = 0;
+                        input.SphereArray.SingleRadius = sphere.SingleRadius ? 1 : 0;
+                        input.SphereArray.Flags = sphereFlags + sphereIndex;
+                        input.SphereArray.NumSbtRecords = 1;
+                        input.SphereArray.SbtIndexOffsetBuffer = IntPtr.Zero;
+                        input.SphereArray.SbtIndexOffsetSizeInBytes = 0;
+                        input.SphereArray.SbtIndexOffsetStrideInBytes = 0;
+                        input.SphereArray.PrimitiveIndexOffset = 0;
+
+                        buildInputList.Add(input);
+                        // Spheres require no relocation data beyond the Type tag (same
+                        // as curves/custom primitives).
+                        relocateInputList.Add(new OptixRelocateInput
+                        {
+                            Type = OptixBuildInputType.Spheres
+                        });
+                    }
+                }
+
                 // Add instances
                 if (hasInstances)
                 {
@@ -551,6 +693,8 @@ namespace ILGPU.OptiX.AccelStructures
                     buildOptions.BuildFlags |= OptixBuildFlags.PreferFastBuild;
                 if (allowUpdate)
                     buildOptions.BuildFlags |= OptixBuildFlags.AllowUpdate;
+                if (allowRandomVertexAccess)
+                    buildOptions.BuildFlags |= OptixBuildFlags.AllowRandomVertexAccess;
 
                 buildOptions.MotionOptions.NumKeys = 1;
 
@@ -907,8 +1051,8 @@ namespace ILGPU.OptiX.AccelStructures
             // a helper: the stackalloc'd pointer arrays below must stay alive on THIS
             // stack frame for as long as buildInputList's IntPtr fields point into them -
             // returning them from a helper method would let the stack frame unwind while
-            // AccelComputeMemoryUsage/AccelBuild still read those pointers, reproducing
-            // the exact dangling-pointer bug documented in "GPU Testing Results" item 3.
+            // AccelComputeMemoryUsage/AccelBuild still read those pointers (a dangling
+            // pointer bug).
             var buildInputList = new List<OptixBuildInput>();
 
             if (hasTriangles)
@@ -1114,10 +1258,7 @@ namespace ILGPU.OptiX.AccelStructures
                 // caller is responsible for getting the bytes into targetAccel first (a
                 // device-to-device copy here, since both buffers live on the same
                 // accelerator - a real cross-device/cross-process relocation would copy via
-                // host memory or P2P instead). Skipping this step leaves targetBuffer as
-                // uninitialized device memory, which optixAccelRelocate then reinterprets as
-                // a traversable - undefined behavior that manifested as a sticky CUDA
-                // "unspecified launch failure" the first time this was tried.
+                // host memory or P2P instead).
                 GasBuffer.CopyTo(relocateStream, 0, targetBuffer.View);
 
                 var handle = deviceContext.AccelRelocate(

@@ -19,10 +19,8 @@ namespace Sample17
 {
     /// <summary>
     /// Minimal position/index-only Wavefront OBJ loader (no materials/normals/UVs -
-    /// Sample16 only needs real triangle counts/topology to exercise acceleration
-    /// structure relocation against something more representative than a single quad,
-    /// not a full shading pipeline). Ported from the same from-scratch parser used by
-    /// Sample07/13-15's own Model.cs, trimmed down.
+    /// this sample only needs real triangle counts/topology, not a full shading
+    /// pipeline).
     /// </summary>
     public static class Model
     {

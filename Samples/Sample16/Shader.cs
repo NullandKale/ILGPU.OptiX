@@ -14,8 +14,7 @@ using System;
 
 namespace Sample16
 {
-    // Minimal GLSL program wrapper - same compile/link pattern as Sample14's own
-    // Rendering/Shader.cs, trimmed to just what the fullscreen display quad needs.
+    // Minimal GLSL program wrapper, trimmed to just what the fullscreen display quad needs.
     public sealed class Shader : IDisposable
     {
         public int Handle { get; }

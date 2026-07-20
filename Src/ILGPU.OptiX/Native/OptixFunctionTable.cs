@@ -339,6 +339,84 @@ namespace ILGPU.OptiX.Native
         CooperativeVectors.OptixCoopVecMatrixLayout layout,
         ulong rowColumnStrideInBytes,
         out ulong sizeInBytes);
+
+    // Returns a static const char* owned by the driver - marshal manually via
+    // Marshal.PtrToStringAnsi, never free it.
+    internal delegate IntPtr GetErrorName(OptixResult result);
+
+    internal delegate IntPtr GetErrorString(OptixResult result);
+
+    internal delegate OptixResult DeviceContextGetProperty(
+        IntPtr context,
+        Pipeline.OptixDeviceProperty property,
+        IntPtr value,
+        UIntPtr sizeInBytes);
+
+    internal delegate OptixResult DeviceContextSetLogCallback(
+        IntPtr context,
+        IntPtr callbackFunction,
+        IntPtr callbackData,
+        uint callbackLevel);
+
+    internal delegate OptixResult DeviceContextSetCacheEnabled(
+        IntPtr context,
+        int enabled);
+
+    internal delegate OptixResult DeviceContextGetCacheEnabled(
+        IntPtr context,
+        out int enabled);
+
+    internal delegate OptixResult DeviceContextSetCacheLocation(
+        IntPtr context,
+        IntPtr location);
+
+    internal delegate OptixResult DeviceContextGetCacheLocation(
+        IntPtr context,
+        IntPtr location,
+        UIntPtr locationSize);
+
+    internal delegate OptixResult DeviceContextSetCacheDatabaseSizes(
+        IntPtr context,
+        UIntPtr lowWaterMark,
+        UIntPtr highWaterMark);
+
+    internal delegate OptixResult DeviceContextGetCacheDatabaseSizes(
+        IntPtr context,
+        out UIntPtr lowWaterMark,
+        out UIntPtr highWaterMark);
+
+    internal delegate OptixResult OpacityMicromapArrayGetRelocationInfo(
+        IntPtr context,
+        ulong opacityMicromapArray,
+        IntPtr info);
+
+    internal delegate OptixResult OpacityMicromapArrayRelocate(
+        IntPtr context,
+        IntPtr stream,
+        IntPtr info,
+        ulong targetOpacityMicromapArray,
+        UIntPtr targetOpacityMicromapArraySizeInBytes);
+
+    internal delegate OptixResult DenoiserCreateWithUserModel(
+        IntPtr context,
+        IntPtr userData,
+        UIntPtr userDataSizeInBytes,
+        out IntPtr denoiser);
+
+    internal delegate OptixResult ClusterAccelComputeMemoryUsage(
+        IntPtr context,
+        AccelStructures.OptixClusterAccelBuildMode buildMode,
+        IntPtr buildInput,
+        out AccelStructures.OptixAccelBufferSizes bufferSizes);
+
+    internal delegate OptixResult ClusterAccelBuild(
+        IntPtr context,
+        IntPtr stream,
+        IntPtr buildModeDesc,
+        IntPtr buildInput,
+        ulong argsArray,
+        ulong argsCount,
+        uint argsStrideInBytes);
 }
 
 #pragma warning restore CS0649 // Field is never assigned to

@@ -38,10 +38,9 @@ namespace ILGPU.OptiX.Denoising
         // Persistent native scratch for Invoke()/ComputeIntensity()'s marshaled
         // struct arguments - overwritten in place every call instead of the
         // struct-taking OptixAPI overloads' per-call AllocHGlobal/FreeHGlobal
-        // (SafeHGlobal.AllocFrom), since Invoke runs every frame in a real-time
-        // denoiser loop (see Sample15's FrameOutput.DenoiseAndTonemap). layersHandle
-        // is resized only if the layer count itself changes (it doesn't, in
-        // practice - always 1 - but this stays correct if a caller varies it).
+        // (SafeHGlobal.AllocFrom), since Invoke is typically called every frame in a
+        // real-time denoiser loop. layersHandle is resized only if the layer count
+        // itself changes (usually 1, but this stays correct if a caller varies it).
         SafeHGlobal? parametersHandle;
         SafeHGlobal? guideLayerHandle;
         SafeHGlobal? layersHandle;
@@ -128,6 +127,12 @@ namespace ILGPU.OptiX.Denoising
         /// <param name="layers">The input/output layer(s) to denoise.</param>
         /// <param name="scratch">The denoiser scratch buffer, as set up via <see cref="Setup"/>.</param>
         /// <param name="scratchSizeInBytes">The denoiser scratch buffer size.</param>
+        /// <param name="inputOffsetX">
+        /// X offset of the layers' input images within the full frame being denoised
+        /// - 0 for whole-frame denoising, per-tile offsets for tiled denoising (see
+        /// <see cref="OptixDenoiserTiling.InvokeTiled"/>).
+        /// </param>
+        /// <param name="inputOffsetY">Y offset - see <paramref name="inputOffsetX"/>.</param>
         public void Invoke(
             IntPtr stream,
             OptixDenoiserParams parameters,
@@ -136,7 +141,9 @@ namespace ILGPU.OptiX.Denoising
             OptixDenoiserGuideLayer guideLayer,
             ReadOnlySpan<OptixDenoiserLayer> layers,
             IntPtr scratch,
-            ulong scratchSizeInBytes)
+            ulong scratchSizeInBytes,
+            uint inputOffsetX = 0,
+            uint inputOffsetY = 0)
         {
             parametersHandle ??= SafeHGlobal.Alloc<OptixDenoiserParams>();
             Marshal.StructureToPtr(parameters, parametersHandle.NativePtr, false);
@@ -168,8 +175,8 @@ namespace ILGPU.OptiX.Denoising
                     guideLayerHandle.NativePtr,
                     layersHandle.NativePtr,
                     (uint)layers.Length,
-                    0,
-                    0,
+                    inputOffsetX,
+                    inputOffsetY,
                     scratch,
                     scratchSizeInBytes));
         }

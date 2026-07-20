@@ -10,24 +10,27 @@ namespace Sample14
     /// </summary>
     public static class MaterialPresets
     {
-        public static MaterialSbtData Solid(Vec3 albedo, float reflectivity = 0f) =>
-            new MaterialSbtData { Albedo = albedo, Reflectivity = reflectivity, MaterialKind = MaterialSbtData.Solid };
+        // Roughness defaults to 1 (fully rough/matte) here, not MaterialSbtData's own
+        // struct-default 0 - Bsdf.ShadeSurface treats Roughness <
+        // Bsdf.DeltaRoughnessThreshold as a perfect-mirror delta lobe, so an un-set
+        // Roughness would render every "diffuse" Solid()/Checker() material as a
+        // mirror.
+        public static MaterialSbtData Solid(Vec3 baseColor, float metallic = 0f, float roughness = 1f) =>
+            new MaterialSbtData { BaseColor = baseColor, Metallic = metallic, Roughness = roughness, MaterialKind = MaterialSbtData.Solid };
 
-        // The near-white mirror every scene reuses - reflectivity >= 0.9 dispatches to
-        // the mirror branch in __closest__radiance; lower values render as diffuse.
-        public static MaterialSbtData Mirror(float reflectivity = 0.90f) =>
-            new MaterialSbtData { Albedo = new Vec3(0.98f, 0.98f, 0.98f), Reflectivity = reflectivity, MaterialKind = MaterialSbtData.Solid };
+        // The near-white mirror every scene reuses - Roughness stays at the struct
+        // default (0), which is what actually makes this a perfect mirror in the GGX
+        // dispatch. Metallic doesn't select the mirror branch on its own - it only
+        // blends diffuse vs. Fresnel-tinted specular once Roughness is above
+        // Bsdf.DeltaRoughnessThreshold.
+        public static MaterialSbtData Mirror(float metallic = 0.90f) =>
+            new MaterialSbtData { BaseColor = new Vec3(0.98f, 0.98f, 0.98f), Metallic = metallic, MaterialKind = MaterialSbtData.Solid };
 
-        public static MaterialSbtData Glass(float indexOfRefraction, Vec3 transmissionColor) =>
-            new MaterialSbtData { Albedo = new Vec3(1f, 1f, 1f), Transparency = 1f, IndexOfRefraction = indexOfRefraction, TransmissionColor = transmissionColor, MaterialKind = MaterialSbtData.Solid };
+        public static MaterialSbtData Glass(float ior, Vec3 transmissionColor) =>
+            new MaterialSbtData { BaseColor = new Vec3(1f, 1f, 1f), Transmission = 1f, IOR = ior, TransmissionColor = transmissionColor, MaterialKind = MaterialSbtData.Solid };
 
-        public static MaterialSbtData ClearGlass() => Glass(1.5f, new Vec3(1f, 1f, 1f));
-
-        public static MaterialSbtData Emissive(Vec3 emission) =>
-            new MaterialSbtData { Emission = emission, MaterialKind = MaterialSbtData.Solid };
-
-        public static MaterialSbtData Checker(Vec3 albedoA, Vec3 albedoB, float scale) =>
-            new MaterialSbtData { Albedo = albedoA, MaterialKind = MaterialSbtData.Checker, CheckerColorB = albedoB, CheckerScale = scale };
+        public static MaterialSbtData Checker(Vec3 colorA, Vec3 colorB, float scale, float roughness = 1f) =>
+            new MaterialSbtData { BaseColor = colorA, Roughness = roughness, MaterialKind = MaterialSbtData.Checker, CheckerColorB = colorB, CheckerScale = scale };
 
         // HSV (h in degrees, s/v in [0,1]) to linear RGB, matching the reference's own
         // color-randomization formula used by the demo scene's random spheres and the

@@ -15,11 +15,11 @@ using System;
 namespace Sample18
 {
     /// <summary>
-    /// Draws a display texture as a fullscreen quad - trivial passthrough shader, same
-    /// as Sample14's own Rendering/FullscreenQuad.cs. Sample16 uploads its rendered
-    /// frame into the texture via GL.TexSubImage2D from a CPU-side pixel array each
-    /// frame (a plain CPU round-trip, not zero-copy CUDA-GL interop) - simple and
-    /// sufficient for a correctness-probe sample that isn't chasing frame-time budgets.
+    /// Draws a display texture as a fullscreen quad - trivial passthrough shader.
+    /// Uploads its rendered frame into the texture via GL.TexSubImage2D from a
+    /// CPU-side pixel array each frame (a plain CPU round-trip, not zero-copy
+    /// CUDA-GL interop) - simple and sufficient for a correctness-probe sample that
+    /// isn't chasing frame-time budgets.
     /// </summary>
     public sealed class FullscreenQuad : IDisposable
     {

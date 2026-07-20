@@ -89,18 +89,10 @@ namespace ILGPU.OptiX.Pipeline
             if (disposing)
             {
                 // The builder does not own the pipeline or the kernels it was given -
-                // kernels are caller-supplied (a deliberate "Pre-created Kernels"
-                // deviation from the original string-entry-point spec), and the
-                // pipeline was just handed back to the caller from Build(). This
-                // matches the "builders own nothing after
+                // kernels are caller-supplied, and the pipeline was already handed back
+                // to the caller from Build(). Matches the "builders own nothing after
                 // Build()" policy every other builder in this library follows
                 // (OptixSbtBuilder, OptixAccelBuilder, OptixDenoiserBuilder).
-                // Previously this disposed `pipeline` and every kernel here, which would
-                // destroy a just-built pipeline out from under its caller if Dispose()
-                // were ever called on this builder right after Build() - exactly what
-                // this doc's own "safe to discard the builder immediately" contract
-                // promises is fine to do. No current sample calls Dispose() on its
-                // OptixPipelineBuilder, so this was a latent landmine, not an active bug.
                 kernels.Clear();
             }
             base.Dispose(disposing);

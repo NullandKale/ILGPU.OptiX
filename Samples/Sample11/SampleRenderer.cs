@@ -211,8 +211,7 @@ namespace Sample11
             return result.ToArray();
         }
 
-        // Matches example11_denoiseColorOnly/main.cpp exactly (same camera.from/light
-        // as Sample10/Sample09) - valid because this sample bundles the identical,
+        // Fixed camera.from/light values valid for this sample's bundled,
         // untransformed sponza.obj.
         private static Camera FitCameraToModel(OBJModel model, int width, int height)
         {
@@ -328,11 +327,9 @@ namespace Sample11
 
             pipeline.Launch(launchParams, width, height);
 
-            // Incremented after the launch (unlike Sample07-10's FrameID, which is
-            // purely informational there) - devicePrograms.cs's raygen reads the
+            // Incremented after the launch - devicePrograms.cs's raygen reads the
             // pre-increment value to decide "fresh start vs. blend with previous",
-            // and the post-increment value below drives the denoiser's blend factor,
-            // matching example11_denoiseColorOnly/SampleRenderer.cpp exactly.
+            // and the post-increment value below drives the denoiser's blend factor.
             launchParams.FrameID++;
 
             var inputImage = new OptixImage2D

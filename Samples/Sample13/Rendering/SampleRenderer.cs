@@ -1,19 +1,11 @@
-// ---------------------------------------------------------------------------------------
-//                                    ILGPU Samples
-//                        Copyright (c) 2020-2022 ILGPU Project
-//                                    www.ilgpu.net
-//
-// File: SampleRenderer.cs
-//
-// This file is part of ILGPU and is distributed under the University of Illinois Open
-// Source License. See LICENSE.txt for details.
-// ---------------------------------------------------------------------------------------
-
-using MeshRange = ILGPU.OptiX.Pipeline.OptixMeshRange;
 using ILGPU;
 using ILGPU.OptiX;
 using ILGPU.OptiX.Device;
 using ILGPU.OptiX.Interop;
+using ILGPU.OptiX.Pipeline;
+using ILGPU.OptiX.DeviceApi;
+using ILGPU.OptiX.AccelStructures;
+using MeshRange = ILGPU.OptiX.Pipeline.OptixMeshRange;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -21,29 +13,49 @@ using System.Diagnostics;
 namespace Sample13
 {
     /// <summary>
+    /// The radiance/shadow ray types' shared 19-register payload struct (see
+    /// Payloads.cs's own doc comment: color(3) + flag(1) + new-ray-origin(3) +
+    /// new-ray-direction(3) + throughput-tint(3) + normal(3) + albedo(3)). Declaring
+    /// the same struct on both ray types drives the pipeline-wide payload register
+    /// count; the shadow ray type only ever uses the first 4 registers (transmittance
+    /// xyz + hit count, see MissAndShadowPrograms.cs's raw OptixPayload.Payload0-3
+    /// access), but the payload count is a shared pipeline-wide register count. Never
+    /// Read/Write against this struct directly - every device program in this sample
+    /// uses OptixPayloadInterop/OptixPayload's raw per-register API (Payloads.cs);
+    /// this type exists purely so RayTypeBuilder&lt;T&gt;.Payload&lt;T&gt;() can size
+    /// the pipeline's NumPayloadValues correctly.
+    /// </summary>
+    public struct RadianceShadowPayload
+    {
+        public uint Slot0, Slot1, Slot2, Slot3, Slot4, Slot5, Slot6, Slot7, Slot8,
+            Slot9, Slot10, Slot11, Slot12, Slot13, Slot14, Slot15, Slot16, Slot17, Slot18;
+    }
+
+    /// <summary>
     /// The renderer coordinator: owns the launch params, the camera, the scene
     /// switcher, and the render loop, wiring together the components that do the
-    /// actual work - <see cref="GpuContext"/>, <see cref="RendererPipeline"/>,
+    /// actual work - <see cref="GpuContext"/>, <see cref="RayTracingPipeline{TLaunchParams}"/>,
     /// <see cref="SceneGpuBuffers"/>, <see cref="SbtBuilder"/>,
     /// <see cref="AccelStructureBuilder"/>, <see cref="TextureCache"/>,
-    /// <see cref="FrameOutput"/>, <see cref="SceneAnimator"/>, and
-    /// <see cref="PresentQueue"/>.
+    /// <see cref="FrameOutput"/>, <see cref="SceneAnimator"/>.
+    ///
+    /// render() runs entirely on the single GL/compute thread, with no separate
+    /// present thread or cross-thread handoff - DenoiseAndTonemap's
+    /// Map/tonemap/Unmap sequence (see FrameOutput.cs) is the last GPU-touching step.
     /// </summary>
     public class SampleRenderer
     {
         int width;
         int height;
-        readonly MainWindow window;
 
         readonly GpuContext gpu;
-        readonly RendererPipeline pipeline;
+        readonly RayTracingPipeline<LaunchParams> pipeline;
         readonly SceneGpuBuffers buffers;
         readonly TextureCache textures;
         readonly SbtBuilder sbtBuilder;
         readonly AccelStructureBuilder accel;
         readonly SceneAnimator animator;
         readonly FrameOutput frameOutput;
-        PresentQueue presentQueue;
 
         IntPtr traversable;
         LaunchParams launchParams;
@@ -57,20 +69,8 @@ namespace Sample13
         public int MaxRefractionBounces { get; set; } = 3;
         public int MaxDiffuseBounces { get; set; } = 1;
 
-        // Defaults to the original single-merged-build-input triangles GAS (fast) -
-        // splitting into one build input per mesh (see SbtLayout.GetTriangleMeshRanges)
-        // multiplies SBT hitgroup record count by (build-input count * Materials.Length),
-        // which gets very large for scenes like the radial museum that also scatter
-        // dozens of one-off AddTriangle calls (each its own per-triangle material - see
-        // RadialMuseumScene's AddTriangleField) between AddMeshAutoGround calls, turning
-        // into many small "gap" build inputs. Toggled live with the M key
-        // (MainWindow_KeyDown), which forces a scene rebuild since it changes the
-        // GAS/SBT shape.
         public bool UseMergedTrianglesGas { get; set; } = true;
 
-        // Scene-switcher state - mirrors the reference's RaytraceEntity.BuildSceneTable
-        // (lazily built, cached per index). currentScene is
-        // the renderer's own reference to the active (cached) SceneData.
         readonly Func<SceneData>[] sceneBuilders;
         readonly Dictionary<int, SceneData> sceneCache = new Dictionary<int, SceneData>();
         int currentSceneIndex;
@@ -78,11 +78,6 @@ namespace Sample13
 
         public string CurrentSceneName { get; private set; } = "";
 
-        // Scene-static HUD info - recomputed once per SwitchToScene (not per frame,
-        // unlike LastStats below), since none of it changes between frames of the same
-        // scene. Mirrors the geometry counts already known to the SBT/accel builders,
-        // just cached on public properties so MainWindow's overlay can read them
-        // without re-deriving anything from SceneData itself.
         public int TriangleCount { get; private set; }
         public int MaterialCount { get; private set; }
         public int SphereCount { get; private set; }
@@ -96,56 +91,67 @@ namespace Sample13
         public Vec3i VolumeGridDims { get; private set; }
         public string AccelStructureSummary { get; private set; } = "";
 
-        // Per-frame HUD info - see FrameStats. Updated once at the very end of each
-        // render() call; read by MainWindow's own CompositionTarget.Rendering handler
-        // (a different thread, at a different rate), which is fine since it's just a
-        // plain struct-copying property read/write with no torn-read hazard worse than
-        // "occasionally see last frame's numbers instead of this one" - acceptable for
-        // a HUD.
         public FrameStats LastStats { get; private set; }
+
+        public int GlTextureHandle => frameOutput.GlTextureHandle;
 
         readonly Stopwatch stepStopwatch = new Stopwatch();
         long lastFrameStartTicks;
         bool hasRenderedFrame;
         double smoothedFrameMs = 16.0;
 
-        // Guards every access to launchParams, traversable, and the scene GPU buffers -
-        // taken by render() around its whole body, and by SwitchToScene()/setCamera()
-        // (both only ever called from the UI thread, on I/U/D/Space/A key presses or
-        // mouse-drag camera moves) around theirs. Without this, SwitchToScene's buffer
-        // disposal/reallocation and GAS/IAS rebuild could run concurrently with an
-        // in-flight OptixLaunch reading the very pointers/traversable handle being torn
-        // down - undefined behavior at the CUDA/OptiX driver level (observed as NaN ray
-        // origins and a sticky "unspecified launch failure" CUDA error). This race
-        // always existed but was rarely hit while the render loop was throttled by the
-        // old fixed Thread.Sleep(10) + blocking per-frame Dispatcher.Invoke; removing
-        // both (see PresentQueue's double-buffered handoff) made the render loop run
-        // fast enough to hit it almost every scene switch. This lock is unrelated to -
-        // and does not reintroduce - the old per-frame UI-thread block: the presenter
-        // thread only ever touches the PresentQueue's buffers/semaphores, never
-        // launchParams or GPU buffers, so it never waits on gpuLock.
-        //
-        // Critically, render()'s lock scope does NOT extend over its
-        // PresentQueue.TryBeginWrite publish step (see render()'s comment right after
-        // tonemapMs) - an earlier version did, and it deadlocked the whole app on the
-        // first mouse drag: setCamera() takes this same lock synchronously on the UI
-        // thread, so once render() was blocked in the buffer wait *while holding
-        // gpuLock*, the only thing that could unblock it - MainWindow's
-        // OnCompositionRendering calling FinishPresent - could never run, because the
-        // UI thread was itself stuck wanting gpuLock inside setCamera(). Keeping the
-        // buffer-publish step outside this lock (safe, since it never touches
-        // launchParams/traversable/scene buffers) breaks that cycle.
+        // Guards every access to launchParams, traversable, and the scene GPU buffers.
+        // Kept even though this sample is single-threaded - cheap insurance when
+        // uncontended, and removing it isn't a meaningful simplification on its own.
         readonly object gpuLock = new object();
 
-        public SampleRenderer(int width, int height, MainWindow window)
+        public SampleRenderer(int width, int height)
         {
-            this.window = window;
-
             gpu = new GpuContext();
-            pipeline = new RendererPipeline(gpu);
+
+            // No module/pipeline compile options, no SetStackSize magic numbers, no
+            // hand-rolled SBT record structs. Ray
+            // type declaration order (radiance, then shadow) fixes their SBT index at
+            // 0/1, matching Payloads.RADIANCE_RAY_TYPE/SHADOW_RAY_TYPE. Triangle
+            // geometry and every custom-primitive kind (plus the volume grid) share
+            // each ray type's closest-hit/any-hit pair via named hit groups (one
+            // .HitGroup(kind, ...) call per intersection program) - see SbtBuilder.cs's
+            // HitGroupKinds and Apply(). WithTraversableGraphFlags(...
+            // ALLOW_SINGLE_LEVEL_INSTANCING) is required here (unlike every other
+            // sample's single-GAS default) since AccelStructureBuilder always combines
+            // this sample's GAS(es) via an IAS.
+            pipeline = gpu.RayTracer.CreatePipeline<LaunchParams>(b => b
+                .Raygen(RaygenProgram.__raygen__renderFrame)
+                .RayType("radiance", r => r
+                    .Payload<RadianceShadowPayload>()
+                    .Miss(MissAndShadowPrograms.__miss__radiance)
+                    .HitGroup<MaterialSbtData>(HitGroupKinds.Triangle, ClosestHitProgram.__closest__radiance, MissAndShadowPrograms.__anyhit__radiance)
+                    .HitGroup<MaterialSbtData>(HitGroupKinds.CustomPrimitiveKinds[0], ClosestHitProgram.__closest__radiance, MissAndShadowPrograms.__anyhit__radiance, IntersectionPrograms.__intersection__sphere)
+                    .HitGroup<MaterialSbtData>(HitGroupKinds.CustomPrimitiveKinds[1], ClosestHitProgram.__closest__radiance, MissAndShadowPrograms.__anyhit__radiance, IntersectionPrograms.__intersection__box)
+                    .HitGroup<MaterialSbtData>(HitGroupKinds.CustomPrimitiveKinds[2], ClosestHitProgram.__closest__radiance, MissAndShadowPrograms.__anyhit__radiance, IntersectionPrograms.__intersection__cylinderY)
+                    .HitGroup<MaterialSbtData>(HitGroupKinds.CustomPrimitiveKinds[3], ClosestHitProgram.__closest__radiance, MissAndShadowPrograms.__anyhit__radiance, IntersectionPrograms.__intersection__disk)
+                    .HitGroup<MaterialSbtData>(HitGroupKinds.CustomPrimitiveKinds[4], ClosestHitProgram.__closest__radiance, MissAndShadowPrograms.__anyhit__radiance, IntersectionPrograms.__intersection__xyRect)
+                    .HitGroup<MaterialSbtData>(HitGroupKinds.CustomPrimitiveKinds[5], ClosestHitProgram.__closest__radiance, MissAndShadowPrograms.__anyhit__radiance, IntersectionPrograms.__intersection__xzRect)
+                    .HitGroup<MaterialSbtData>(HitGroupKinds.CustomPrimitiveKinds[6], ClosestHitProgram.__closest__radiance, MissAndShadowPrograms.__anyhit__radiance, IntersectionPrograms.__intersection__yzRect)
+                    .HitGroup<MaterialSbtData>(HitGroupKinds.VolumeGrid, ClosestHitProgram.__closest__radiance, MissAndShadowPrograms.__anyhit__radiance, IntersectionPrograms.__intersection__volumeGrid))
+                .RayType("shadow", r => r
+                    .Payload<RadianceShadowPayload>()
+                    .Miss(MissAndShadowPrograms.__miss__shadow)
+                    .HitGroup<MaterialSbtData>(HitGroupKinds.Triangle, MissAndShadowPrograms.__closesthit__shadow, MissAndShadowPrograms.__anyhit__shadow)
+                    .HitGroup<MaterialSbtData>(HitGroupKinds.CustomPrimitiveKinds[0], MissAndShadowPrograms.__closesthit__shadow, MissAndShadowPrograms.__anyhit__shadow, IntersectionPrograms.__intersection__sphere)
+                    .HitGroup<MaterialSbtData>(HitGroupKinds.CustomPrimitiveKinds[1], MissAndShadowPrograms.__closesthit__shadow, MissAndShadowPrograms.__anyhit__shadow, IntersectionPrograms.__intersection__box)
+                    .HitGroup<MaterialSbtData>(HitGroupKinds.CustomPrimitiveKinds[2], MissAndShadowPrograms.__closesthit__shadow, MissAndShadowPrograms.__anyhit__shadow, IntersectionPrograms.__intersection__cylinderY)
+                    .HitGroup<MaterialSbtData>(HitGroupKinds.CustomPrimitiveKinds[3], MissAndShadowPrograms.__closesthit__shadow, MissAndShadowPrograms.__anyhit__shadow, IntersectionPrograms.__intersection__disk)
+                    .HitGroup<MaterialSbtData>(HitGroupKinds.CustomPrimitiveKinds[4], MissAndShadowPrograms.__closesthit__shadow, MissAndShadowPrograms.__anyhit__shadow, IntersectionPrograms.__intersection__xyRect)
+                    .HitGroup<MaterialSbtData>(HitGroupKinds.CustomPrimitiveKinds[5], MissAndShadowPrograms.__closesthit__shadow, MissAndShadowPrograms.__anyhit__shadow, IntersectionPrograms.__intersection__xzRect)
+                    .HitGroup<MaterialSbtData>(HitGroupKinds.CustomPrimitiveKinds[6], MissAndShadowPrograms.__closesthit__shadow, MissAndShadowPrograms.__anyhit__shadow, IntersectionPrograms.__intersection__yzRect)
+                    .HitGroup<MaterialSbtData>(HitGroupKinds.VolumeGrid, MissAndShadowPrograms.__closesthit__shadow, MissAndShadowPrograms.__anyhit__shadow, IntersectionPrograms.__intersection__volumeGrid))
+                .MaxTraceDepth(2)
+                .WithTraversableGraphFlags(OptixTraversableGraphFlags.AllowSingleLevelInstancing));
+
             buffers = new SceneGpuBuffers(gpu.Accelerator);
             textures = new TextureCache();
-            sbtBuilder = new SbtBuilder(pipeline, textures);
+            sbtBuilder = new SbtBuilder(textures);
             accel = new AccelStructureBuilder(gpu.Accelerator, gpu.DeviceContext, buffers);
             animator = new SceneAnimator(buffers, accel, textures);
             frameOutput = new FrameOutput(gpu);
@@ -160,16 +166,8 @@ namespace Sample13
         public void NextScene() => SwitchToScene((currentSceneIndex + 1) % sceneBuilders.Length);
         public void PreviousScene() => SwitchToScene((currentSceneIndex - 1 + sceneBuilders.Length) % sceneBuilders.Length);
 
-        // Re-runs SwitchToScene against the same scene index - used after toggling
-        // UseMergedTrianglesGas, which changes the triangles GAS/SBT shape and so
-        // needs a full rebuild, not just a launchParams/camera tweak.
         public void RebuildCurrentScene() => SwitchToScene(currentSceneIndex);
 
-        // HUD summary of the actual GAS/IAS shape built for this scene - mirrors the
-        // fixed triangles-GAS -> custom-primitives-GAS -> IAS pipeline (see
-        // AccelStructureBuilder.Build), reporting which of the two GASes are actually
-        // present this scene (a scene can have either, both, or - in principle -
-        // neither) and their per-kind primitive counts.
         string BuildAccelStructureSummary(SceneData scene, bool hasTriangles, bool hasCustomPrimitives)
         {
             var gasParts = new List<string>();
@@ -213,8 +211,6 @@ namespace Sample13
                 currentScene = scene;
                 animator.OnSceneSwitched(scene);
 
-                // Tear down the previous scene's GPU state, then rebuild - same order
-                // as the old monolithic DisposeSceneBuffers.
                 textures.Clear();
                 accel.DisposeBuffers();
                 buffers.DisposeAll();
@@ -222,18 +218,18 @@ namespace Sample13
                 buffers.Upload(scene);
 
                 MeshRange[] triangleMeshRanges = SbtLayout.GetTriangleMeshRanges(scene, UseMergedTrianglesGas);
-                sbtBuilder.Build(scene, triangleMeshRanges);
+                // SetHitRecords (inside sbtBuilder.Apply) synchronizes the accelerator
+                // and disposes the previous scene's hitgroup buffer itself - no
+                // separate DisposeBuffers() call needed before this.
+                sbtBuilder.Apply(pipeline, scene, triangleMeshRanges);
                 traversable = accel.Build(scene, triangleMeshRanges);
 
                 // Cross-checks that the accel structure's NumSbtRecords values (per
                 // AddTriangleMesh()/AddCustomPrimitives() call) still agree with the
-                // pipeline's own actual hitgroup record count. A silent mismatch here is
-                // exactly the bug class that made every triangle/primitive resolve to
-                // hitgroup record 0 regardless of its actual material, with no error or
-                // crash - a mismatch class this sample has already been fixed for once before.
+                // SBT's own actual hitgroup record count.
                 Debug.Assert(
-                    pipeline.Pipeline.HitgroupRecordCount == accel.TotalHitgroupRecordsUsed,
-                    $"Pipeline hitgroup record count ({pipeline.Pipeline.HitgroupRecordCount}) doesn't match " +
+                    pipeline.HitgroupRecordCount == accel.TotalHitgroupRecordsUsed,
+                    $"SBT hitgroup record count ({pipeline.HitgroupRecordCount}) doesn't match " +
                     $"what the accel structure's NumSbtRecords values imply " +
                     $"({accel.TotalHitgroupRecordsUsed}) - AccelStructureBuilder and SbtBuilder " +
                     "have drifted out of sync.");
@@ -305,7 +301,6 @@ namespace Sample13
                 buffers.DisposeAll();
             }
 
-            presentQueue.Dispose();
             frameOutput.Dispose();
             pipeline.Dispose();
             gpu.Dispose();
@@ -316,23 +311,33 @@ namespace Sample13
             if (width == 0 || height == 0)
                 return;
 
-            this.width = width;
-            this.height = height;
+            lock (gpuLock)
+            {
+                this.width = width;
+                this.height = height;
 
-            frameOutput.Resize(width, height);
+                frameOutput.Resize(width, height);
 
-            // Sample13's window is ResizeMode="NoResize" so this only ever runs once,
-            // at startup.
-            presentQueue?.Dispose();
-            presentQueue = new PresentQueue(frameOutput.DisplayBytes);
+                launchParams.NumPixelSamples = NumPixelSamples;
+                launchParams.MaxMirrorBounces = MaxMirrorBounces;
+                launchParams.MaxRefractionBounces = MaxRefractionBounces;
+                launchParams.MaxDiffuseBounces = MaxDiffuseBounces;
+                launchParams.ColorBuffer = OptixDeviceView<Vec4>.From(frameOutput.HdrColorBuffer);
+                launchParams.AlbedoBuffer = OptixDeviceView<Vec4>.From(frameOutput.AlbedoBuffer);
+                launchParams.NormalBuffer = OptixDeviceView<Vec4>.From(frameOutput.NormalBuffer);
 
-            launchParams.NumPixelSamples = NumPixelSamples;
-            launchParams.MaxMirrorBounces = MaxMirrorBounces;
-            launchParams.MaxRefractionBounces = MaxRefractionBounces;
-            launchParams.MaxDiffuseBounces = MaxDiffuseBounces;
-            launchParams.ColorBuffer = OptixDeviceView<Vec4>.From(frameOutput.HdrColorBuffer);
-            launchParams.AlbedoBuffer = OptixDeviceView<Vec4>.From(frameOutput.AlbedoBuffer);
-            launchParams.NormalBuffer = OptixDeviceView<Vec4>.From(frameOutput.NormalBuffer);
+                // Refresh the camera's own width/height (and therefore aspectRatio) to
+                // the new resolution - without this, a resize alone (no subsequent
+                // camera move) left the image stretched/squashed until the next WASD/
+                // mouse-look frame happened to call setCamera. Guarded on
+                // currentScene != null since the constructor's own initial resize()
+                // call runs before SwitchToScene(0) has set up a real camera to refresh.
+                if (currentScene != null)
+                {
+                    camera = new Camera(camera, width, height);
+                    launchParams.camera = camera;
+                }
+            }
         }
 
         public void setCamera(Camera camera)
@@ -345,19 +350,18 @@ namespace Sample13
             }
         }
 
+        // Traces, denoises, tonemaps, and writes the finished frame straight into the
+        // GL-owned interop texture (see FrameOutput.DenoiseAndTonemap/BlitToTexture) -
+        // no CPU byte[] handoff, no second thread. Call BlitToTexture() (or draw the
+        // fullscreen quad against GlTextureHandle) from the window after this returns.
         public void render()
         {
-            double traceMs, denoiseMs, tonemapMs;
-            int samplesAccumulated;
             lock (gpuLock)
             {
                 long frameStartTicks = Stopwatch.GetTimestamp();
                 if (hasRenderedFrame)
                 {
                     double sinceLastFrameMs = (frameStartTicks - lastFrameStartTicks) * 1000.0 / Stopwatch.Frequency;
-                    // Exponential moving average - smooths out per-frame jitter so the
-                    // displayed FPS doesn't flicker every frame; alpha=0.1 settles to a
-                    // new steady-state rate within roughly 20-30 frames of a scene switch.
                     smoothedFrameMs = (smoothedFrameMs * 0.9) + (sinceLastFrameMs * 0.1);
                 }
                 lastFrameStartTicks = frameStartTicks;
@@ -367,12 +371,6 @@ namespace Sample13
                 if (sceneIsAnimated)
                     animator.Update(currentScene);
 
-                // Animated content invalidates progressive accumulation every frame
-                // (lights/geometry moved since the last accumulated sample), so an
-                // animated scene always renders as a fresh 1-sample frame + denoiser,
-                // regardless of the user's Accumulate toggle - matching the reference's
-                // own always-dynamic radial museum, and avoiding motion-ghosting
-                // artifacts that a stale accumulation average would otherwise bake in.
                 if (!Accumulate || sceneIsAnimated)
                     launchParams.FrameID = 0;
                 launchParams.NumPixelSamples = NumPixelSamples;
@@ -381,59 +379,32 @@ namespace Sample13
                 launchParams.MaxDiffuseBounces = MaxDiffuseBounces;
 
                 stepStopwatch.Restart();
-                pipeline.Pipeline.Launch(launchParams, width, height);
+                // Persistent launch-params buffer, reused every frame - no per-call
+                // allocate/free (the leak OptixLaunchExtensions.OptixLaunch had).
+                pipeline.Launch(launchParams, width, height);
                 gpu.Accelerator.Synchronize();
-                traceMs = stepStopwatch.Elapsed.TotalMilliseconds;
+                double traceMs = stepStopwatch.Elapsed.TotalMilliseconds;
 
                 launchParams.FrameID++;
 
-                frameOutput.DenoiseAndTonemap(DenoiserOn, Accumulate, launchParams.FrameID, out denoiseMs, out tonemapMs);
+                frameOutput.DenoiseAndTonemap(DenoiserOn, Accumulate, launchParams.FrameID, out double denoiseMs, out double tonemapMs);
 
-                samplesAccumulated = launchParams.FrameID;
-                // gpuLock ends here, deliberately - everything below only touches the
-                // PresentQueue's buffers/semaphores and the display buffer (a fixed GPU
-                // buffer allocated once in resize(), never touched by SwitchToScene),
-                // never launchParams/traversable/scene buffers, so it doesn't need
-                // gpuLock's protection. This split is not optional: the buffer wait in
-                // TryBeginWrite below can block waiting for the UI thread's
-                // OnCompositionRendering to run FinishPresent, and OnCompositionRendering
-                // can only run when the UI thread is free to pump messages. Holding
-                // gpuLock across that wait deadlocked the whole app the instant a mouse
-                // drag called setCamera() (also a `lock (gpuLock)`, synchronously on the
-                // UI thread) while render() happened to be waiting here - the UI thread
-                // would then be stuck wanting gpuLock, unable to reach the very
-                // OnCompositionRendering call render() was waiting on to release it.
+                int samplesAccumulated = launchParams.FrameID;
+
+                LastStats = new FrameStats
+                {
+                    TraceMs = traceMs,
+                    DenoiseMs = denoiseMs,
+                    TonemapMs = tonemapMs,
+                    TotalFrameMs = smoothedFrameMs,
+                    Fps = 1000.0 / smoothedFrameMs,
+                    SamplesAccumulated = samplesAccumulated,
+                };
             }
-
-            stepStopwatch.Restart();
-            bool acquired = presentQueue.TryBeginWrite(() => window.run, out byte[] target);
-            if (acquired)
-                frameOutput.ReadbackDisplay(target);
-            double readbackMs = stepStopwatch.Elapsed.TotalMilliseconds;
-
-            stepStopwatch.Restart();
-            if (acquired)
-                presentQueue.EndWrite();
-            double publishMs = stepStopwatch.Elapsed.TotalMilliseconds;
-
-            LastStats = new FrameStats
-            {
-                TraceMs = traceMs,
-                DenoiseMs = denoiseMs,
-                TonemapMs = tonemapMs,
-                ReadbackMs = readbackMs,
-                PublishMs = publishMs,
-                TotalFrameMs = smoothedFrameMs,
-                Fps = 1000.0 / smoothedFrameMs,
-                SamplesAccumulated = samplesAccumulated,
-            };
         }
 
-        // Reader side of the double-buffered async present handoff - see PresentQueue.
-        public bool TryPresentFrame(ref int readIndex, out byte[] data) =>
-            presentQueue.TryPresentFrame(ref readIndex, out data);
-
-        public void FinishPresent(ref int readIndex) =>
-            presentQueue.FinishPresent(ref readIndex);
+        // GPU-internal PBO -> texture blit (no CPU copy) - call once per frame after
+        // render(), before drawing the fullscreen quad.
+        public void BlitToTexture() => frameOutput.BlitToTexture();
     }
 }

@@ -1971,5 +1971,106 @@ namespace ILGPU.OptiX.DeviceApi
             p25 = _p25.Value;
         }
 
+        /// <summary>
+        /// Runs the hit/miss program found by a matching-payload-count
+        /// <see cref="Traverse{T}"/> call, carrying a single struct-typed payload
+        /// instead of individual <c>ref uint</c> registers - same convention as
+        /// <see cref="OptixTrace.Trace{T}"/>, dispatching to one of the fixed-count
+        /// <see cref="Invoke"/> overloads above based on <c>sizeof(T)/4</c>.
+        /// </summary>
+        public static unsafe void Invoke<T>(ref T payload)
+            where T : unmanaged
+        {
+            int count = sizeof(T) / 4;
+            T local = payload;
+            uint* w = (uint*)&local;
+
+            switch (count)
+            {
+                case 0:
+                    Invoke();
+                    break;
+                case 1:
+                    Invoke(ref w[0]);
+                    break;
+                case 2:
+                    Invoke(ref w[0], ref w[1]);
+                    break;
+                case 3:
+                    Invoke(ref w[0], ref w[1], ref w[2]);
+                    break;
+                case 4:
+                    Invoke(ref w[0], ref w[1], ref w[2], ref w[3]);
+                    break;
+                case 5:
+                    Invoke(ref w[0], ref w[1], ref w[2], ref w[3], ref w[4]);
+                    break;
+                case 6:
+                    Invoke(ref w[0], ref w[1], ref w[2], ref w[3], ref w[4], ref w[5]);
+                    break;
+                case 7:
+                    Invoke(ref w[0], ref w[1], ref w[2], ref w[3], ref w[4], ref w[5], ref w[6]);
+                    break;
+                case 8:
+                    Invoke(ref w[0], ref w[1], ref w[2], ref w[3], ref w[4], ref w[5], ref w[6], ref w[7]);
+                    break;
+                case 9:
+                    Invoke(ref w[0], ref w[1], ref w[2], ref w[3], ref w[4], ref w[5], ref w[6], ref w[7], ref w[8]);
+                    break;
+                case 10:
+                    Invoke(ref w[0], ref w[1], ref w[2], ref w[3], ref w[4], ref w[5], ref w[6], ref w[7], ref w[8], ref w[9]);
+                    break;
+                case 11:
+                    Invoke(ref w[0], ref w[1], ref w[2], ref w[3], ref w[4], ref w[5], ref w[6], ref w[7], ref w[8], ref w[9], ref w[10]);
+                    break;
+                case 12:
+                    Invoke(ref w[0], ref w[1], ref w[2], ref w[3], ref w[4], ref w[5], ref w[6], ref w[7], ref w[8], ref w[9], ref w[10], ref w[11]);
+                    break;
+                case 13:
+                    Invoke(ref w[0], ref w[1], ref w[2], ref w[3], ref w[4], ref w[5], ref w[6], ref w[7], ref w[8], ref w[9], ref w[10], ref w[11], ref w[12]);
+                    break;
+                case 14:
+                    Invoke(ref w[0], ref w[1], ref w[2], ref w[3], ref w[4], ref w[5], ref w[6], ref w[7], ref w[8], ref w[9], ref w[10], ref w[11], ref w[12], ref w[13]);
+                    break;
+                case 15:
+                    Invoke(ref w[0], ref w[1], ref w[2], ref w[3], ref w[4], ref w[5], ref w[6], ref w[7], ref w[8], ref w[9], ref w[10], ref w[11], ref w[12], ref w[13], ref w[14]);
+                    break;
+                case 16:
+                    Invoke(ref w[0], ref w[1], ref w[2], ref w[3], ref w[4], ref w[5], ref w[6], ref w[7], ref w[8], ref w[9], ref w[10], ref w[11], ref w[12], ref w[13], ref w[14], ref w[15]);
+                    break;
+                case 17:
+                    Invoke(ref w[0], ref w[1], ref w[2], ref w[3], ref w[4], ref w[5], ref w[6], ref w[7], ref w[8], ref w[9], ref w[10], ref w[11], ref w[12], ref w[13], ref w[14], ref w[15], ref w[16]);
+                    break;
+                case 18:
+                    Invoke(ref w[0], ref w[1], ref w[2], ref w[3], ref w[4], ref w[5], ref w[6], ref w[7], ref w[8], ref w[9], ref w[10], ref w[11], ref w[12], ref w[13], ref w[14], ref w[15], ref w[16], ref w[17]);
+                    break;
+                case 19:
+                    Invoke(ref w[0], ref w[1], ref w[2], ref w[3], ref w[4], ref w[5], ref w[6], ref w[7], ref w[8], ref w[9], ref w[10], ref w[11], ref w[12], ref w[13], ref w[14], ref w[15], ref w[16], ref w[17], ref w[18]);
+                    break;
+                case 20:
+                    Invoke(ref w[0], ref w[1], ref w[2], ref w[3], ref w[4], ref w[5], ref w[6], ref w[7], ref w[8], ref w[9], ref w[10], ref w[11], ref w[12], ref w[13], ref w[14], ref w[15], ref w[16], ref w[17], ref w[18], ref w[19]);
+                    break;
+                case 21:
+                    Invoke(ref w[0], ref w[1], ref w[2], ref w[3], ref w[4], ref w[5], ref w[6], ref w[7], ref w[8], ref w[9], ref w[10], ref w[11], ref w[12], ref w[13], ref w[14], ref w[15], ref w[16], ref w[17], ref w[18], ref w[19], ref w[20]);
+                    break;
+                case 22:
+                    Invoke(ref w[0], ref w[1], ref w[2], ref w[3], ref w[4], ref w[5], ref w[6], ref w[7], ref w[8], ref w[9], ref w[10], ref w[11], ref w[12], ref w[13], ref w[14], ref w[15], ref w[16], ref w[17], ref w[18], ref w[19], ref w[20], ref w[21]);
+                    break;
+                case 23:
+                    Invoke(ref w[0], ref w[1], ref w[2], ref w[3], ref w[4], ref w[5], ref w[6], ref w[7], ref w[8], ref w[9], ref w[10], ref w[11], ref w[12], ref w[13], ref w[14], ref w[15], ref w[16], ref w[17], ref w[18], ref w[19], ref w[20], ref w[21], ref w[22]);
+                    break;
+                case 24:
+                    Invoke(ref w[0], ref w[1], ref w[2], ref w[3], ref w[4], ref w[5], ref w[6], ref w[7], ref w[8], ref w[9], ref w[10], ref w[11], ref w[12], ref w[13], ref w[14], ref w[15], ref w[16], ref w[17], ref w[18], ref w[19], ref w[20], ref w[21], ref w[22], ref w[23]);
+                    break;
+                case 25:
+                    Invoke(ref w[0], ref w[1], ref w[2], ref w[3], ref w[4], ref w[5], ref w[6], ref w[7], ref w[8], ref w[9], ref w[10], ref w[11], ref w[12], ref w[13], ref w[14], ref w[15], ref w[16], ref w[17], ref w[18], ref w[19], ref w[20], ref w[21], ref w[22], ref w[23], ref w[24]);
+                    break;
+                case 26:
+                    Invoke(ref w[0], ref w[1], ref w[2], ref w[3], ref w[4], ref w[5], ref w[6], ref w[7], ref w[8], ref w[9], ref w[10], ref w[11], ref w[12], ref w[13], ref w[14], ref w[15], ref w[16], ref w[17], ref w[18], ref w[19], ref w[20], ref w[21], ref w[22], ref w[23], ref w[24], ref w[25]);
+                    break;
+            }
+
+            payload = local;
+        }
     }
 }

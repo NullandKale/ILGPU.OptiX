@@ -13,6 +13,7 @@ using ILGPU;
 using ILGPU.Algorithms;
 using ILGPU.OptiX;
 using ILGPU.OptiX.AccelStructures;
+using ILGPU.OptiX.CooperativeVectors;
 using ILGPU.OptiX.Device;
 using ILGPU.OptiX.DeviceApi;
 using ILGPU.OptiX.Native;
@@ -24,28 +25,52 @@ using OpenTK.Windowing.Common;
 using OpenTK.Windowing.Desktop;
 using OpenTK.Windowing.GraphicsLibraryFramework;
 using System;
-using System.Collections.Generic;
+using System.Linq;
 using System.Numerics;
 using System.Runtime.InteropServices;
+using Half = ILGPU.Half;
 
 namespace Sample20
 {
     /// <summary>
-    /// Exercises curve primitives via OptiX's
-    /// built-in intersection program (optixBuiltinISModuleGet, wired through
-    /// OptixAccelBuilder.AddCurves + RayTypeBuilder.HitGroupWithBuiltinIS - there is
-    /// no user-suppliable intersection program for curves, unlike custom primitives).
+    /// Exercises Cooperative Vectors - a tiny 2-layer
+    /// MLP ("neural material") evaluated per-pixel entirely inside the raygen program via
+    /// <see cref="OptixCoopVec.MatVecMul"/>/<see cref="OptixCoopVec.Tanh"/>, using weight
+    /// matrices uploaded row-major on the host and converted to the driver's
+    /// InferencingOptimal layout via <see cref="OptixCoopVecMatrixBuilder.ConvertMatrix"/>.
+    /// The network's 3 inputs are the hit's barycentric coordinates plus a per-triangle
+    /// pseudo-random seed (hashed primitive index) - not photorealistic, just enough
+    /// spatially-varying signal to prove the host conversion + device matvecmul/activation
+    /// path actually runs and produces a real, non-constant result per pixel (a
+    /// correctness probe, not a performance benchmark).
     ///
-    /// Scene: a flat triangle ground plane plus a patch of ~3000 short round cubic
-    /// B-spline "fur" strands rooted on it, both geometry kinds combined into one GAS
-    /// as separate build inputs, each with its own named hit group sharing the one
-    /// "radiance" ray type.
+    /// Weight/bias/scratch buffers are ordinary ILGPU device buffers; their addresses are
+    /// obtained once on the host via <see cref="OptixCoopVecBufferExtensions.GetDeviceAddress"/>
+    /// and carried through LaunchParams as plain ulong fields (the same way an
+    /// OptixTraversableHandle already flows through one) - see OptixCoopVec.cs's class doc
+    /// comment for why device code never derives these addresses itself.
     /// </summary>
     public sealed class RenderWindow : GameWindow
     {
+        private const uint InputSize = 3;
+        private const uint HiddenSize = 8;
+        private const uint OutputSize = 3;
+
         private struct LaunchParams
         {
             public OptixDeviceView<uint> ColorBuffer;
+            public OptixDeviceView<Half> InputScratch;
+            public OptixDeviceView<Half> OutputScratch;
+            public ulong InputScratchBase;
+            public ulong HiddenScratchBase;
+            public ulong OutputScratchBase;
+            public ulong Bias1Base;
+            public ulong Bias2Base;
+            public ulong WeightsBase;
+            public uint Weight2OffsetInBytes;
+            public ulong HiddenGainBase;
+            public ulong OutputScaleBase;
+            public ulong OutputBiasBase;
             public int Width;
             public int Height;
             public ulong Traversable;
@@ -58,7 +83,17 @@ namespace Sample20
 
         private struct RadiancePayload
         {
-            public uint P0, P1, P2;
+            public uint P0, P1, P2, P3;
+        }
+
+        private static uint Hash(uint x)
+        {
+            x = (x ^ 61u) ^ (x >> 16);
+            x *= 9u;
+            x ^= x >> 4;
+            x *= 0x27d4eb2du;
+            x ^= x >> 15;
+            return x;
         }
 
         private static void RaygenRenderFrame(LaunchParams launchParams)
@@ -78,7 +113,7 @@ namespace Sample20
             dy *= invLen;
             dz *= invLen;
 
-            uint p0 = 0, p1 = 0, p2 = 0;
+            uint p0 = 0, p1 = 0, p2 = 0, p3 = 0;
             OptixTrace.Trace(
                 launchParams.Traversable,
                 (launchParams.OriginX, launchParams.OriginY, launchParams.OriginZ),
@@ -93,67 +128,116 @@ namespace Sample20
                 0,
                 ref p0,
                 ref p1,
-                ref p2);
-
-            float r = Interop.IntAsFloat(p0);
-            float g = Interop.IntAsFloat(p1);
-            float b = Interop.IntAsFloat(p2);
-
-            uint ru = (uint)(XMath.Clamp(r, 0f, 1f) * 255f);
-            uint gu = (uint)(XMath.Clamp(g, 0f, 1f) * 255f);
-            uint bu = (uint)(XMath.Clamp(b, 0f, 1f) * 255f);
-
-            uint rgba = 0xff000000 | (bu << 0) | (gu << 8) | (ru << 16);
+                ref p2,
+                ref p3);
 
             long pixel = ix + (long)iy * launchParams.Width;
+            bool hit = Interop.IntAsFloat(p0) > 0.5f;
+
+            uint ru, gu, bu;
+            if (hit)
+            {
+                float bary0 = Interop.IntAsFloat(p1);
+                float bary1 = Interop.IntAsFloat(p2);
+                float seed = Interop.IntAsFloat(p3);
+
+                long inputBase = pixel * InputSize;
+                launchParams.InputScratch[inputBase + 0] = (Half)(bary0 * 2f - 1f);
+                launchParams.InputScratch[inputBase + 1] = (Half)(bary1 * 2f - 1f);
+                launchParams.InputScratch[inputBase + 2] = (Half)seed;
+
+                uint halfSize = (uint)Interop.SizeOf<Half>();
+                ulong inputAddr = launchParams.InputScratchBase + (ulong)pixel * InputSize * halfSize;
+                ulong hiddenAddr = launchParams.HiddenScratchBase + (ulong)pixel * HiddenSize * halfSize;
+                ulong outputAddr = launchParams.OutputScratchBase + (ulong)pixel * OutputSize * halfSize;
+
+                // Layer 1: hidden = tanh(W1 * input + bias1). Both layers' weights live
+                // in one converted buffer (packed by matrixOffsetInBytes), matching the
+                // real OptiX SDK reference sample's own layout
+                // (SDK/optixNeuralTexture/optixNeuralTexture.cpp's convertWeights) -
+                // one optixCoopVecMatrixConvert call for the whole network, not one per
+                // layer. Uses the concrete N8_K3/S8/S3 overloads (OptixCoopVec.cs is
+                // T4-generated with the shape/type baked as PTX-literal constants - see
+                // its class doc comment for why a runtime N/K/elementType parameter
+                // doesn't compile on real hardware).
+                OptixCoopVec.MatVecMul_N8_K3(
+                    inputAddr, launchParams.WeightsBase, 0, launchParams.Bias1Base, 0, hiddenAddr);
+                OptixCoopVec.Tanh_S8(hiddenAddr, hiddenAddr);
+                // Per-neuron gain (elementwise Mul) - a real second use of the "_ptr" op2
+                // path beyond the activation itself, applied in place.
+                OptixCoopVec.Mul_S8(hiddenAddr, launchParams.HiddenGainBase, hiddenAddr);
+
+                // Layer 2: output = tanh(W2 * hidden + bias2)
+                OptixCoopVec.MatVecMul_N3_K8(
+                    hiddenAddr, launchParams.WeightsBase, launchParams.Weight2OffsetInBytes, launchParams.Bias2Base, 0, outputAddr);
+                OptixCoopVec.Tanh_S3(outputAddr, outputAddr);
+                // Range remap [-1,1] -> [0,1] as a single fused multiply-add device call
+                // (output = output * 0.5 + 0.5) instead of per-channel host-side math.
+                OptixCoopVec.FFma_S3(
+                    outputAddr, launchParams.OutputScaleBase, launchParams.OutputBiasBase, outputAddr);
+
+                long outputBase = pixel * OutputSize;
+                float r = launchParams.OutputScratch[outputBase + 0];
+                float g = launchParams.OutputScratch[outputBase + 1];
+                float b = launchParams.OutputScratch[outputBase + 2];
+                ru = (uint)(XMath.Clamp(r, 0f, 1f) * 255f);
+                gu = (uint)(XMath.Clamp(g, 0f, 1f) * 255f);
+                bu = (uint)(XMath.Clamp(b, 0f, 1f) * 255f);
+            }
+            else
+            {
+                ru = 20; gu = 20; bu = 30;
+            }
+
+            uint rgba = 0xff000000 | (bu << 0) | (gu << 8) | (ru << 16);
             launchParams.ColorBuffer[pixel] = rgba;
         }
 
         private static void MissRadiance(LaunchParams launchParams)
         {
-            OptixPayloadInterop.SetFloat(0, 0.45f);
-            OptixPayloadInterop.SetFloat(1, 0.55f);
-            OptixPayloadInterop.SetFloat(2, 0.75f);
+            OptixPayloadInterop.SetFloat(0, 0f);
+            OptixPayloadInterop.SetFloat(1, 0f);
+            OptixPayloadInterop.SetFloat(2, 0f);
+            OptixPayloadInterop.SetFloat(3, 0f);
         }
 
-        private static void ClosestHitGround(LaunchParams launchParams)
+        private static void ClosestHitRadiance(LaunchParams launchParams)
         {
-            OptixPayloadInterop.SetFloat(0, 0.35f);
-            OptixPayloadInterop.SetFloat(1, 0.3f);
-            OptixPayloadInterop.SetFloat(2, 0.25f);
+            var (bu, bv) = OptixGetTriangleBarycentrics.Value;
+            uint h = Hash(OptixGetPrimitiveIndex.Value * 2654435761u);
+            float seed = ((h & 0xFFFFu) / 65535f) * 2f - 1f;
+
+            OptixPayloadInterop.SetFloat(0, 1f);
+            OptixPayloadInterop.SetFloat(1, bu);
+            OptixPayloadInterop.SetFloat(2, bv);
+            OptixPayloadInterop.SetFloat(3, seed);
         }
 
-        private static void AnyHitGround(LaunchParams launchParams) { }
-
-        private static void ClosestHitFur(LaunchParams launchParams)
-        {
-            OptixPayloadInterop.SetFloat(0, 0.55f);
-            OptixPayloadInterop.SetFloat(1, 0.35f);
-            OptixPayloadInterop.SetFloat(2, 0.15f);
-        }
-
-        private static void AnyHitFur(LaunchParams launchParams) { }
+        private static void AnyHitRadiance(LaunchParams launchParams) { }
 
         private const int Width = 1024;
         private const int Height = 768;
-        private const int StrandCount = 3000;
-        private const float GroundHalfExtent = 6f;
-        private const float PatchHalfExtent = 5f;
 
         private ILGPU.Context context;
         private CudaAccelerator accelerator;
         private OptixRayTracer rayTracer;
         private RayTracingPipeline<LaunchParams> pipeline;
 
-        private MemoryBuffer1D<uint, Stride1D.Dense> colorBuffer;
-        private uint[] pixelHost;
+        private MemoryBuffer1D<Half, Stride1D.Dense> inputScratchBuffer;
+        private MemoryBuffer1D<Half, Stride1D.Dense> hiddenScratchBuffer;
+        private MemoryBuffer1D<Half, Stride1D.Dense> outputScratchBuffer;
+        private MemoryBuffer1D<byte, Stride1D.Dense> weightsRawBuffer;
+        private MemoryBuffer1D<byte, Stride1D.Dense> weightsBuffer;
+        private MemoryBuffer1D<Half, Stride1D.Dense> bias1Buffer;
+        private MemoryBuffer1D<Half, Stride1D.Dense> bias2Buffer;
+        private MemoryBuffer1D<Half, Stride1D.Dense> hiddenGainBuffer;
+        private MemoryBuffer1D<Half, Stride1D.Dense> outputScaleBuffer;
+        private MemoryBuffer1D<Half, Stride1D.Dense> outputBiasBuffer;
 
-        private BuiltAccelStructure groundGas;
-        private BuiltAccelStructure furGas;
-        private BuiltAccelStructure ias;
+        private BuiltAccelStructure accel;
         private LaunchParams launchParams;
 
-        private int glTexture;
+        private CudaGlInteropDisplayBuffer interopBuffer;
         private FullscreenQuad quad;
 
         private OptixLogCallback logCallback;
@@ -175,12 +259,26 @@ namespace Sample20
         {
         }
 
+        // Deterministic small pseudo-random weights - this is a correctness probe for
+        // the coop-vec API surface, not a trained network (no training data/loss exists).
+        // Half, not float - Float16 is the only element type optixCoopVecMatMul fully
+        // supports input-to-output without mixing in an integer type (see the OptiX 9.0
+        // Programming Guide's "Neural Rendering with Cooperative Vectors" chapter's
+        // supported-type-combination table).
+        private static Half[] RandomWeights(Random rng, int count, float scale)
+        {
+            var result = new Half[count];
+            for (int i = 0; i < count; i++)
+                result[i] = (Half)((float)(rng.NextDouble() * 2.0 - 1.0) * scale);
+            return result;
+        }
+
         protected override void OnLoad()
         {
             base.OnLoad();
             GL.ClearColor(0.05f, 0.05f, 0.08f, 1.0f);
 
-            Console.WriteLine("Sample20: curve primitives (built-in intersection)");
+            Console.WriteLine("Sample20: Cooperative Vectors (neural material)");
             Console.WriteLine("Initializing CUDA + OptiX (validation mode ALL)...");
 
             context = ILGPU.Context.Create(b => b.Cuda().EnableAlgorithms());
@@ -195,174 +293,194 @@ namespace Sample20
                 ValidationMode = OptixDeviceContextValidationMode.All,
             });
 
-            Console.WriteLine("Compiling pipeline (triangle ground + built-in-IS curve hit groups)...");
             pipeline = rayTracer.CreatePipeline<LaunchParams>(b => b
                 .Raygen(RaygenRenderFrame)
                 .RayType("radiance", r => r
                     .Payload<RadiancePayload>()
                     .Miss(MissRadiance)
-                    .HitGroup<byte>("ground", ClosestHitGround, AnyHitGround)
-                    .HitGroupWithBuiltinIS<byte>(
-                        "fur", ClosestHitFur, AnyHitFur, OptixPrimitiveType.RoundCubicBSpline))
-                .UsesPrimitiveTypes(OptixPrimitiveTypeFlags.Triangle | OptixPrimitiveTypeFlags.RoundCubicBSpline)
-                // Ground (triangles) and fur (curves) cannot share one GAS - OptiX
-                // requires every build input within a single GAS to have the same
-                // type (confirmed via a real GPU error: "buildInputs[1].type !=
-                // buildInputs[0].type. All build inputs for geometry acceleration
-                // structures must have the same type") - each becomes its own GAS,
-                // combined via an IAS below, so this pipeline launches against a
-                // 2-level (IAS -> GAS) traversable graph.
-                .WithTraversableGraphFlags(OptixTraversableGraphFlags.AllowSingleLevelInstancing)
-                .MaxTraceDepth(2));
-            pipeline.SetHitRecords<byte>(
-                new[]
-                {
-                    new HitGroupEntry<byte>("ground", 0),
-                    new HitGroupEntry<byte>("fur", 0),
-                },
-                pipeline.RayTypeCount);
-            Console.WriteLine("Curve built-in intersection: PASS (pipeline compiled and linked successfully).");
+                    .HitGroup<byte>(ClosestHitRadiance, AnyHitRadiance))
+                .MaxTraceDepth(1));
+            pipeline.SetHitRecords<byte>(new byte[] { 0 });
+            Console.WriteLine("Pipeline (raygen-side OptixCoopVec.MatVecMul/Tanh): PASS (compiled and linked successfully).");
 
-            Console.WriteLine("Building ground plane + fur strands...");
-            var (groundVertices, groundIndices) = MakeGroundPlane();
-            var (curveVertices, curveWidths, curveIndices) = MakeFurStrands();
-            Console.WriteLine($"{groundVertices.Length} ground vertices, {curveVertices.Length} curve vertices, {curveIndices.Length} curve segments.");
+            Console.WriteLine("Loading mesh (cow.obj)...");
+            var (vertices, indices) = Model.LoadPositionsOnly("models/meshes/cow.obj");
 
-            using var groundVertexBuffer = accelerator.Allocate1D(groundVertices);
-            using var groundIndexBuffer = accelerator.Allocate1D(groundIndices);
-            using var curveVertexBuffer = accelerator.Allocate1D(curveVertices);
-            using var curveWidthBuffer = accelerator.Allocate1D(curveWidths);
-            using var curveIndexBuffer = accelerator.Allocate1D(curveIndices);
+            using var vertexBuffer = accelerator.Allocate1D(vertices);
+            using var indexBuffer = accelerator.Allocate1D(indices);
 
-            Console.WriteLine("Building ground GAS (triangles)...");
-            groundGas = new OptixAccelBuilder()
+            accel = new OptixAccelBuilder()
                 .WithDeviceContext(rayTracer.DeviceContext)
                 .WithAccelerator(accelerator)
-                .AddTriangleMesh(groundVertexBuffer, groundIndexBuffer)
+                .AddTriangleMesh(vertexBuffer, indexBuffer)
                 .AllowCompaction()
                 .Build();
 
-            Console.WriteLine("Building fur GAS (curves, built-in intersection)...");
-            furGas = new OptixAccelBuilder()
-                .WithDeviceContext(rayTracer.DeviceContext)
-                .WithAccelerator(accelerator)
-                .AddCurves(OptixPrimitiveType.RoundCubicBSpline, curveVertexBuffer, curveWidthBuffer, curveIndexBuffer)
-                .AllowCompaction()
-                .Build();
+            var (center, radius) = ComputeBounds(vertices);
+            SetupCamera(center, radius);
 
-            Console.WriteLine("Building IAS (ground + fur GAS instances)...");
-            ias = new OptixAccelBuilder()
-                .WithDeviceContext(rayTracer.DeviceContext)
-                .WithAccelerator(accelerator)
-                .BuildInstanceAccelFromHandles(
-                    new[] { groundGas.TraversableHandle, furGas.TraversableHandle },
-                    new uint[] { 0, 1 });
-            Console.WriteLine("GAS builds (triangles, curves) + IAS: PASS.");
+            inputScratchBuffer = accelerator.Allocate1D<Half>(Width * Height * (int)InputSize);
+            hiddenScratchBuffer = accelerator.Allocate1D<Half>(Width * Height * (int)HiddenSize);
+            outputScratchBuffer = accelerator.Allocate1D<Half>(Width * Height * (int)OutputSize);
 
-            SetupCamera(Vector3.Zero, GroundHalfExtent);
+            var deviceContext = rayTracer.DeviceContext;
 
-            colorBuffer = accelerator.Allocate1D<uint>(Width * Height);
-            pixelHost = new uint[Width * Height];
-            launchParams.ColorBuffer = OptixDeviceView<uint>.From(colorBuffer);
-            launchParams.Traversable = unchecked((ulong)ias.TraversableHandle.ToInt64());
+            Console.WriteLine("Building + converting cooperative-vector weight matrices to InferencingOptimal layout...");
+            var rng = new Random(1234);
 
-            glTexture = GL.GenTexture();
-            GL.BindTexture(TextureTarget.Texture2D, glTexture);
-            GL.TexImage2D(TextureTarget.Texture2D, 0, PixelInternalFormat.Rgba8, Width, Height, 0,
-                PixelFormat.Bgra, PixelType.UnsignedByte, IntPtr.Zero);
-            GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMinFilter, (int)TextureMinFilter.Linear);
-            GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMagFilter, (int)TextureMagFilter.Linear);
-            GL.BindTexture(TextureTarget.Texture2D, 0);
+            var layers = new[]
+            {
+                (N: HiddenSize, K: InputSize, RowMajorWeights: RandomWeights(rng, (int)(HiddenSize * InputSize), 0.7f)),
+                (N: OutputSize, K: HiddenSize, RowMajorWeights: RandomWeights(rng, (int)(OutputSize * HiddenSize), 0.7f)),
+            };
+            uint[] weightOffsetsInBytes;
+            (weightsRawBuffer, weightsBuffer, weightOffsetsInBytes) = BuildAndConvertNetwork(deviceContext, accelerator, layers);
+
+            bias1Buffer = accelerator.Allocate1D(RandomWeights(rng, (int)HiddenSize, 0.2f));
+            bias2Buffer = accelerator.Allocate1D(RandomWeights(rng, (int)OutputSize, 0.2f));
+
+            // Per-neuron gain applied via OptixCoopVec.Mul, and the [-1,1]->[0,1] range
+            // remap applied via OptixCoopVec.FFma - both plain constant vectors, not
+            // trained, same "correctness probe" scope as the weights themselves.
+            var hiddenGain = new Half[HiddenSize];
+            for (int i = 0; i < hiddenGain.Length; i++)
+                hiddenGain[i] = (Half)(0.7f + 0.3f * ((i % 3) / 2f));
+            hiddenGainBuffer = accelerator.Allocate1D(hiddenGain);
+
+            var halfConstant = new Half[OutputSize];
+            Array.Fill(halfConstant, (Half)0.5f);
+            outputScaleBuffer = accelerator.Allocate1D(halfConstant);
+            outputBiasBuffer = accelerator.Allocate1D(halfConstant);
+
+            accelerator.Synchronize();
+            Console.WriteLine($"Network (2 layers, {HiddenSize}x{InputSize} + {OutputSize}x{HiddenSize}) converted in one " +
+                $"optixCoopVecMatrixConvert call: {weightsBuffer.LengthInBytes} bytes InferencingOptimal " +
+                $"(layer offsets {weightOffsetsInBytes[0]}, {weightOffsetsInBytes[1]}). Matrix convert: PASS.");
+
+            using var checkBuffer = accelerator.Allocate1D<uint>(Width * Height);
+            launchParams.ColorBuffer = OptixDeviceView<uint>.From(checkBuffer);
+            launchParams.InputScratch = OptixDeviceView<Half>.From(inputScratchBuffer);
+            launchParams.OutputScratch = OptixDeviceView<Half>.From(outputScratchBuffer);
+            launchParams.InputScratchBase = inputScratchBuffer.GetDeviceAddress();
+            launchParams.HiddenScratchBase = hiddenScratchBuffer.GetDeviceAddress();
+            launchParams.OutputScratchBase = outputScratchBuffer.GetDeviceAddress();
+            launchParams.WeightsBase = weightsBuffer.GetDeviceAddress();
+            launchParams.Weight2OffsetInBytes = weightOffsetsInBytes[1];
+            launchParams.Bias1Base = bias1Buffer.GetDeviceAddress();
+            launchParams.Bias2Base = bias2Buffer.GetDeviceAddress();
+            launchParams.HiddenGainBase = hiddenGainBuffer.GetDeviceAddress();
+            launchParams.OutputScaleBase = outputScaleBuffer.GetDeviceAddress();
+            launchParams.OutputBiasBase = outputBiasBuffer.GetDeviceAddress();
+            launchParams.Traversable = unchecked((ulong)accel.TraversableHandle.ToInt64());
 
             quad = new FullscreenQuad();
 
-            // One render + a quick pixel scan: proves curve hits are actually being
-            // reported (fur-colored pixels present), not just that the pipeline
-            // compiled and the GAS build call returned success.
             pipeline.Launch(launchParams, Width, Height);
             accelerator.Synchronize();
-            colorBuffer.CopyToCPU(pixelHost);
-            int skyPixels = 0, groundPixels = 0, furPixels = 0;
-            foreach (var px in pixelHost)
-            {
-                byte pr = (byte)((px >> 16) & 0xff);
-                byte pg = (byte)((px >> 8) & 0xff);
-                byte pb = (byte)(px & 0xff);
-                if (pb > pr && pb > 100) skyPixels++;
-                else if (pr > pg) furPixels++;
-                else groundPixels++;
-            }
-            Console.WriteLine($"Startup frame: {skyPixels} sky, {groundPixels} ground, {furPixels} fur pixels.");
-            Console.WriteLine(furPixels > 0
-                ? "Curve strands are being hit and shaded: PASS"
-                : "Expected some fur-colored pixels but found none: FAIL (check log above for OptiX warnings)");
+            var checkPixels = new uint[Width * Height];
+            checkBuffer.CopyToCPU(checkPixels);
+            const uint backgroundRgba = 0xff000000u | (30u << 0) | (20u << 8) | (20u << 16);
+            int nonBackground = 0;
+            foreach (var p in checkPixels)
+                if (p != backgroundRgba)
+                    nonBackground++;
+            Console.WriteLine($"Startup frame: {nonBackground} of {Width * Height} pixels shaded by the neural material (mesh hit).");
+
+            interopBuffer = new CudaGlInteropDisplayBuffer(Width, Height, accelerator);
 
             Console.WriteLine("[Controls] Hold Left Mouse + drag to orbit, Esc to quit.");
         }
 
-        // A flat quad ground plane, GroundHalfExtent units in each direction from the origin.
-        private static (Vector3[] Vertices, Tri[] Indices) MakeGroundPlane()
+        /// <summary>
+        /// Packs every layer of a multi-layer network into one row-major buffer and
+        /// converts the whole network to InferencingOptimal in a single
+        /// <see cref="OptixCoopVecMatrixBuilder.ConvertMatrices"/> call - the same
+        /// per-layer-offset packing + one-call-per-network pattern the real OptiX SDK
+        /// reference sample uses (SDK/optixNeuralTexture/optixNeuralTexture.cpp's
+        /// convertWeights: source offsets from the running sum of source layer sizes,
+        /// destination offsets from the running sum of destination layer sizes -
+        /// independently, since row-major and InferencingOptimal don't need to agree on
+        /// per-layer size).
+        /// </summary>
+        private static (MemoryBuffer1D<byte, Stride1D.Dense> Raw, MemoryBuffer1D<byte, Stride1D.Dense> Converted, uint[] DstOffsetsInBytes) BuildAndConvertNetwork(
+            OptixDeviceContext deviceContext, CudaAccelerator accelerator, (uint N, uint K, Half[] RowMajorWeights)[] layers)
         {
-            var vertices = new[]
+            var srcDescriptions = new OptixCoopVecMatrixDescription[layers.Length];
+            var dstDescriptions = new OptixCoopVecMatrixDescription[layers.Length];
+            uint srcOffset = 0;
+            uint dstOffset = 0;
+            for (int i = 0; i < layers.Length; i++)
             {
-                new Vector3(-GroundHalfExtent, 0f, -GroundHalfExtent),
-                new Vector3( GroundHalfExtent, 0f, -GroundHalfExtent),
-                new Vector3( GroundHalfExtent, 0f,  GroundHalfExtent),
-                new Vector3(-GroundHalfExtent, 0f,  GroundHalfExtent),
-            };
-            var indices = new[]
-            {
-                new Tri(0, 1, 2),
-                new Tri(0, 2, 3),
-            };
-            return (vertices, indices);
-        }
+                uint srcSize = deviceContext.ComputeMatrixSizeInBytes(layers[i].N, layers[i].K, OptixCoopVecElemType.Float16, OptixCoopVecMatrixLayout.RowMajor);
+                uint dstSize = deviceContext.ComputeMatrixSizeInBytes(layers[i].N, layers[i].K, OptixCoopVecElemType.Float16, OptixCoopVecMatrixLayout.InferencingOptimal);
 
-        // StrandCount short round cubic B-spline strands (4 control points = 1
-        // segment each), rooted at random points on the ground plane, leaning in a
-        // random direction and tapering from base to tip.
-        private static (Vector3[] Vertices, float[] Widths, uint[] Indices) MakeFurStrands()
-        {
-            var rng = new Random(42);
-            var vertices = new List<Vector3>(StrandCount * 4);
-            var widths = new List<float>(StrandCount * 4);
-            var indices = new List<uint>(StrandCount);
+                srcDescriptions[i] = new OptixCoopVecMatrixDescription
+                {
+                    N = layers[i].N,
+                    K = layers[i].K,
+                    OffsetInBytes = srcOffset,
+                    ElementType = OptixCoopVecElemType.Float16,
+                    Layout = OptixCoopVecMatrixLayout.RowMajor,
+                    RowColumnStrideInBytes = 0,
+                    SizeInBytes = srcSize,
+                };
+                dstDescriptions[i] = new OptixCoopVecMatrixDescription
+                {
+                    N = layers[i].N,
+                    K = layers[i].K,
+                    OffsetInBytes = dstOffset,
+                    ElementType = OptixCoopVecElemType.Float16,
+                    Layout = OptixCoopVecMatrixLayout.InferencingOptimal,
+                    RowColumnStrideInBytes = 0,
+                    SizeInBytes = dstSize,
+                };
 
-            for (int s = 0; s < StrandCount; s++)
-            {
-                float rx = (float)(rng.NextDouble() * 2 - 1) * PatchHalfExtent;
-                float rz = (float)(rng.NextDouble() * 2 - 1) * PatchHalfExtent;
-                float height = 0.3f + (float)rng.NextDouble() * 0.35f;
-                float leanX = ((float)rng.NextDouble() - 0.5f) * 0.2f;
-                float leanZ = ((float)rng.NextDouble() - 0.5f) * 0.2f;
-
-                uint baseIndex = (uint)vertices.Count;
-
-                vertices.Add(new Vector3(rx, 0f, rz));
-                vertices.Add(new Vector3(rx + leanX * 0.33f, height * 0.33f, rz + leanZ * 0.33f));
-                vertices.Add(new Vector3(rx + leanX * 0.66f, height * 0.66f, rz + leanZ * 0.66f));
-                vertices.Add(new Vector3(rx + leanX, height, rz + leanZ));
-
-                widths.Add(0.02f);
-                widths.Add(0.014f);
-                widths.Add(0.008f);
-                widths.Add(0.002f);
-
-                indices.Add(baseIndex);
+                srcOffset += srcSize;
+                dstOffset += dstSize;
             }
 
-            return (vertices.ToArray(), widths.ToArray(), indices.ToArray());
+            var rawBytes = new byte[srcOffset];
+            for (int i = 0; i < layers.Length; i++)
+            {
+                var weightBytes = MemoryMarshal.AsBytes<Half>(layers[i].RowMajorWeights);
+                weightBytes.CopyTo(rawBytes.AsSpan((int)srcDescriptions[i].OffsetInBytes));
+            }
+
+            var rawBuffer = accelerator.Allocate1D(rawBytes);
+            var convertedBuffer = accelerator.Allocate1D<byte>(dstOffset);
+
+            deviceContext.ConvertMatrices(
+                accelerator.DefaultStream,
+                numNetworks: 1,
+                srcDescriptions, rawBuffer, inputNetworkStrideInBytes: 0,
+                dstDescriptions, convertedBuffer, outputNetworkStrideInBytes: 0);
+
+            return (rawBuffer, convertedBuffer, dstDescriptions.Select(d => d.OffsetInBytes).ToArray());
+        }
+
+        private static (Vector3 Center, float Radius) ComputeBounds(Vector3[] vertices)
+        {
+            var min = vertices[0];
+            var max = vertices[0];
+            foreach (var v in vertices)
+            {
+                min = Vector3.Min(min, v);
+                max = Vector3.Max(max, v);
+            }
+            var center = (min + max) * 0.5f;
+            var radius = (max - min).Length() * 0.5f;
+            return (center, radius);
         }
 
         private void SetupCamera(Vector3 center, float radius)
         {
-            sceneCenter = center + new Vector3(0f, radius * 0.15f, 0f);
-            orbitDistance = radius * 2f;
+            sceneCenter = center;
+            orbitDistance = radius * 1.6f;
 
             const float verticalFovDegrees = 45f;
             cameraFocal = 1f / MathF.Tan(verticalFovDegrees * MathF.PI / 180f * 0.5f);
 
-            var initialDir = Vector3.Normalize(new Vector3(0.7f, 0.55f, 1.2f));
+            var initialDir = Vector3.Normalize(new Vector3(0.9f, 0.5f, 1.4f));
             cameraYaw = MathF.Atan2(initialDir.X, initialDir.Z) * 180f / MathF.PI;
             cameraPitch = MathF.Asin(Math.Clamp(initialDir.Y, -1f, 1f)) * 180f / MathF.PI;
 
@@ -439,21 +557,22 @@ namespace Sample20
             UpdateMouseOrbit();
         }
 
-        protected override void OnRenderFrame(FrameEventArgs args)
+        protected override unsafe void OnRenderFrame(FrameEventArgs args)
         {
             base.OnRenderFrame(args);
 
+            var stream = (CudaStream)accelerator.DefaultStream;
+            interopBuffer.MapCuda(stream);
+            interopBuffer.GetCudaArrayView();
+            launchParams.ColorBuffer = new OptixDeviceView<uint>((uint*)interopBuffer.NativePtr, Width * (long)Height);
+
             pipeline.Launch(launchParams, Width, Height);
             accelerator.Synchronize();
-            colorBuffer.CopyToCPU(pixelHost);
-
-            GL.BindTexture(TextureTarget.Texture2D, glTexture);
-            GL.TexSubImage2D(TextureTarget.Texture2D, 0, 0, 0, Width, Height,
-                PixelFormat.Bgra, PixelType.UnsignedByte, pixelHost);
-            GL.BindTexture(TextureTarget.Texture2D, 0);
+            interopBuffer.UnmapCuda(stream);
+            interopBuffer.BlitToTexture();
 
             GL.Clear(ClearBufferMask.ColorBufferBit);
-            quad.Draw(glTexture);
+            quad.Draw(interopBuffer.GlTextureHandle);
             SwapBuffers();
 
             frameCount++;
@@ -470,13 +589,19 @@ namespace Sample20
         protected override void OnUnload()
         {
             quad?.Dispose();
-            if (glTexture != 0)
-                GL.DeleteTexture(glTexture);
+            interopBuffer?.Dispose();
 
-            ias?.Dispose();
-            furGas?.Dispose();
-            groundGas?.Dispose();
-            colorBuffer?.Dispose();
+            accel?.Dispose();
+            inputScratchBuffer?.Dispose();
+            hiddenScratchBuffer?.Dispose();
+            outputScratchBuffer?.Dispose();
+            weightsRawBuffer?.Dispose();
+            weightsBuffer?.Dispose();
+            bias1Buffer?.Dispose();
+            bias2Buffer?.Dispose();
+            hiddenGainBuffer?.Dispose();
+            outputScaleBuffer?.Dispose();
+            outputBiasBuffer?.Dispose();
             pipeline?.Dispose();
             rayTracer?.Dispose();
             accelerator?.Dispose();

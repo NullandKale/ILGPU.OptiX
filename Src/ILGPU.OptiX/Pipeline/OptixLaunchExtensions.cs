@@ -73,7 +73,8 @@ namespace ILGPU.OptiX.Pipeline
             // NOTE: this path allocates + frees a launch-params buffer and a native
             // SBT copy on every call, which is the correct but slow shape (freeing
             // GPU memory forces an implicit device sync). For per-frame launches,
-            // prefer a facade that keeps these buffers persistent across calls.
+            // prefer OptixLauncher<TLaunchParams>, which keeps both persistent
+            // across calls.
             using var launchParamsBuffer = accelerator.Allocate1D<TLaunchParams>(1);
             launchParamsBuffer.View.CopyFromCPU(stream, ref launchParams, 1);
 

@@ -57,10 +57,9 @@ namespace Sample13
 
     // Host-side POCO a Scenes.cs builder method returns; SampleRenderer.SwitchToScene
     // consumes it to (re)allocate device buffers, rebuild the GAS/SBT, and reset FrameID -
-    // mirrors the reference's own lazy-built, cached-per-index Scene objects.
-    // Grows a field per
-    // milestone as new primitive kinds/volume grid/mesh support come online; unused
-    // fields on a given scene are left null/default.
+    // mirrors the reference's own lazy-built, cached-per-index Scene objects. Covers
+    // primitive kinds, the volume grid, and mesh support; unused fields on a given
+    // scene are left null/default.
     public class SceneData
     {
         public string Name = "";
@@ -71,7 +70,7 @@ namespace Sample13
         public Vec3i[] Indices = Array.Empty<Vec3i>();
 
         // One entry per triangle (same length as Indices), indexing into Materials -
-        // also the GAS build input's SbtIndexOffsetBuffer, same convention as Sample07-12.
+        // also the GAS build input's SbtIndexOffsetBuffer.
         public uint[] TriangleMaterialIds = Array.Empty<uint>();
 
         // Per-mesh triangle-index ranges within Indices/TriangleMaterialIds - one
@@ -90,8 +89,7 @@ namespace Sample13
         // directory, e.g. "models/sponza/textures/x.png") to load into a
         // CudaTextureObject and assign to that material's HitgroupRecord.TextureObject
         // (see SampleRenderer.cs's BuildHitgroupSbt). Shorter than Materials or an empty/
-        // null entry means "no texture" for that material index - matches Sample08's
-        // TextureObject==0 convention.
+        // null entry means "no texture" for that material index (TextureObject==0).
         public string[] MaterialTexturePaths = Array.Empty<string>();
 
         // Custom primitives - each *MaterialIds array indexes into the SAME shared

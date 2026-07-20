@@ -16,9 +16,8 @@ using System.Numerics;
 namespace ILGPU.OptiX.DeviceApi
 {
     /// <summary>
-    /// Helpers for compact Vec3/Vector3 payload packing/unpacking.
-    /// Used by complex-payload path-tracing samples for radiance, normal, albedo, etc.
-    /// Reduces manual 3-register assignment boilerplate to single-line calls.
+    /// Helpers for compact Vec3/Vector3 payload packing/unpacking across three
+    /// consecutive registers.
     /// </summary>
     public static class OptixPayloadVec3Helper
     {

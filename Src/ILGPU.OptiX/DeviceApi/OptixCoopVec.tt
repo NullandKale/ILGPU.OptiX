@@ -35,20 +35,13 @@
     const int OpSub = 0x2A29;
     const int OpStep = 0x2A2B;
 
-    // Sizes/matrix dimensions generated - bounded to [1, MaxSize] rather than the SDK's
-    // own ceiling (16 for the register-packed tier, irrelevant here; there is no upper
-    // bound at all for the "_ptr" convention's size operand). MatVecMul alone generates
-    // MaxSize^2 overloads, so this is kept small and covers realistic small-MLP layer
-    // widths (Sample24 uses 3 and 8); bump it if a future sample needs larger layers.
+    // MatVecMul alone generates MaxSize^2 overloads, so this stays small; larger widths
+    // are added via the curated lists below instead of raising it.
     const int MaxSize = 8;
 
-    // Curated additions for Sample25 (NRC): a 64-wide, 5-hidden-layer MLP needs
-    // MatVecMul_N64_K64/N3_K64 and matching OuterProductAccumulate/elementwise overloads,
-    // but uniformly bumping MaxSize to 64 would explode MatVecMul/OuterProductAccumulate
-    // to 64x64 = 4096 overloads each (mostly unused). Instead these curated lists are
-    // generated *in addition to* the 1..MaxSize loops above - additive only, the existing
-    // Sample24 (_N8_K3/_S8/_S3) overloads are untouched.
-    var curatedMatVecMulDims = new[] { (N: 64, K: 64), (N: 3, K: 64) };
+    // Additive curated dims for larger widths (bumping MaxSize itself would explode
+    // MatVecMul/OuterProductAccumulate to MaxSize^2 overloads each).
+    var curatedMatVecMulDims = new[] { (N: 32, K: 32), (N: 3, K: 32), (N: 64, K: 64), (N: 3, K: 64), (N: 128, K: 128), (N: 3, K: 128) };
     // Real optixCoopVecMatMul semantics: N/K describe the matrix's stored physical shape
     // (rows/cols) regardless of transpose; only the actual input/output vector lengths
     // swap when transpose is true (input becomes N-sized, output becomes K-sized).
@@ -65,10 +58,10 @@
         // transposed weight copy needed).
         new { Layout = TrainingOptimal, Transpose = true, Suffix = "_TrainingTranspose" },
     };
-    // Only 64 is new here - 3 is already covered by the 1..MaxSize loop below (MaxSize=8)
-    // and re-adding it would generate a duplicate method definition.
-    var curatedElementwiseSizes = new[] { 64 };
-    var curatedOuterProductDims = new[] { (A: 64, B: 64), (A: 3, B: 64) };
+    // 3 is already covered by the 1..MaxSize loop below - re-adding it here would
+    // generate a duplicate method definition.
+    var curatedElementwiseSizes = new[] { 32, 64, 128 };
+    var curatedOuterProductDims = new[] { (A: 32, B: 32), (A: 3, B: 32), (A: 64, B: 64), (A: 3, B: 64), (A: 128, B: 128), (A: 3, B: 128) };
 #>
 using ILGPU.Runtime.Cuda;
 using System;
@@ -76,70 +69,26 @@ using System;
 namespace ILGPU.OptiX.DeviceApi
 {
     /// <summary>
-    /// Provides the device-side cooperative-vector intrinsic surface: matrix-vector multiply, the elementwise ops,
-    /// and the two training primitives (reduce-sum-accumulate, outer-product-accumulate)
-    /// - the building blocks of an MLP evaluated inline in a hit/raygen program (e.g. a
-    /// neural material), forward and backward pass alike.
+    /// Device-side cooperative-vector intrinsics: matrix-vector multiply, elementwise
+    /// ops, and the two training primitives (reduce-sum-accumulate,
+    /// outer-product-accumulate) - the building blocks of an MLP evaluated inline in a
+    /// hit/raygen program, forward and backward pass alike.
     /// </summary>
     /// <remarks>
-    /// <para>
-    /// The OptiX SDK's own C++ header (internal/optix_device_impl_coop_vec.h) exposes
-    /// two calling conventions per op: a register-packed form (cooperative vectors held
-    /// in up to 64 PTX registers) and a pointer-passing fallback ("_ptr" suffixed
-    /// pseudo-calls, e.g. "_optix_matvecmul_ptr") where every vector/matrix/bias is a
-    /// device address + element type + count. This binding wraps the "_ptr" family - the
-    /// register-packed form needs 48-69 EmitRef arguments per call even at its smallest
-    /// (16-element) tier, which exceeds ILGPU's own 44-argument <c>CudaAsm.EmitRef</c>
-    /// ceiling (confirmed via reflection against the actual referenced ILGPU 1.5.3
-    /// package) for every
-    /// op with more than one vector operand (MatVecMul, the 2-input and 3-input
-    /// elementwise ops) - not implementable, not a convenience choice.
-    /// </para>
-    /// <para>
-    /// <b>Every non-pointer, non-byte-offset argument must be a genuine PTX compile-time
-    /// constant</b> - discovered via a real GPU compile failure ("vector op is not
-    /// constant" / "Output vector element type is not constant"), not assumed. This
-    /// mirrors the real C++ API exactly (every one of these is a template parameter in
-    /// <c>optix_device_impl_coop_vec.h</c>, e.g. <c>optixCoopVecMatMul&lt;VecTOut, VecTIn,
-    /// inputInterpretation, matrixLayout, transpose, N, K, matrixElementType,
-    /// biasElementType&gt;</c> - only the device pointers and byte offsets are ordinary
-    /// runtime function parameters there too). A plain <c>CudaAsm.EmitRef Input&lt;T&gt;</c>
-    /// round-trips its value through a local memory store+load (see
-    /// <see cref="OptixTrace"/>'s own class doc comment for the same finding on
-    /// optixTrace's payload-type/count arguments) rather than a direct "mov", so it does
-    /// not satisfy this. The fix is the same one <see cref="OptixTrace"/> already
-    /// established: every constant-typed operand gets an <c>Output&lt;uint&gt;</c> slot
-    /// (a fresh register, not memory-backed) whose value is assigned via a literal
-    /// "mov.u32 %N, IMMEDIATE;" instruction textually prefixed onto the call, where the
-    /// immediate is a genuine C# string literal baked in at this template's generation
-    /// time - which is why this file is T4-generated (one overload per required constant
-    /// combination) rather than hand-written with runtime parameters, unlike
-    /// <see cref="OptixReorder"/>/<see cref="OptixHitObjectQueries"/>'s single-combination
-    /// calls.
-    /// </para>
-    /// <para>
-    /// Only <see cref="OptixCoopVecElemType.Float16"/> element type is generated (every
-    /// other type would multiply the already-large generated overload count further, and
-    /// nothing in this codebase needs them yet); <c>MatVecMul</c> is generated for
-    /// row/column counts 1-<#= MaxSize #>, InferencingOptimal layout, no transpose (the
-    /// standard inference case); the elementwise ops for vector sizes 1-<#= MaxSize #>.
-    /// Bump <c>MaxSize</c> in the .tt template (and regenerate via <c>dotnet-t4</c>) if a
-    /// future consumer needs larger layers or other element types.
-    /// </para>
-    /// <para>
-    /// A curated set of additional overloads is generated on top of the 1-<#= MaxSize #>
-    /// loops above (additive - the loops' own output is unchanged) for Sample25's
-    /// 64-wide NRC MLP layers, since uniformly bumping <c>MaxSize</c> to 64 would explode
-    /// <c>MatVecMul</c>/<c>OuterProductAccumulate</c> to 64x64 = 4096 overloads each
-    /// (mostly unused): <c>MatVecMul_N64_K64</c>/<c>_N3_K64</c> (InferencingOptimal, no
-    /// transpose - inference against the EMA weight snapshot), <c>..._Training</c>
-    /// (TrainingOptimal, no transpose - forward pass against the live training weights),
-    /// and <c>..._TrainingTranspose</c> (TrainingOptimal, transpose = true - propagates a
-    /// gradient backward through the same layer's stored matrix without a separate
-    /// transposed copy); <c>OuterProductAccumulate_SA64_SB64</c>/<c>_SA3_SB64</c>; and
-    /// size-64 elementwise/<c>Load</c>/<c>ReduceSumAccumulate</c> overloads. See the
-    /// curated-dims variables declared alongside <c>MaxSize</c> above.
-    /// </para>
+    /// Wraps the SDK's pointer-passing ("_ptr") calling convention only - every
+    /// vector/matrix/bias is a device address + element type + count. The
+    /// register-packed convention needs 48-69 <c>CudaAsm.EmitRef</c> arguments per call,
+    /// over ILGPU's 44-argument ceiling for any op with more than one vector operand.
+    /// Every non-pointer, non-byte-offset argument must be a genuine PTX compile-time
+    /// constant (matching the real C++ API's template parameters), so this file is
+    /// T4-generated: one overload per required constant combination, each constant
+    /// emitted via a literal <c>mov.u32</c> instruction into an <c>Output&lt;uint&gt;</c>
+    /// slot rather than passed as an ordinary argument (see <see cref="OptixTrace"/>'s
+    /// class doc comment for the same pattern). Only
+    /// <see cref="OptixCoopVecElemType.Float16"/> is generated. <c>MatVecMul</c>/the
+    /// elementwise ops cover sizes 1-<#= MaxSize #> plus the curated dims below; bump
+    /// <c>MaxSize</c> and regenerate (T4.Build via <c>dotnet build</c>) for other sizes
+    /// or element types.
     /// </remarks>
     [CLSCompliant(false)]
     public static class OptixCoopVec
@@ -218,24 +167,28 @@ namespace ILGPU.OptiX.DeviceApi
 
     foreach (var dim in curatedMatVecMulDims) {
     foreach (var variant in curatedMatVecMulVariants) {
-        int N = dim.N, K = dim.K;
-        int outSize = variant.Transpose ? K : N;
-        int inSize = variant.Transpose ? N : K;
+        // The driver requires inputSize == k and outputSize == n literally, for both
+        // transposed and untransposed calls. A transpose call that reuses a matrix
+        // converted for an NxK forward multiply to instead compute a K-in/N-out
+        // backward multiply must therefore declare itself as a KxN call (n=K, k=N) with
+        // transpose=1 - the same converted bytes, reinterpreted, at the same
+        // matrixOffsetInBytes.
+        int callN = variant.Transpose ? dim.K : dim.N;
+        int callK = variant.Transpose ? dim.N : dim.K;
         string layoutName = variant.Layout == TrainingOptimal ? "TrainingOptimal" : "InferencingOptimal";
 #>
         /// <summary>
-        /// Computes <c>outputVector = matrix * inputVector + bias</c> for a <#= N #>x<#= K #>
-        /// Float16 weight matrix (<#= layoutName #> layout<#= variant.Transpose ? ", transposed - propagates a gradient through a fully connected layer during backprop, reusing the same untransposed stored matrix" : "" #>).
-        /// Curated overload for Sample25 (NRC's 64-wide layers) - see the curated-dims
-        /// comment above <c>MaxSize</c>. Wraps <c>_optix_matvecmul_ptr</c>.
+        /// Computes <c>outputVector = matrix * inputVector + bias</c> for a <#= callN #>x<#= callK #>
+        /// Float16 weight matrix (<#= layoutName #> layout<#= variant.Transpose ? $", transposed - reuses a matrix converted for a {dim.N}x{dim.K} forward multiply to instead propagate a gradient through a fully connected layer during backprop (same converted bytes, no separate transposed copy)" : "" #>).
+        /// Wraps <c>_optix_matvecmul_ptr</c>.
         /// </summary>
-        /// <param name="inputVector">Device address of the <#= inSize #>-element input vector.</param>
+        /// <param name="inputVector">Device address of the <#= callK #>-element input vector.</param>
         /// <param name="matrix">Device address of the weight matrix (64-byte aligned).</param>
         /// <param name="matrixOffsetInBytes">Byte offset into <paramref name="matrix"/> (64-byte aligned).</param>
-        /// <param name="bias">Device address of the <#= outSize #>-element bias vector (16-byte aligned) - point at a zero-filled buffer for a no-bias layer.</param>
+        /// <param name="bias">Device address of the <#= callN #>-element bias vector (16-byte aligned) - point at a zero-filled buffer for a no-bias layer.</param>
         /// <param name="biasOffsetInBytes">Byte offset into <paramref name="bias"/> (16-byte aligned).</param>
-        /// <param name="outputVector">Device address to write the <#= outSize #>-element result vector to.</param>
-        public static void MatVecMul_N<#= N #>_K<#= K #><#= variant.Suffix #>(
+        /// <param name="outputVector">Device address to write the <#= callN #>-element result vector to.</param>
+        public static void MatVecMul_N<#= callN #>_K<#= callK #><#= variant.Suffix #>(
             ulong inputVector,
             ulong matrix,
             uint matrixOffsetInBytes,
@@ -263,9 +216,9 @@ namespace ILGPU.OptiX.DeviceApi
             Input<ulong> _outputVector = outputVector;
 
             CudaAsm.EmitRef(
-                "mov.u32 %0, <#= Float16 #>; mov.u32 %1, <#= outSize #>; mov.u32 %2, <#= Float16 #>; " +
-                "mov.u32 %3, <#= inSize #>; mov.u32 %4, <#= Float16 #>; mov.u32 %5, <#= N #>; " +
-                "mov.u32 %6, <#= K #>; mov.u32 %10, <#= variant.Layout #>; mov.u32 %11, <#= variant.Transpose ? 1 : 0 #>; " +
+                "mov.u32 %0, <#= Float16 #>; mov.u32 %1, <#= callN #>; mov.u32 %2, <#= Float16 #>; " +
+                "mov.u32 %3, <#= callK #>; mov.u32 %4, <#= Float16 #>; mov.u32 %5, <#= callN #>; " +
+                "mov.u32 %6, <#= callK #>; mov.u32 %10, <#= variant.Layout #>; mov.u32 %11, <#= variant.Transpose ? 1 : 0 #>; " +
                 "mov.u32 %12, <#= Float16 #>; mov.u32 %15, <#= Float16 #>; " +
                 "call (), _optix_matvecmul_ptr, (%0,%1,%2,%3,%4,%5,%6,%7,%8,%9,%10,%11,%12,%13,%14,%15,%16,%17);",
                 ref _outputElementType,
@@ -507,9 +460,7 @@ namespace ILGPU.OptiX.DeviceApi
         /// Accumulates (adds) the outer product <c>vecA * vecB^T</c>
         /// (<#= sizeA #>x<#= sizeB #>, Float16, TrainingOptimal layout) into the matrix
         /// at <paramref name="outputMatrix"/> - the weight-gradient primitive of
-        /// backpropagation. Curated overload for Sample25 (NRC's 64-wide layers) - see the
-        /// curated-dims comment above <c>MaxSize</c>. Wraps
-        /// <c>_optix_outer_product_accumulate_ptr</c>.
+        /// backpropagation. Wraps <c>_optix_outer_product_accumulate_ptr</c>.
         /// </summary>
         public static void OuterProductAccumulate_SA<#= sizeA #>_SB<#= sizeB #>(
             ulong inputVectorA, ulong inputVectorB, ulong outputMatrix, uint offsetInBytes)

@@ -42,6 +42,50 @@ namespace ILGPU.OptiX.AccelStructures
         RoundLinear = 1 << 3,
 
         /// <summary>
+        /// CatmullRom curve with circular cross-section.
+        /// </summary>
+        RoundCatmullRom = 1 << 4,
+
+        /// <summary>
+        /// B-spline curve of degree 2 with oriented flat cross-section (ribbon).
+        /// </summary>
+        FlatQuadraticBSpline = 1 << 5,
+
+        /// <summary>
+        /// Sphere.
+        /// </summary>
+        Sphere = 1 << 6,
+
+        /// <summary>
+        /// Bezier curve of degree 3 with circular cross-section.
+        /// </summary>
+        RoundCubicBezier = 1 << 7,
+
+        /// <summary>
+        /// B-spline curve of degree 2 with circular cross-section, with rounded
+        /// endcaps (rocaps) at the ends of each segment.
+        /// </summary>
+        RoundQuadraticBSplineRocaps = 1 << 8,
+
+        /// <summary>
+        /// B-spline curve of degree 3 with circular cross-section, with rounded
+        /// endcaps (rocaps) at the ends of each segment.
+        /// </summary>
+        RoundCubicBSplineRocaps = 1 << 9,
+
+        /// <summary>
+        /// CatmullRom curve with circular cross-section, with rounded endcaps
+        /// (rocaps) at the ends of each segment.
+        /// </summary>
+        RoundCatmullRomRocaps = 1 << 10,
+
+        /// <summary>
+        /// Bezier curve of degree 3 with circular cross-section, with rounded
+        /// endcaps (rocaps) at the ends of each segment.
+        /// </summary>
+        RoundCubicBezierRocaps = 1 << 11,
+
+        /// <summary>
         /// Triangle.
         /// </summary>
         Triangle = 1 << 31,

@@ -1,0 +1,74 @@
+// ---------------------------------------------------------------------------------------
+//                                     ILGPU OptiX
+//                        Copyright (c) 2020-2022 ILGPU Project
+//                                    www.ilgpu.net
+//
+// File: OptixThrowException.tt/OptixThrowException.cs
+//
+// This file is part of ILGPU and is distributed under the University of Illinois Open
+// Source License. See LICENSE.txt for details.
+// ---------------------------------------------------------------------------------------
+
+<#@ template debug="false" hostspecific="false" language="C#" #>
+<#@ assembly name="System.Core" #>
+<#@ import namespace="System.Linq" #>
+<#@ import namespace="System.Text" #>
+<#@ import namespace="System.Collections.Generic" #>
+<#@ output extension=".cs" #>
+
+using ILGPU.Runtime.Cuda;
+using System;
+
+namespace ILGPU.OptiX.DeviceApi
+{
+    /// <summary>
+    /// Provides the functionality of the optixThrowException built-in function
+    /// overloads (_optix_throw_exception_0..8) - aborts the current launch index and
+    /// invokes the pipeline's exception program with a user exception code and up to
+    /// 8 detail values (readable there via <see cref="OptixGetExceptionInfo"/>).
+    /// Requires <see cref="Native.OptixExceptionFlags.User"/> in the pipeline's
+    /// exception flags; the code must be in [0, 2^30). Valid in RG/IS/AH/CH/MS
+    /// programs.
+    /// </summary>
+    [CLSCompliant(false)]
+    public static class OptixThrowException
+    {
+<#
+    const int MaxDetails = 8;
+    for (int count = 0; count <= MaxDetails; count++)
+    {
+        // No outputs: %0 = exceptionCode, %1.. = details.
+        var inputSlots = Enumerable.Range(0, count + 1).Select(i => $"%{i}");
+        string detailSummary = count == 0
+            ? "no detail values"
+            : count == 1
+                ? "1 detail value (d0)"
+                : $"{count} detail values (d0..d{count - 1})";
+#>
+        /// <summary>
+        /// Throws a user exception carrying <#= detailSummary #>.
+        /// </summary>
+        public static void Throw(
+            int exceptionCode<#= count > 0 ? "," : ")" #>
+<#      for (int i = 0; i < count; i++) { #>
+            uint d<#= i #><#= i < count - 1 ? "," : ")" #>
+<#      } #>
+        {
+            Input<int> _exceptionCode = exceptionCode;
+<#      for (int i = 0; i < count; i++) { #>
+            Input<uint> _d<#= i #> = d<#= i #>;
+<#      } #>
+            CudaAsm.EmitRef(
+                "call _optix_throw_exception_<#= count #>, " +
+                "(<#= string.Join(", ", inputSlots) #>);",
+                ref _exceptionCode<#= count > 0 ? "," : ");" #>
+<#      for (int i = 0; i < count; i++) { #>
+                ref _d<#= i #><#= i < count - 1 ? "," : ");" #>
+<#      } #>
+        }
+
+<#
+    }
+#>
+    }
+}

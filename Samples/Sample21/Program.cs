@@ -12,18 +12,19 @@
 using OpenTK.Mathematics;
 using OpenTK.Windowing.Common;
 using OpenTK.Windowing.Desktop;
+using System;
 
 namespace Sample21
 {
     public static class Program
     {
-        public static void Main()
+        public static void Main(string[] args)
         {
             var gameWindowSettings = GameWindowSettings.Default;
             var nativeWindowSettings = new NativeWindowSettings
             {
-                ClientSize = new Vector2i(1024, 768),
-                Title = "Sample21 - Opacity Micromaps (Cutout Cards)",
+                ClientSize = new Vector2i(1200, 800),
+                Title = "Sample21 - Neural Radiance Cache Path Tracer",
                 Flags = ContextFlags.ForwardCompatible,
                 Profile = ContextProfile.Core,
                 APIVersion = new System.Version(3, 3),

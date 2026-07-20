@@ -22,8 +22,8 @@ namespace Sample14
 
         /// <summary>
         /// Escape hatch for consumers that still talk to the raw device context
-        /// directly (acceleration structures) - <see cref="RayTracer"/> only wraps
-        /// pipeline/SBT/launch, not every OptiX surface.
+        /// directly (acceleration structures, the denoiser) - <see cref="RayTracer"/>
+        /// only wraps pipeline/SBT/launch, not every OptiX surface.
         /// </summary>
         public OptixDeviceContext DeviceContext => RayTracer.DeviceContext;
 
@@ -37,7 +37,12 @@ namespace Sample14
 
         public GpuContext()
         {
-            Context = Context.Create(b => b.Cuda().EnableAlgorithms());
+            // O2 + fast math + aggressive inlining - every transcendental call in this
+            // sample's kernels (GGX sampling, sRGB decode, equirect env-map mapping)
+            // only needs the precision fast-math trades away, not the exactness, and
+            // the visual result is unchanged at this sample's tolerances.
+            Context = Context.Create(b => b.Cuda().EnableAlgorithms()
+                                           .Optimize(OptimizationLevel.O2).Math(MathMode.Fast32BitOnly).Inlining(InliningMode.Aggressive).LibDevice());
             Accelerator = Context.CreateCudaAccelerator(0);
 
             // Validation mode ALL + a log callback surfaces OptiX's own descriptive

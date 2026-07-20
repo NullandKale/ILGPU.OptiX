@@ -28,6 +28,7 @@ namespace ILGPU.OptiX.Denoising
         private uint height;
         private OptixDenoiserOptions? denoiserOptions;
         private OptixDenoiserModelKind modelKind = OptixDenoiserModelKind.Ldr;
+        private byte[] userModelData;
 
         /// <summary>
         /// Sets the device context.
@@ -89,6 +90,21 @@ namespace ILGPU.OptiX.Denoising
         }
 
         /// <summary>
+        /// Creates the denoiser from a user-supplied model blob
+        /// (optixDenoiserCreateWithUserModel) instead of a built-in model kind -
+        /// takes precedence over <see cref="WithModelKind"/> when set.
+        /// </summary>
+        public OptixDenoiserBuilder WithUserModel(byte[] modelData)
+        {
+            if (modelData == null || modelData.Length == 0)
+                throw new ArgumentException(
+                    "User model data must not be null or empty.", nameof(modelData));
+
+            userModelData = modelData;
+            return this;
+        }
+
+        /// <summary>
         /// Builds the denoiser with allocated state and scratch buffers.
         /// </summary>
         public BuiltDenoiser Build(CudaStream stream = null)
@@ -110,7 +126,9 @@ namespace ILGPU.OptiX.Denoising
             {
                 // Create denoiser
                 var opts = denoiserOptions ?? new OptixDenoiserOptions { GuideAlbedo = 0, GuideNormal = 0 };
-                var denoiser = context.CreateDenoiser(modelKind, opts);
+                var denoiser = userModelData != null
+                    ? context.CreateDenoiserWithUserModel(userModelData)
+                    : context.CreateDenoiser(modelKind, opts);
 
                 // Compute memory resources needed
                 var sizes = denoiser.ComputeMemoryResources(width, height);

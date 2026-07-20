@@ -18,8 +18,7 @@ namespace ILGPU.OptiX.DeviceApi
 {
     /// <summary>
     /// Helpers for Axis-Aligned Bounding Box (AABB) construction and custom-primitive
-    /// hit reporting. Used by samples with custom primitives.
-    /// Works with System.Numerics.Vector3 for standardized geometry operations.
+    /// hit reporting, using <see cref="Vector3"/>.
     /// </summary>
     public static class OptixAabbHelpers
     {

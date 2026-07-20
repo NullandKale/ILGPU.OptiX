@@ -16,9 +16,9 @@ namespace Sample09
 {
     // Per-material data (diffuse color, texture handle) is looked up via
     // OptixGetSbtDataPointer against one hitgroup record per material per ray type
-    // (see MaterialSbtData.cs/SampleRenderer.cs's buildAccel/constructor) - see
-    // Sample07's LaunchParams.cs for why. Vertices/Normals/TexCoords/Indices remain
-    // global merged-buffer arrays shared by the whole model.
+    // (see MaterialSbtData.cs/SampleRenderer.cs's buildAccel/constructor).
+    // Vertices/Normals/TexCoords/Indices remain global merged-buffer arrays shared by
+    // the whole model.
     public struct LaunchParams
     {
         public int FrameID;

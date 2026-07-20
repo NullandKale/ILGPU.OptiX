@@ -22,8 +22,8 @@ namespace Sample19
             var gameWindowSettings = GameWindowSettings.Default;
             var nativeWindowSettings = new NativeWindowSettings
             {
-                ClientSize = new Vector2i(1024, 768),
-                Title = "Sample19 - Motion Blur (Rigid-Body Transform)",
+                ClientSize = new Vector2i(800, 600),
+                Title = "Sample19 - Denoiser Temporal/AOV Guide Layers",
                 Flags = ContextFlags.ForwardCompatible,
                 Profile = ContextProfile.Core,
                 APIVersion = new System.Version(3, 3),

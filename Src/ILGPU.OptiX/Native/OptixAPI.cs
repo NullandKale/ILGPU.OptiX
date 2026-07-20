@@ -121,6 +121,21 @@ namespace ILGPU.OptiX.Native
         private DenoiserComputeAverageColor? cachedDenoiserComputeAverageColor;
         private CoopVecMatrixConvert? cachedCoopVecMatrixConvert;
         private CoopVecMatrixComputeSize? cachedCoopVecMatrixComputeSize;
+        private GetErrorName? cachedGetErrorName;
+        private GetErrorString? cachedGetErrorString;
+        private DeviceContextGetProperty? cachedDeviceContextGetProperty;
+        private DeviceContextSetLogCallback? cachedDeviceContextSetLogCallback;
+        private DeviceContextSetCacheEnabled? cachedDeviceContextSetCacheEnabled;
+        private DeviceContextGetCacheEnabled? cachedDeviceContextGetCacheEnabled;
+        private DeviceContextSetCacheLocation? cachedDeviceContextSetCacheLocation;
+        private DeviceContextGetCacheLocation? cachedDeviceContextGetCacheLocation;
+        private DeviceContextSetCacheDatabaseSizes? cachedDeviceContextSetCacheDatabaseSizes;
+        private DeviceContextGetCacheDatabaseSizes? cachedDeviceContextGetCacheDatabaseSizes;
+        private OpacityMicromapArrayGetRelocationInfo? cachedOpacityMicromapArrayGetRelocationInfo;
+        private OpacityMicromapArrayRelocate? cachedOpacityMicromapArrayRelocate;
+        private DenoiserCreateWithUserModel? cachedDenoiserCreateWithUserModel;
+        private ClusterAccelComputeMemoryUsage? cachedClusterAccelComputeMemoryUsage;
+        private ClusterAccelBuild? cachedClusterAccelBuild;
 
         private void ClearDelegateCache()
         {
@@ -159,6 +174,21 @@ namespace ILGPU.OptiX.Native
             cachedDenoiserComputeAverageColor = null;
             cachedCoopVecMatrixConvert = null;
             cachedCoopVecMatrixComputeSize = null;
+            cachedGetErrorName = null;
+            cachedGetErrorString = null;
+            cachedDeviceContextGetProperty = null;
+            cachedDeviceContextSetLogCallback = null;
+            cachedDeviceContextSetCacheEnabled = null;
+            cachedDeviceContextGetCacheEnabled = null;
+            cachedDeviceContextSetCacheLocation = null;
+            cachedDeviceContextGetCacheLocation = null;
+            cachedDeviceContextSetCacheDatabaseSizes = null;
+            cachedDeviceContextGetCacheDatabaseSizes = null;
+            cachedOpacityMicromapArrayGetRelocationInfo = null;
+            cachedOpacityMicromapArrayRelocate = null;
+            cachedDenoiserCreateWithUserModel = null;
+            cachedClusterAccelComputeMemoryUsage = null;
+            cachedClusterAccelBuild = null;
         }
 
         #endregion
@@ -683,9 +713,8 @@ namespace ILGPU.OptiX.Native
         }
 
         /// <summary>
-        /// Compacts a previously built acceleration structure into a smaller output
-        /// buffer. The input handle must have been built with
-        /// AllowCompaction and an CompactedSize
+        /// Compacts an acceleration structure into a smaller output buffer. The input
+        /// handle must have been built with AllowCompaction and a CompactedSize
         /// emitted property (see AccelBuild's emittedProperties parameter).
         /// </summary>
         /// <param name="context">The OptiX device context.</param>
@@ -716,8 +745,8 @@ namespace ILGPU.OptiX.Native
         }
 
         /// <summary>
-        /// Retrieves relocation info for a previously built acceleration structure, to be
-        /// passed to CheckRelocationCompatibility/AccelRelocate.
+        /// Retrieves relocation info for an acceleration structure, to be passed to
+        /// CheckRelocationCompatibility/AccelRelocate.
         /// </summary>
         /// <param name="context">The OptiX device context.</param>
         /// <param name="handle">The traversable handle of the built acceleration structure.</param>
@@ -752,7 +781,7 @@ namespace ILGPU.OptiX.Native
         }
 
         /// <summary>
-        /// Relocates a previously built acceleration structure into a new target buffer.
+        /// Relocates an acceleration structure into a new target buffer.
         /// </summary>
         /// <param name="context">The OptiX device context.</param>
         /// <param name="stream">The CUDA stream.</param>
@@ -787,9 +816,8 @@ namespace ILGPU.OptiX.Native
         }
 
         /// <summary>
-        /// Emits a single post-build property (e.g. Aabbs) for a previously built
-        /// acceleration structure, outside of the emittedProperties list passed to
-        /// AccelBuild itself.
+        /// Emits a single post-build property (e.g. Aabbs) for an acceleration
+        /// structure, outside of the emittedProperties list passed to AccelBuild itself.
         /// </summary>
         /// <param name="context">The OptiX device context.</param>
         /// <param name="stream">The CUDA stream.</param>
@@ -1191,6 +1219,262 @@ namespace ILGPU.OptiX.Native
                 outputNetworkDescription,
                 outputNetworks,
                 outputNetworkStrideInBytes);
+        }
+
+        /// <summary>
+        /// Returns the driver's own short name for an OptixResult (optixGetErrorName),
+        /// or null when the function table is not initialized.
+        /// </summary>
+        public string? GetErrorName(OptixResult result)
+        {
+            if (functionTable.OptixGetErrorName == IntPtr.Zero)
+                return null;
+            var func = GetOrCreateDelegate(ref cachedGetErrorName, functionTable.OptixGetErrorName);
+            return Marshal.PtrToStringAnsi(func(result));
+        }
+
+        /// <summary>
+        /// Returns the driver's own description for an OptixResult
+        /// (optixGetErrorString), or null when the function table is not initialized.
+        /// </summary>
+        public string? GetErrorString(OptixResult result)
+        {
+            if (functionTable.OptixGetErrorString == IntPtr.Zero)
+                return null;
+            var func = GetOrCreateDelegate(ref cachedGetErrorString, functionTable.OptixGetErrorString);
+            return Marshal.PtrToStringAnsi(func(result));
+        }
+
+        /// <summary>
+        /// Queries a device property (optixDeviceContextGetProperty). Every property
+        /// is a 4-byte unsigned value per optix_types.h.
+        /// </summary>
+        [CLSCompliant(false)]
+        public unsafe OptixResult DeviceContextGetProperty(
+            IntPtr context,
+            Pipeline.OptixDeviceProperty property,
+            out uint value)
+        {
+            var func = GetOrCreateDelegate(
+                ref cachedDeviceContextGetProperty, functionTable.OptixDeviceContextGetProperty);
+            uint local = 0;
+            var result = func(context, property, new IntPtr(&local), new UIntPtr(sizeof(uint)));
+            value = local;
+            return result;
+        }
+
+        /// <summary>
+        /// Sets/replaces the context log callback (optixDeviceContextSetLogCallback).
+        /// The caller is responsible for keeping the delegate behind
+        /// <paramref name="callbackFunction"/> alive.
+        /// </summary>
+        [CLSCompliant(false)]
+        public OptixResult DeviceContextSetLogCallback(
+            IntPtr context,
+            IntPtr callbackFunction,
+            IntPtr callbackData,
+            uint callbackLevel)
+        {
+            var func = GetOrCreateDelegate(
+                ref cachedDeviceContextSetLogCallback, functionTable.OptixDeviceContextSetLogCallback);
+            return func(context, callbackFunction, callbackData, callbackLevel);
+        }
+
+        /// <summary>
+        /// Enables/disables the disk cache (optixDeviceContextSetCacheEnabled).
+        /// </summary>
+        public OptixResult DeviceContextSetCacheEnabled(IntPtr context, bool enabled)
+        {
+            var func = GetOrCreateDelegate(
+                ref cachedDeviceContextSetCacheEnabled, functionTable.OptixDeviceContextSetCacheEnabled);
+            return func(context, enabled ? 1 : 0);
+        }
+
+        /// <summary>
+        /// Queries whether the disk cache is enabled (optixDeviceContextGetCacheEnabled).
+        /// </summary>
+        public OptixResult DeviceContextGetCacheEnabled(IntPtr context, out bool enabled)
+        {
+            var func = GetOrCreateDelegate(
+                ref cachedDeviceContextGetCacheEnabled, functionTable.OptixDeviceContextGetCacheEnabled);
+            var result = func(context, out int enabledInt);
+            enabled = enabledInt != 0;
+            return result;
+        }
+
+        /// <summary>
+        /// Sets the disk cache location (optixDeviceContextSetCacheLocation).
+        /// </summary>
+        public OptixResult DeviceContextSetCacheLocation(IntPtr context, string location)
+        {
+            var func = GetOrCreateDelegate(
+                ref cachedDeviceContextSetCacheLocation, functionTable.OptixDeviceContextSetCacheLocation);
+            using var locationPtr = SafeHGlobal.FromString(location);
+            return func(context, locationPtr);
+        }
+
+        /// <summary>
+        /// Queries the disk cache location (optixDeviceContextGetCacheLocation).
+        /// </summary>
+        public OptixResult DeviceContextGetCacheLocation(IntPtr context, out string? location)
+        {
+            var func = GetOrCreateDelegate(
+                ref cachedDeviceContextGetCacheLocation, functionTable.OptixDeviceContextGetCacheLocation);
+            // No documented maximum path length in optix_host.h - a fixed generous
+            // buffer matches the SDK samples' own usage.
+            const int BufferSize = 2048;
+            using var buffer = SafeHGlobal.Alloc(BufferSize);
+            var result = func(context, buffer, new UIntPtr(BufferSize));
+            location = result == OptixResult.OPTIX_SUCCESS
+                ? Marshal.PtrToStringAnsi(buffer)
+                : null;
+            return result;
+        }
+
+        /// <summary>
+        /// Sets the disk cache garbage-collection watermarks
+        /// (optixDeviceContextSetCacheDatabaseSizes). Setting both to 0 disables
+        /// garbage collection.
+        /// </summary>
+        [CLSCompliant(false)]
+        public OptixResult DeviceContextSetCacheDatabaseSizes(
+            IntPtr context,
+            ulong lowWaterMark,
+            ulong highWaterMark)
+        {
+            var func = GetOrCreateDelegate(
+                ref cachedDeviceContextSetCacheDatabaseSizes,
+                functionTable.OptixDeviceContextSetCacheDatabaseSizes);
+            return func(context, new UIntPtr(lowWaterMark), new UIntPtr(highWaterMark));
+        }
+
+        /// <summary>
+        /// Queries the disk cache garbage-collection watermarks
+        /// (optixDeviceContextGetCacheDatabaseSizes).
+        /// </summary>
+        [CLSCompliant(false)]
+        public OptixResult DeviceContextGetCacheDatabaseSizes(
+            IntPtr context,
+            out ulong lowWaterMark,
+            out ulong highWaterMark)
+        {
+            var func = GetOrCreateDelegate(
+                ref cachedDeviceContextGetCacheDatabaseSizes,
+                functionTable.OptixDeviceContextGetCacheDatabaseSizes);
+            var result = func(context, out UIntPtr low, out UIntPtr high);
+            lowWaterMark = low.ToUInt64();
+            highWaterMark = high.ToUInt64();
+            return result;
+        }
+
+        /// <summary>
+        /// Fetches relocation info for an opacity micromap array
+        /// (optixOpacityMicromapArrayGetRelocationInfo).
+        /// </summary>
+        /// <param name="context">The OptiX device context.</param>
+        /// <param name="opacityMicromapArray">Device pointer of the built OMM array.</param>
+        /// <param name="info">Pointer to a marshaled OptixRelocationInfo to fill.</param>
+        [CLSCompliant(false)]
+        public OptixResult OpacityMicromapArrayGetRelocationInfo(
+            IntPtr context,
+            ulong opacityMicromapArray,
+            IntPtr info)
+        {
+            var func = GetOrCreateDelegate(
+                ref cachedOpacityMicromapArrayGetRelocationInfo,
+                functionTable.OptixOpacityMicromapArrayGetRelocationInfo);
+            return func(context, opacityMicromapArray, info);
+        }
+
+        /// <summary>
+        /// Updates a relocated opacity micromap array
+        /// (optixOpacityMicromapArrayRelocate). Does not copy the memory - the caller
+        /// must have copied the array bytes to the target location first.
+        /// </summary>
+        [CLSCompliant(false)]
+        public OptixResult OpacityMicromapArrayRelocate(
+            IntPtr context,
+            IntPtr stream,
+            IntPtr info,
+            ulong targetOpacityMicromapArray,
+            ulong targetSizeInBytes)
+        {
+            var func = GetOrCreateDelegate(
+                ref cachedOpacityMicromapArrayRelocate,
+                functionTable.OptixOpacityMicromapArrayRelocate);
+            return func(
+                context, stream, info, targetOpacityMicromapArray,
+                new UIntPtr(targetSizeInBytes));
+        }
+
+        /// <summary>
+        /// Computes the buffer sizes for a cluster acceleration build
+        /// (optixClusterAccelComputeMemoryUsage). tempUpdateSizeInBytes is always 0.
+        /// </summary>
+        /// <param name="context">The OptiX device context.</param>
+        /// <param name="buildMode">The build mode the later build will use.</param>
+        /// <param name="buildInput">Pointer to a marshaled OptixClusterAccelBuildInput.</param>
+        /// <param name="bufferSizes">Filled in with the required sizes.</param>
+        [CLSCompliant(false)]
+        public OptixResult ClusterAccelComputeMemoryUsage(
+            IntPtr context,
+            AccelStructures.OptixClusterAccelBuildMode buildMode,
+            IntPtr buildInput,
+            out AccelStructures.OptixAccelBufferSizes bufferSizes)
+        {
+            var func = GetOrCreateDelegate(
+                ref cachedClusterAccelComputeMemoryUsage,
+                functionTable.OptixClusterAccelComputeMemoryUsage);
+            return func(context, buildMode, buildInput, out bufferSizes);
+        }
+
+        /// <summary>
+        /// Builds cluster objects (CLASes, cluster templates, or GASes over
+        /// clusters) from device-side argument arrays (optixClusterAccelBuild).
+        /// </summary>
+        /// <param name="context">The OptiX device context.</param>
+        /// <param name="stream">The CUDA stream.</param>
+        /// <param name="buildModeDesc">Pointer to a marshaled OptixClusterAccelBuildModeDesc.</param>
+        /// <param name="buildInput">Pointer to a marshaled OptixClusterAccelBuildInput.</param>
+        /// <param name="argsArray">Device pointer to the per-object args array.</param>
+        /// <param name="argsCount">Optional device pointer to the object count (0 uses maxArgCount).</param>
+        /// <param name="argsStrideInBytes">Optional args stride (0 uses the natural stride).</param>
+        [CLSCompliant(false)]
+        public OptixResult ClusterAccelBuild(
+            IntPtr context,
+            IntPtr stream,
+            IntPtr buildModeDesc,
+            IntPtr buildInput,
+            ulong argsArray,
+            ulong argsCount,
+            uint argsStrideInBytes)
+        {
+            var func = GetOrCreateDelegate(
+                ref cachedClusterAccelBuild, functionTable.OptixClusterAccelBuild);
+            return func(
+                context, stream, buildModeDesc, buildInput,
+                argsArray, argsCount, argsStrideInBytes);
+        }
+
+        /// <summary>
+        /// Creates a denoiser from a user-supplied model (training data blob)
+        /// instead of a built-in model kind (optixDenoiserCreateWithUserModel).
+        /// </summary>
+        /// <param name="context">The OptiX device context.</param>
+        /// <param name="userData">Pointer to the user model data.</param>
+        /// <param name="userDataSizeInBytes">Size of the user model data.</param>
+        /// <param name="denoiser">Filled in with the denoiser handle.</param>
+        [CLSCompliant(false)]
+        public OptixResult DenoiserCreateWithUserModel(
+            IntPtr context,
+            IntPtr userData,
+            ulong userDataSizeInBytes,
+            out IntPtr denoiser)
+        {
+            var func = GetOrCreateDelegate(
+                ref cachedDenoiserCreateWithUserModel,
+                functionTable.OptixDenoiserCreateWithUserModel);
+            return func(context, userData, new UIntPtr(userDataSizeInBytes), out denoiser);
         }
 
         #endregion

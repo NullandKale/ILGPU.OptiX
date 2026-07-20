@@ -17,9 +17,7 @@ namespace ILGPU.OptiX.DeviceApi
 {
     /// <summary>
     /// Helpers for common triangle hit program operations: barycentric interpolation,
-    /// normal computation, and back-face handling.
-    /// Used by all triangle-based samples to reduce ~10 lines of boilerplate per closest-hit.
-    /// Works with System.Numerics.Vector3 for standardized math operations.
+    /// normal computation, and back-face handling, using <see cref="Vector3"/>.
     /// </summary>
     public static class OptixHitProgramHelpers
     {

@@ -14,15 +14,13 @@ using ILGPU.OptiX.DeviceApi;
 
 namespace Sample12
 {
-    // Adds AlbedoBuffer/NormalBuffer to Sample11's LaunchParams - AOV guide images the
-    // denoiser uses to better distinguish real geometric detail from noise (see
-    // devicePrograms.cs and SampleRenderer.cs's OptixDenoiserGuideLayer setup). Unlike
-    // ColorBuffer, these are NOT blended across frames - each frame overwrites them
-    // fresh, matching example12_denoiseSeparateChannels/devicePrograms.cu. Per-material
+    // AlbedoBuffer/NormalBuffer are AOV guide images the denoiser uses to better
+    // distinguish real geometric detail from noise (see devicePrograms.cs and
+    // SampleRenderer.cs's OptixDenoiserGuideLayer setup). Unlike ColorBuffer, these
+    // are NOT blended across frames - each frame overwrites them fresh. Per-material
     // data (diffuse color, texture handle) is looked up via OptixGetSbtDataPointer
     // against one hitgroup record per material per ray type (see MaterialSbtData.cs/
-    // SampleRenderer.cs's buildAccel/constructor) - see Sample07's LaunchParams.cs for
-    // why.
+    // SampleRenderer.cs's buildAccel/constructor).
     public struct LaunchParams
     {
         public int NumPixelSamples;

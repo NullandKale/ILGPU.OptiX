@@ -18,12 +18,11 @@ namespace ILGPU.OptiX.Pipeline
     /// <summary>
     /// Entry point for the high-level ray tracing API - owns global OptiX init and the
     /// device context, and builds <see cref="RayTracingPipeline{TLaunchParams}"/>
-    /// instances. The full "90 lines of OptiX-jargon ritual" every sample used to
-    /// repeat (module/pipeline/link compile options, magic stack sizes, hand-measured
-    /// SBT record structs, per-launch memory leaks) is behind
-    /// <see cref="CreatePipeline{TLaunchParams}"/>; everything the raw API exposes
-    /// stays reachable via <see cref="DeviceContext"/> and <see cref="Accelerator"/>
-    /// for consumers who need something this facade does not yet cover.
+    /// instances. Module/pipeline/link compile options, stack sizes, and SBT record
+    /// layout are all handled behind <see cref="CreatePipeline{TLaunchParams}"/>;
+    /// everything the raw API exposes stays reachable via <see cref="DeviceContext"/>
+    /// and <see cref="Accelerator"/> for consumers who need something this facade
+    /// does not yet cover.
     /// </summary>
     [CLSCompliant(false)]
     public sealed class OptixRayTracer : DisposeBase

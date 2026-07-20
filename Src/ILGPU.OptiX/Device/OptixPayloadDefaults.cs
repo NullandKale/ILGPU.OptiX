@@ -12,9 +12,7 @@
 namespace ILGPU.OptiX.Device
 {
     /// <summary>
-    /// Standard ray-type and bounce-flag constants used across path-tracing samples.
-    /// Provides a common vocabulary and eliminates duplicate constant definitions.
-    /// Samples can extend this with their own payload layout helpers as needed.
+    /// Standard ray-type and bounce-flag constants for path tracing.
     /// </summary>
     public static class OptixPayloadDefaults
     {

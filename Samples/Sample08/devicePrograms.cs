@@ -63,11 +63,10 @@ namespace Sample08
         {
             // One merged GAS build input for the whole model geometry (see Model.cs),
             // but per-material data comes from the current hitgroup record's custom
-            // data via OptixGetSbtDataPointer - see Sample07's devicePrograms.cs. This
-            // barycentric-interpolates the shading normal and texcoord, then - if the
-            // hit material has a texture - modulates the material's base color by a
-            // bindless CUDA texture-object sample (see CudaTextureObject.cs/
-            // CudaTex2D.cs).
+            // data via OptixGetSbtDataPointer. This barycentric-interpolates the
+            // shading normal and texcoord, then - if the hit material has a texture -
+            // modulates the material's base color by a bindless CUDA texture-object
+            // sample (see CudaTextureObject.cs/CudaTex2D.cs).
             uint primId = OptixGetPrimitiveIndex.Value;
             Vec3i tri = launchParams.Indices[primId];
             var (bw, bu, bv) = OptixHitProgramHelpers.GetTriangleBarycentrics();

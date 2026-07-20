@@ -6,8 +6,8 @@ namespace Sample14
     /// <summary>
     /// Draws a display texture as a fullscreen quad - trivial passthrough shader since
     /// tonemap/gamma already happened on the GPU (TonemapKernel.tonemapAndFlip writes
-    /// final display-ready BGRA bytes; the test pattern kernel does the same for M1).
-    /// No depth test/blend/culling needed - one opaque fullscreen draw per frame.
+    /// final display-ready BGRA bytes). No depth test/blend/culling needed - one
+    /// opaque fullscreen draw per frame.
     /// </summary>
     public sealed class FullscreenQuad : IDisposable
     {

@@ -8,11 +8,11 @@ namespace Sample14
     /// </summary>
     public static class MeshScenes
     {
-        // Shared by every single-mesh scene (M6) - reuses the existing triangle GAS
+        // Shared by every single-mesh scene - reuses the existing triangle GAS
         // pipeline as-is (meshes are pure triangle geometry, no new subsystem needed),
         // auto-fits the camera/lights to each mesh's own bounding box since these 4 OBJs
-        // (cow, stanford-bunny, teapot, xyzrgb_dragon) are at
-        // very different real-world scales. Keeps the mesh's own vertex arrays directly
+        // (cow, stanford-bunny, teapot, xyzrgb_dragon) are at very different
+        // real-world scales. Keeps the mesh's own vertex arrays directly
         // (no SceneBuilder re-accumulation needed for a single unmodified mesh).
         private static SceneData BuildMeshScene(string name, string objFileName, MaterialSbtData material, Vec3 lightColorA, Vec3 lightColorB)
         {
@@ -40,12 +40,19 @@ namespace Sample14
                 Vertices = mesh.Vertices,
                 Normals = mesh.Normals,
                 TexCoords = mesh.TexCoords,
+                // This builder constructs SceneData directly rather than going through
+                // SceneBuilder, so Tangents must be wired in explicitly here too, or
+                // Rays/RadianceRay.cs's unconditional
+                // launchParams.Tangents[tri.x] read (every triangle hit, no NumNeeLights-
+                // style empty-buffer guard) reads through a null device pointer the
+                // moment this scene has any Vertices at all.
+                Tangents = mesh.Tangents,
                 Indices = mesh.Indices,
                 TriangleMaterialIds = triangleMaterialIds,
                 Materials = new[] { material },
                 Lights = lights,
                 AmbientColor = new Vec3(0.5f, 0.55f, 0.65f),
-                AmbientIntensity = 0.15f,
+                AmbientIntensity = 0.1f,
                 BackgroundTop = new Vec3(0.35f, 0.45f, 0.6f),
                 BackgroundBottom = new Vec3(0.05f, 0.05f, 0.08f),
                 CameraOrigin = center + new Vec3(radius * 1.4f, radius * 0.9f, radius * 1.8f),
@@ -74,13 +81,17 @@ namespace Sample14
             MaterialPresets.Solid(new Vec3(0.6f, 0.05f, 0.08f)),
             new Vec3(1f, 0.95f, 0.85f), new Vec3(0.6f, 0.7f, 1f));
 
-        // Mirror (Reflectivity >= 0.9) rather than diffuse - exercises the M2 bounce
-        // loop against a real high-poly mesh, matching the reference's own
-        // sapphire-mirror dragon.
+        // Mirror (delta lobe, Roughness < Bsdf.DeltaRoughnessThreshold) rather than
+        // diffuse - exercises the bounce loop against a real high-poly mesh, matching
+        // the reference's own sapphire-mirror dragon. Roughness must be passed
+        // explicitly: MaterialPresets.Solid's own default (1f, fully rough) is what a
+        // "diffuse" material wants, and it's Roughness - not Metallic - that selects
+        // the mirror/delta lobe, so Metallic alone here would render a rough metal,
+        // not a mirror.
         public static SceneData BuildDragonScene() => BuildMeshScene(
             "Mesh: XYZRGB Dragon (mirror)",
             "xyzrgb_dragon.obj",
-            MaterialPresets.Solid(new Vec3(0.85f, 0.9f, 0.95f), 0.95f),
+            MaterialPresets.Solid(new Vec3(0.85f, 0.9f, 0.95f), 0.95f, roughness: 0f),
             new Vec3(1f, 0.95f, 0.85f), new Vec3(0.6f, 0.7f, 1f));
 
         // Direct port of the reference's MeshScenes.BuildAllMeshesScene() - all four
@@ -95,7 +106,7 @@ namespace Sample14
             {
                 Name = "All meshes (cow/bunny/teapot/dragon)",
                 AmbientColor = new Vec3(1f, 1f, 1f),
-                AmbientIntensity = 0.15f,
+                AmbientIntensity = 0.1f,
                 BackgroundTop = new Vec3(0f, 0f, 0f),
                 BackgroundBottom = new Vec3(0f, 0f, 0f),
                 CameraOrigin = new Vec3(0f, 1.5f, 2f),
@@ -108,7 +119,7 @@ namespace Sample14
             uint cow = (uint)b.AddMaterial(MaterialPresets.Solid(new Vec3(0.80f, 0.45f, 0.25f)));           // copper
             uint bunny = (uint)b.AddMaterial(MaterialPresets.Solid(new Vec3(0.0f, 0.5f, 0.5f)));            // jade
             uint teapot = (uint)b.AddMaterial(MaterialPresets.Solid(new Vec3(0.9f, 0.9f, 0.0f), 0.06f));    // gold
-            uint dragon = (uint)b.AddMaterial(MaterialPresets.Solid(new Vec3(0.88f, 0.0f, 0.88f), 0.65f));  // amethyst (below the 0.9 mirror threshold - renders diffuse)
+            uint dragon = (uint)b.AddMaterial(MaterialPresets.Solid(new Vec3(0.88f, 0.0f, 0.88f), 0.65f));  // amethyst (Roughness left at Solid's default of 1 - renders as a rough, not mirror-like, metal)
             uint floor = (uint)b.AddMaterial(MaterialPresets.Checker(new Vec3(0.82f, 0.82f, 0.82f), new Vec3(0.15f, 0.15f, 0.15f), 0.7f));
 
             b.AddMesh("cow.obj", new Vec3(-3.2f, 0f, -4.0f), cow);
@@ -116,7 +127,8 @@ namespace Sample14
             b.AddMesh("teapot.obj", new Vec3(1.6f, 0f, -3.2f), teapot);
             b.AddMesh("xyzrgb_dragon.obj", new Vec3(3.2f, 0f, -4.6f), dragon);
 
-            b.AddXZRect(-10f, 10f, -10f, 4f, 0f, floor);
+            // XZRect(-10,10, -10,4, c=0): X in [-10,10], Z in [-10,4], Y = 0, facing +Y.
+            b.AddQuad(new Vec3(-10f, 0f, 4f), new Vec3(10f, 0f, 4f), new Vec3(10f, 0f, -10f), new Vec3(-10f, 0f, -10f), new Vec3(0f, 1f, 0f), floor);
 
             b.AddLight(new Vec3(0f, 6f, 0f), new Vec3(1f, 0.95f, 0.88f), 65f);
             b.AddLight(new Vec3(-3f, 3f, 2f), new Vec3(0.85f, 0.90f, 1.0f), 35f);
@@ -147,15 +159,18 @@ namespace Sample14
             var b = new SceneBuilder
             {
                 Name = "Sponza",
-                // Lower than the other mesh scenes' ambient - Sponza is an enclosed
-                // building (most of the scene is indoors/shadowed), so a bright uniform
-                // ambient floor washes out the shadowed interior instead of just filling
-                // in outdoor sky-facing surfaces the way it does for a single object on
-                // an open floor.
-                AmbientColor = new Vec3(0.3f, 0.3f, 0.35f),
-                AmbientIntensity = 0.025f,
+                // Flat ambient is a fill term (see MaterialShading.ShadeSurface) -
+                // left non-zero here it would double-count diffuse illumination on top of
+                // the HDRI's own GI below, so it's zeroed the same way PbrShowcaseScene.cs
+                // does for its HDRI-lit scene.
+                AmbientColor = new Vec3(0f, 0f, 0f),
+                AmbientIntensity = 0f,
                 BackgroundTop = new Vec3(0.15f, 0.15f, 0.2f),
                 BackgroundBottom = new Vec3(0.05f, 0.05f, 0.08f),
+                // HDRI environment map test case - combined with the hand-promoted
+                // emissive vases and the existing point lights, exercises a full
+                // point+mesh+env MIS validation case through Sponza's colonnades.
+                EnvMapPath = "models/hdri/venice_sunset_1k.hdr",
                 CameraOrigin = new Vec3(min.x + (sizeX * 0.15f), eyeHeight, center.z),
                 CameraLookAt = new Vec3(max.x - (sizeX * 0.15f), eyeHeight, center.z),
                 CameraUp = new Vec3(0f, 1f, 0f),
@@ -215,14 +230,42 @@ namespace Sample14
                 // TextureObject stays 0.
                 bool isAlphaCutout = objMat.Name == "leaf" || objMat.Name == "Material__57" || objMat.Name == "chain";
 
+                // Hand-promoted emissive mesh-light test case - Sponza's bundled MTL
+                // has zero real emissive materials, so the three vase materials are
+                // overridden with a warm glow to exercise real emissive-triangle
+                // NEE/MIS against actual scene geometry, same pattern as the
+                // leaf/chain alpha-cutout override above.
+                bool isEmissiveVase = objMat.Name == "vase" || objMat.Name == "vase_round" || objMat.Name == "vase_hanging";
+
+                // Hand-authored scalar Metallic/Roughness overrides by material name -
+                // Sponza has no real ORM texture data to drive this from, so this is
+                // the fallback: the metal chain/flagpole get a real metallic response
+                // instead of Roughness=1's flat diffuse default, and the floor gets a
+                // subtler polished-stone gloss.
+                float materialRoughness = 1f;
+                float materialMetallic = 0f;
+                if (objMat.Name == "chain" || objMat.Name == "flagpole")
+                {
+                    materialRoughness = 0.35f;
+                    materialMetallic = 0.9f;
+                }
+                else if (objMat.Name == "floor")
+                {
+                    materialRoughness = 0.55f;
+                }
+
                 materialIdMap[i] = (uint)b.AddMaterial(
                     new MaterialSbtData
                     {
-                        Albedo = objMat.Diffuse,
+                        BaseColor = objMat.Diffuse,
+                        Roughness = materialRoughness,
+                        Metallic = materialMetallic,
                         MaterialKind = MaterialSbtData.Solid,
                         TextureWeight = relativePath != null ? 1f : 0f,
                         UVScale = 1f,
                         AlphaCutoff = isAlphaCutout ? 0.5f : 0f,
+                        Emission = isEmissiveVase ? new Vec3(4f, 2.4f, 1f) : new Vec3(0f, 0f, 0f),
+                        EmissionStrength = 1f,
                     },
                     relativePath);
             }

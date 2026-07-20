@@ -11,12 +11,6 @@
 
 using ILGPU.Algorithms;
 using ILGPU.Runtime;
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Numerics;
-using System.Text;
-using System.Threading.Tasks;
 
 namespace Sample14
 {
@@ -80,75 +74,6 @@ namespace Sample14
             cameraPlaneDist = 1.0f / XMath.Tan(verticalFov * XMath.PI / 360.0f);
             reciprocalHeight = 1.0f / height;
             reciprocalWidth = 1.0f / width;
-        }
-    }
-
-    // Mouse-driven orbit/pan/dolly camera controls, ported from the behavior of the
-    // optix7course C++ reference's InspectModeManip ("inspect mode": left-drag orbits
-    // around a fixed look-at point, right-drag dollies toward/away from it, middle-drag
-    // pans). Copy-pasted per sample by established convention (see Sample04-12's own
-    // Camera.cs) - no shared library project exists in this repo.
-    public static class CameraMotion
-    {
-        private const float DegreesPerDragFraction = 150f;
-        private const float PixelsPerMove = 10f;
-        private const float MinDistance = 0.1f;
-        private const float MinPolarDegrees = 2f;
-
-        public static Camera Orbit(Camera camera, float dxFraction, float dyFraction)
-        {
-            float yaw = -dxFraction * DegreesPerDragFraction * XMath.PI / 180f;
-            float pitch = -dyFraction * DegreesPerDragFraction * XMath.PI / 180f;
-
-            Vec3 lookAt = camera.lookAt;
-            Vec3 worldUp = camera.up;
-            Vec3 offset = camera.origin - lookAt;
-
-            // yaw around world up
-            offset = Vector4.Transform((Vector4)offset, Matrix4x4.CreateFromAxisAngle(worldUp, yaw));
-
-            // pitch around the current local right axis
-            Vec3 forward = Vec3.unitVector(-offset);
-            Vec3 right = Vec3.unitVector(Vec3.cross(worldUp, forward));
-            Vec3 pitchedOffset = Vector4.Transform((Vector4)offset, Matrix4x4.CreateFromAxisAngle(right, pitch));
-
-            // reject the pitch step alone (keep yaw) if it would cross too close to the poles
-            float minPolarRad = MinPolarDegrees * XMath.PI / 180f;
-            Vec3 newForward = Vec3.unitVector(-pitchedOffset);
-            float polar = XMath.Acos(XMath.Clamp(Vec3.dot(newForward, worldUp), -1f, 1f));
-            if (polar >= minPolarRad && polar <= XMath.PI - minPolarRad)
-            {
-                offset = pitchedOffset;
-            }
-
-            camera.origin = lookAt + offset;
-            camera.axis = OrthoNormalBasis.fromZY(Vec3.unitVector(camera.lookAt - camera.origin), worldUp);
-            return camera;
-        }
-
-        public static Camera Dolly(Camera camera, float dyFraction)
-        {
-            Vec3 offsetDir = Vec3.unitVector(camera.origin - camera.lookAt);
-            float distance = Vec3.dist(camera.origin, camera.lookAt);
-            float delta = dyFraction * PixelsPerMove * camera.worldScale;
-            float newDistance = XMath.Max(distance - delta, MinDistance);
-
-            camera.origin = camera.lookAt + (offsetDir * newDistance);
-            camera.axis = OrthoNormalBasis.fromZY(Vec3.unitVector(camera.lookAt - camera.origin), camera.up);
-            return camera;
-        }
-
-        public static Camera Pan(Camera camera, float dxFraction, float dyFraction)
-        {
-            float distance = Vec3.dist(camera.origin, camera.lookAt);
-            Vec3 translation =
-                ((-dxFraction * camera.axis.x) + (dyFraction * camera.axis.y))
-                * PixelsPerMove * camera.worldScale * (distance / 100f);
-
-            camera.origin += translation;
-            camera.lookAt += translation;
-            camera.axis = OrthoNormalBasis.fromZY(Vec3.unitVector(camera.lookAt - camera.origin), camera.up);
-            return camera;
         }
     }
 

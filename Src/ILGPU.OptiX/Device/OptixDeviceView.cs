@@ -68,22 +68,20 @@ namespace ILGPU.OptiX.Device
 
         /// <summary>
         /// Builds a view from a device buffer's own native pointer/length - the one
-        /// place a sample needs to know a <c>MemoryBuffer1D{T}</c> has a
+        /// place a caller needs to know a <c>MemoryBuffer1D{T}</c> has a
         /// <c>NativePtr</c> at all; every other call site just passes the buffer
         /// itself. Returns <see cref="default"/> (an invalid, zero-length view) for a
-        /// null buffer, matching the existing "optional/absent buffer" convention
-        /// (formerly a null <c>T*</c>) used across the superset-scene samples.
+        /// null buffer, representing an optional/absent buffer.
         /// </summary>
         public static OptixDeviceView<T> From(MemoryBuffer1D<T, Stride1D.Dense> buffer) =>
             buffer == null ? default : new OptixDeviceView<T>((T*)buffer.NativePtr, buffer.Length);
 
         /// <summary>
         /// Builds a view from a raw-byte buffer, reinterpreting it as <typeparamref
-        /// name="T"/> - for the common WPF-interop pattern where the same physical
-        /// buffer is written as <typeparamref name="T"/> by a raygen program but also
-        /// consumed as raw bytes elsewhere (e.g. a row-flip kernel taking
-        /// <c>ArrayView{byte}</c>), so the buffer itself is allocated as <c>byte</c>
-        /// rather than <typeparamref name="T"/>.
+        /// name="T"/> - for the case where the same physical buffer is written as
+        /// <typeparamref name="T"/> by a raygen program but also consumed as raw bytes
+        /// elsewhere (e.g. a row-flip kernel taking <c>ArrayView{byte}</c>), so the
+        /// buffer itself is allocated as <c>byte</c> rather than <typeparamref name="T"/>.
         /// </summary>
         public static OptixDeviceView<T> FromBytes(MemoryBuffer1D<byte, Stride1D.Dense> buffer) =>
             buffer == null ? default : new OptixDeviceView<T>((T*)buffer.NativePtr, buffer.Length / sizeof(T));

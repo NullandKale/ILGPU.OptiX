@@ -44,7 +44,12 @@ namespace ILGPU.OptiX.AccelStructures
         /// <summary>
         /// Curve inputs.
         /// </summary>
-        Curves = 0x2145
+        Curves = 0x2145,
+
+        /// <summary>
+        /// Sphere inputs.
+        /// </summary>
+        Spheres = 0x2146
     }
 
     public enum OptixVertexFormat
@@ -132,6 +137,50 @@ namespace ILGPU.OptiX.AccelStructures
         RoundLinear = 0x2503,
 
         /// <summary>
+        /// CatmullRom curve with circular cross-section.
+        /// </summary>
+        RoundCatmullRom = 0x2504,
+
+        /// <summary>
+        /// B-spline curve of degree 2 with oriented flat cross-section (ribbon).
+        /// </summary>
+        FlatQuadraticBSpline = 0x2505,
+
+        /// <summary>
+        /// Sphere.
+        /// </summary>
+        Sphere = 0x2506,
+
+        /// <summary>
+        /// Bezier curve of degree 3 with circular cross-section.
+        /// </summary>
+        RoundCubicBezier = 0x2507,
+
+        /// <summary>
+        /// B-spline curve of degree 2 with circular cross-section,
+        /// with rounded endcaps (rocaps) at the ends of each segment.
+        /// </summary>
+        RoundQuadraticBSplineRocaps = 0x2508,
+
+        /// <summary>
+        /// B-spline curve of degree 3 with circular cross-section,
+        /// with rounded endcaps (rocaps) at the ends of each segment.
+        /// </summary>
+        RoundCubicBSplineRocaps = 0x2509,
+
+        /// <summary>
+        /// CatmullRom curve with circular cross-section,
+        /// with rounded endcaps (rocaps) at the ends of each segment.
+        /// </summary>
+        RoundCatmullRomRocaps = 0x250A,
+
+        /// <summary>
+        /// Bezier curve of degree 3 with circular cross-section,
+        /// with rounded endcaps (rocaps) at the ends of each segment.
+        /// </summary>
+        RoundCubicBezierRocaps = 0x250B,
+
+        /// <summary>
         /// Triangle.
         /// </summary>
         Triangle = 0x2531,
@@ -171,6 +220,9 @@ namespace ILGPU.OptiX.AccelStructures
         public OptixBuildInputInstanceArray InstanceArray;
 
         [FieldOffset(8)]
+        public OptixBuildInputSphereArray SphereArray;
+
+        [FieldOffset(8)]
         public fixed byte Pad[1024];
     }
 
@@ -199,23 +251,15 @@ namespace ILGPU.OptiX.AccelStructures
 
         public OptixTransformFormat TransformFormat;
 
-        // This struct previously ended at
-        // TransformFormat, omitting OpacityMicromap/DisplacementMicromap entirely (the
-        // real SDK 9.0.0 struct has both trailing fields). Only OpacityMicromap is
-        // added - displacement micromaps remain out of scope. Safe to omit the trailing DisplacementMicromap field: every
-        // OptixBuildInput is constructed via `new OptixBuildInput { ... }`, which
-        // zero-initializes the whole union (including this struct's own unused tail
-        // bytes) - correctly representing "no displacement micromap" to the driver.
+        // DisplacementMicromap (the SDK struct's other trailing field) is intentionally
+        // omitted - out of scope. Safe: every OptixBuildInput is constructed via
+        // `new OptixBuildInput { ... }`, which zero-initializes the whole union, so the
+        // omitted tail bytes correctly read as "no displacement micromap" to the driver.
         public OptixBuildInputOpacityMicromap OpacityMicromap;
     }
 
-    // This struct previously omitted IndexBuffer/
-    // IndexStrideInBytes/EndcapFlags entirely, which optix_types.h's own doc comment
-    // on OptixBuildInputCurveArray::indexBuffer calls out as "required (unlike for
-    // OptixBuildInputTriangleArray)" - the struct as it stood could never have
-    // actually built curves even with a builder method added, since there was no way
-    // to supply the index buffer at all. Fixed to match the real SDK 9.0.0 field
-    // order/layout exactly (verified against optix_types.h directly, not guessed).
+    // Mirrors OptixBuildInputCurveArray (optix_types.h). IndexBuffer is required per
+    // the SDK's own doc comment, unlike OptixBuildInputTriangleArray.
     [CLSCompliant(false)]
     public unsafe struct OptixBuildInputCurveArray
     {
@@ -247,6 +291,68 @@ namespace ILGPU.OptiX.AccelStructures
 
         /// <summary>See <see cref="OptixCurveEndcapFlags"/>.</summary>
         public uint EndcapFlags;
+    }
+
+    /// <summary>
+    /// Mirrors OptixBuildInputSphereArray (optix_types.h) - built-in sphere
+    /// primitives, one sphere per center vertex. Requires the pipeline to be
+    /// compiled with <see cref="OptixPrimitiveTypeFlags.Sphere"/> and hit groups
+    /// using the sphere builtin intersection module.
+    /// </summary>
+    [CLSCompliant(false)]
+    public unsafe struct OptixBuildInputSphereArray
+    {
+        /// <summary>
+        /// Pointer to a host array of device pointers (one per motion step), each
+        /// pointing to an array of float3 sphere center points.
+        /// </summary>
+        public IntPtr VertexBuffers;
+
+        /// <summary>Stride between vertices; zero means tightly packed float3.</summary>
+        public uint VertexStrideInBytes;
+
+        /// <summary>Number of vertices in each buffer in <see cref="VertexBuffers"/>.</summary>
+        public uint NumVertices;
+
+        /// <summary>
+        /// Parallel to <see cref="VertexBuffers"/>: a device pointer per motion
+        /// step, each with per-vertex float radii (or a single float when
+        /// <see cref="SingleRadius"/> is set).
+        /// </summary>
+        public IntPtr RadiusBuffers;
+
+        /// <summary>Stride between radii; zero means tightly packed floats.</summary>
+        public uint RadiusStrideInBytes;
+
+        /// <summary>
+        /// Boolean - when non-zero each radius buffer holds a single radius shared
+        /// by all spheres instead of one per vertex.
+        /// </summary>
+        public int SingleRadius;
+
+        /// <summary>
+        /// Host array of per-SBT-record OptixGeometryFlags; size must match
+        /// <see cref="NumSbtRecords"/>.
+        /// </summary>
+        public uint* Flags;
+
+        /// <summary>Number of SBT records available to the SBT index offset override.</summary>
+        public uint NumSbtRecords;
+
+        /// <summary>
+        /// Device pointer to a per-primitive local SBT index offset buffer; may be
+        /// null. Every entry must be in [0, NumSbtRecords-1].
+        /// </summary>
+        public IntPtr SbtIndexOffsetBuffer;
+
+        /// <summary>Size of the SBT index offset type: 0, 1, 2 or 4 bytes.</summary>
+        public uint SbtIndexOffsetSizeInBytes;
+
+        /// <summary>Stride between SBT index offsets; zero means tightly packed.</summary>
+        public uint SbtIndexOffsetStrideInBytes;
+
+        /// <summary>Primitive index bias applied in optixGetPrimitiveIndex().</summary>
+        public uint PrimitiveIndexOffset;
     }
 
     [CLSCompliant(false)]

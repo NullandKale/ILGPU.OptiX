@@ -115,9 +115,9 @@ namespace Sample13
         // accumulated frames given the existing progressive accumulation. Total
         // internal reflection forces the reflect branch unconditionally (no valid
         // refraction direction exists). A fractional Transparency isn't currently
-        // exercised by any Sample13 scene (materials use 1.0, matching the reference's
-        // actual glass materials) - if a future scene wants partial transparency,
-        // revisit how it should modulate this probability split.
+        // exercised by any scene in this sample (materials use 1.0, matching the
+        // reference's actual glass materials) - if a future scene wants partial
+        // transparency, revisit how it should modulate this probability split.
         internal unsafe static void ShadeDielectric(LaunchParams launchParams, MaterialSbtData* sbtData, Vec3 rayDir, Vec3 outwardNormal, bool frontFace, Vec3 surfPos)
         {
             float etaFrom = frontFace ? 1f : sbtData->IndexOfRefraction;
@@ -186,8 +186,8 @@ namespace Sample13
         }
 
         // Multi-hit colored transmittance shadow ray - walks through transparent
-        // occluders via __anyhit__shadow's
-        // optixIgnoreIntersection, accumulating TransmissionColor*Transparency per hit
+        // occluders via __anyhit__shadow's optixIgnoreIntersection, accumulating
+        // TransmissionColor*Transparency per hit
         // up to MaxRefractions, unlike a plain binary occlusion test.
         private unsafe static Vec3 ShadowTransmittance(LaunchParams launchParams, Vec3 surfPos, Vec3 outwardNormal, Vec3 lightDir, float lightDist)
         {
@@ -283,10 +283,10 @@ namespace Sample13
         }
 
         // Direct port of the reference's SampleAlbedo (RaytraceRenderer.cs) -
-        // TextureObject == 0 means no texture (matches Sample08's convention). UV is
-        // only ever non-zero for triangle hits (custom primitives have no UV
-        // parameterization in this sample), so a textured custom primitive is not
-        // currently possible - not needed by any Sample13 scene.
+        // TextureObject == 0 means no texture. UV is only ever non-zero for triangle
+        // hits (custom primitives have no UV parameterization in this sample), so a
+        // textured custom primitive is not currently possible - not needed by any
+        // scene in this sample.
         internal unsafe static Vec3 SampleAlbedo(MaterialSbtData* sbtData, Vec3 surfPos, Vec2 uv)
         {
             Vec3 baseAlbedo = sbtData->MaterialKind == MaterialSbtData.Checker

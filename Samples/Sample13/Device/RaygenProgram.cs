@@ -59,12 +59,12 @@ namespace Sample13
                         1e20f,
                         0.0f,
                         0xff,
-                        // Any-hit must run on radiance rays now that alpha-cutout
-                        // materials exist (Sponza's leaf geometry) - __anyhit__radiance
-                        // is what actually ignores the intersection for a
-                        // below-threshold-alpha sample. DISABLE_ANYHIT (the old value
-                        // here, from before alpha-cutout existed) would silently skip
-                        // that test and shade the nearest triangle regardless of alpha.
+                        // Any-hit must run on radiance rays because of alpha-cutout
+                        // materials (Sponza's leaf geometry) - __anyhit__radiance is
+                        // what actually ignores the intersection for a
+                        // below-threshold-alpha sample. DISABLE_ANYHIT would silently
+                        // skip that test and shade the nearest triangle regardless of
+                        // alpha.
                         OptixRayFlags.None,
                         Payloads.RADIANCE_RAY_TYPE,
                         Payloads.RAY_TYPE_COUNT,
@@ -84,9 +84,9 @@ namespace Sample13
                     sampleRadiance += throughput * radiance;
 
                     // AOV guide buffers only ever reflect the primary ray's own hit
-                    // (bounce 0), matching Sample11/12's convention - a mirror/glass
-                    // primary hit still contributes its own normal/tint here, which is
-                    // exactly what the denoiser needs to recognize that surface.
+                    // (bounce 0) - a mirror/glass primary hit still contributes its own
+                    // normal/tint here, which is exactly what the denoiser needs to
+                    // recognize that surface.
                     if (bounce == 0)
                     {
                         sampleNormal = new Vec3(
@@ -161,9 +161,8 @@ namespace Sample13
             launchParams.ColorBuffer[fbIndex] = new Vec4(pixelColor.x, pixelColor.y, pixelColor.z, 1f);
 
             // Unlike ColorBuffer, AlbedoBuffer/NormalBuffer are NOT blended across
-            // frames - each frame overwrites them fresh, matching Sample12's
-            // devicePrograms.cs (these are the denoiser's AOV guide inputs, not part of
-            // the progressively-accumulated image).
+            // frames - each frame overwrites them fresh (these are the denoiser's AOV
+            // guide inputs, not part of the progressively-accumulated image).
             launchParams.NormalBuffer[fbIndex] = new Vec4(pixelNormal.x, pixelNormal.y, pixelNormal.z, 1f);
             launchParams.AlbedoBuffer[fbIndex] = new Vec4(pixelAlbedo.x, pixelAlbedo.y, pixelAlbedo.z, 1f);
         }

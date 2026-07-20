@@ -5,12 +5,12 @@ using System.Runtime.InteropServices;
 
 namespace Sample15
 {
-    // Same three-flag enum and P/Invoke signature set as
-    // example/OpenTKSplat/OpenTKSplat/Compute/ILGPUOpenGLExchangeBuffer.cs's
-    // CudaGraphicsMapFlags/CudaGlInterop - copied near-verbatim since it's a proven,
-    // minimal wrapper around the CUDA driver's GL-interop entry points (nvcuda.dll,
-    // same P/Invoke convention CudaTextureObject.cs already uses elsewhere in this
-    // repo for texture objects).
+    // Same three-flag enum and P/Invoke signature set as Sample13's
+    // Rendering/CudaGlInterop.cs (itself copied from
+    // example/OpenTKSplat/OpenTKSplat/Compute/ILGPUOpenGLExchangeBuffer.cs) - a
+    // proven, minimal wrapper around the CUDA driver's GL-interop entry points
+    // (nvcuda.dll, same P/Invoke convention CudaTextureObject.cs already uses
+    // elsewhere in this repo for texture objects).
     public enum CudaGraphicsMapFlags
     {
         None = 0,

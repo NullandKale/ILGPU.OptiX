@@ -27,8 +27,8 @@ namespace Sample13
         public string? DiffuseTexturePath;
     }
 
-    // A minimal, from-scratch Wavefront OBJ/MTL loader, ported from Sample07's Model.cs -
-    // one merged vertex/index buffer for the whole model, per-material data looked up via
+    // A minimal, from-scratch Wavefront OBJ/MTL loader - one merged vertex/index
+    // buffer for the whole model, per-material data looked up via
     // optixGetSbtDataPointer against one hitgroup record per material (see
     // SampleRenderer.cs), same convention as every other scene in this sample.
     public class OBJModel
@@ -153,8 +153,8 @@ namespace Sample13
                 }
             }
 
-            // cow.obj/stanford-bunny.obj/teapot.obj/xyzrgb_dragon.obj (M6's mesh scenes)
-            // are all confirmed to have zero vn lines - without this fallback, every
+            // cow.obj/stanford-bunny.obj/teapot.obj/xyzrgb_dragon.obj are all confirmed
+            // to have zero vn lines - without this fallback, every
             // vertex would keep ResolveVertex's default (0,1,0) normal below, which
             // visibly breaks shading (every triangle would light as if facing straight
             // up regardless of its actual orientation). Compute smooth per-vertex

@@ -341,7 +341,7 @@ namespace Sample14.UI.Backends
                 }
 
                 // window.MousePassthrough isn't available in OpenTK 4.8.2 (added in a
-                // later version) - harmless to skip since Sample14 doesn't enable
+                // later version) - harmless to skip since this sample doesn't enable
                 // ImGuiConfigFlags.ViewportsEnable, so this multi-viewport code path
                 // never actually runs.
 
@@ -384,7 +384,7 @@ namespace Sample14.UI.Backends
 
             // OpenTK 4.8.2's MouseCursor.StandardShape only has Arrow/IBeam/Crosshair/
             // Hand/HResize/VResize (the diagonal-resize/pointing-hand/not-allowed
-            // shapes were added in a later OpenTK version than what Sample14
+            // shapes were added in a later OpenTK version than this sample
             // references) - fall back to the closest available shape rather than
             // bumping the whole project's OpenTK version just for cursor icons.
             static MouseCursor GetCursor(ImGuiMouseCursor imguiCursor)

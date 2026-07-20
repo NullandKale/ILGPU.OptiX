@@ -1,0 +1,81 @@
+// ---------------------------------------------------------------------------------------
+//                                     ILGPU OptiX
+//                        Copyright (c) 2020-2022 ILGPU Project
+//                                    www.ilgpu.net
+//
+// File: OptixReportIntersection.tt/OptixReportIntersection.cs
+//
+// This file is part of ILGPU and is distributed under the University of Illinois Open
+// Source License. See LICENSE.txt for details.
+// ---------------------------------------------------------------------------------------
+
+<#@ template debug="false" hostspecific="false" language="C#" #>
+<#@ assembly name="System.Core" #>
+<#@ import namespace="System.Linq" #>
+<#@ import namespace="System.Text" #>
+<#@ import namespace="System.Collections.Generic" #>
+<#@ output extension=".cs" #>
+
+using ILGPU.Runtime.Cuda;
+using System;
+
+namespace ILGPU.OptiX.DeviceApi
+{
+    /// <summary>
+    /// Provides the functionality of the optixReportIntersection built-in function
+    /// overloads (internal/optix_device_impl.h's "_optix_report_intersection_0..8"
+    /// pseudo-calls) - callable only from an intersection program. Attribute
+    /// registers a0..a7 are delivered to the AH/CH programs of the hit, readable
+    /// there via <see cref="OptixGetAttribute"/>; the pipeline's NumAttributeValues
+    /// must cover the highest attribute count reported. Returns true if the hit was
+    /// accepted (not ignored by an any-hit program).
+    /// </summary>
+    [CLSCompliant(false)]
+    public static class OptixReportIntersection
+    {
+<#
+    const int MaxAttributes = 8;
+    for (int count = 0; count <= MaxAttributes; count++)
+    {
+        // %0 = accepted output; %1 = hitT, %2 = hitKind, %3.. = attributes.
+        var inputSlots = Enumerable.Range(1, count + 2).Select(i => $"%{i}");
+        string attributeSummary = count == 0
+            ? "no attribute registers"
+            : count == 1
+                ? "1 attribute register (a0)"
+                : $"{count} attribute registers (a0..a{count - 1})";
+#>
+        /// <summary>
+        /// Reports an intersection at <paramref name="hitT"/> carrying
+        /// <#= attributeSummary #>.
+        /// </summary>
+        public static bool Report(
+            float hitT,
+            uint hitKind<#= count > 0 ? "," : ")" #>
+<#      for (int i = 0; i < count; i++) { #>
+            uint a<#= i #><#= i < count - 1 ? "," : ")" #>
+<#      } #>
+        {
+            Input<float> _hitT = hitT;
+            Input<uint> _hitKind = hitKind;
+<#      for (int i = 0; i < count; i++) { #>
+            Input<uint> _a<#= i #> = a<#= i #>;
+<#      } #>
+            Output<uint> _accepted = default;
+            CudaAsm.EmitRef(
+                "call (%0), _optix_report_intersection_<#= count #>, " +
+                "(<#= string.Join(", ", inputSlots) #>);",
+                ref _accepted,
+                ref _hitT,
+                ref _hitKind<#= count > 0 ? "," : ");" #>
+<#      for (int i = 0; i < count; i++) { #>
+                ref _a<#= i #><#= i < count - 1 ? "," : ");" #>
+<#      } #>
+            return _accepted.Value != 0;
+        }
+
+<#
+    }
+#>
+    }
+}

@@ -4,9 +4,8 @@ using ILGPU.OptiX.DeviceApi;
 
 namespace Sample13
 {
-    // One __intersection__ program per custom-primitive type - kept in its own file
-    // since more primitive types (Box, CylinderY,
-    // Disk, rects) accumulate here in M4.
+    // One __intersection__ program per custom-primitive type (Sphere, Box, CylinderY,
+    // Disk, rects), kept together in one file.
     public static class IntersectionPrograms
     {
         // Custom-primitive hit-kind tags passed to OptixReportIntersection - must stay
@@ -235,9 +234,9 @@ namespace Sample13
 
         // Amanatides & Woo fast voxel traversal against a flat row-major solid-voxel
         // occupancy grid (the DDA *technique* is ported from the reference's
-        // VolumeGrid.cs; its 8x8x8
-        // Morton-brick storage is a CPU-cache optimization not carried over here, a flat
-        // array suits GPU access patterns better). The whole grid is ONE custom
+        // VolumeGrid.cs; its 8x8x8 Morton-brick storage is a CPU-cache optimization not
+        // carried over here, a flat array suits GPU access patterns better). The whole
+        // grid is ONE custom
         // primitive (NumPrimitives=1 in its GAS build input) - the loop walks voxels
         // entirely inside this one intersection-program invocation.
         public unsafe static void __intersection__volumeGrid(LaunchParams launchParams)

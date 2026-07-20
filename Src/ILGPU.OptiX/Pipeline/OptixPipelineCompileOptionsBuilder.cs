@@ -31,6 +31,7 @@ namespace ILGPU.OptiX.Pipeline
         private bool usesMotionBlur;
         private OptixPrimitiveTypeFlags primitiveTypeFlags;
         private bool allowOpacityMicromaps;
+        private bool allowClusteredGeometry;
 
         /// <summary>
         /// Sets the number of payload values. Payload values and attribute values are
@@ -115,15 +116,13 @@ namespace ILGPU.OptiX.Pipeline
         }
 
         /// <summary>
-        /// Sets which non-default primitive types
-        /// the traversable graph may contain, e.g. <see cref="OptixPrimitiveTypeFlags.RoundCubicBSpline"/>
-        /// for curves. Required whenever any <c>GetBuiltinISModule</c>/curve geometry
-        /// is used - confirmed via a real GPU compile error: "Cannot create builtin
-        /// module... The pipeline must support OptixPrimitiveTypeFlags...". Defaults to
-        /// 0, which per the field's own SDK doc comment means Custom + Triangle only -
-        /// if the pipeline also uses triangles alongside curves, OR in
-        /// <see cref="OptixPrimitiveTypeFlags.Triangle"/> explicitly (setting any
-        /// non-zero value replaces the implicit default rather than adding to it).
+        /// Sets which non-default primitive types the traversable graph may contain,
+        /// e.g. <see cref="OptixPrimitiveTypeFlags.RoundCubicBSpline"/> for curves.
+        /// Required whenever any <c>GetBuiltinISModule</c>/curve geometry is used.
+        /// Defaults to 0, which means Custom + Triangle only - setting any non-zero
+        /// value REPLACES that implicit default rather than adding to it, so include
+        /// <see cref="OptixPrimitiveTypeFlags.Triangle"/> explicitly if the pipeline
+        /// also uses triangles alongside curves.
         /// </summary>
         public OptixPipelineCompileOptionsBuilder WithUsesPrimitiveTypeFlags(OptixPrimitiveTypeFlags flags)
         {
@@ -142,6 +141,18 @@ namespace ILGPU.OptiX.Pipeline
         }
 
         /// <summary>
+        /// Sets whether the traversable graph may contain cluster acceleration
+        /// structures (see OptixClusterAccelBuild). Defaults to false. Requires
+        /// driver support - query
+        /// <c>OptixDeviceProperty.ClusterAccel</c> before enabling.
+        /// </summary>
+        public OptixPipelineCompileOptionsBuilder WithAllowClusteredGeometry(bool allowClusteredGeometry)
+        {
+            this.allowClusteredGeometry = allowClusteredGeometry;
+            return this;
+        }
+
+        /// <summary>
         /// Builds the compile options.
         /// </summary>
         public OptixPipelineCompileOptions Build() =>
@@ -155,6 +166,7 @@ namespace ILGPU.OptiX.Pipeline
                 UsesMotionBlur = usesMotionBlur ? 1 : 0,
                 UsesPrimitiveTypeFlags = primitiveTypeFlags,
                 AllowOpacityMicromaps = allowOpacityMicromaps ? 1 : 0,
+                AllowClusteredGeometry = allowClusteredGeometry ? 1 : 0,
             };
     }
 }

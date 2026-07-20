@@ -31,8 +31,7 @@ namespace Sample10
     // Radiance ray payload - 4 registers: 0-2 accumulated color, 3 the RNG state
     // threaded between raygen and closesthit (see LCG.cs). Declaring this on the
     // "radiance" ray type below drives the pipeline-wide payload register count
-    // (RayTracingPipelineBuilder picks the max across ray types), matching the old
-    // pipeline-wide NumPayloadValues = 4.
+    // (RayTracingPipelineBuilder picks the max across ray types).
     public struct RadiancePayload
     {
         public uint P0, P1, P2, P3;

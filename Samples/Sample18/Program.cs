@@ -23,7 +23,7 @@ namespace Sample18
             var nativeWindowSettings = new NativeWindowSettings
             {
                 ClientSize = new Vector2i(1024, 768),
-                Title = "Sample18 - Typed Payload Dispatch",
+                Title = "Sample18 - Curve Primitives (Built-in Intersection)",
                 Flags = ContextFlags.ForwardCompatible,
                 Profile = ContextProfile.Core,
                 APIVersion = new System.Version(3, 3),

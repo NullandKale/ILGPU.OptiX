@@ -30,6 +30,9 @@ namespace ILGPU.OptiX.Pipeline
         internal const string CLOSESTHIT_PREFIX = "__closesthit__";
         internal const string ANYHIT_PREFIX = "__anyhit__";
         internal const string INTERSECTION_PREFIX = "__intersection__";
+        internal const string EXCEPTION_PREFIX = "__exception__";
+        internal const string DIRECT_CALLABLE_PREFIX = "__direct_callable__";
+        internal const string CONTINUATION_CALLABLE_PREFIX = "__continuation_callable__";
 
         #endregion
 

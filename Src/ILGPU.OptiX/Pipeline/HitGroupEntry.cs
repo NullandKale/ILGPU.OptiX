@@ -19,7 +19,7 @@ namespace ILGPU.OptiX.Pipeline
         /// <summary>
         /// The kind used implicitly by <see cref="RayTypeBuilder{TLaunchParams}.HitGroup{TMaterial}(System.Action{TLaunchParams}, System.Action{TLaunchParams}?, System.Action{TLaunchParams}?)"/>
         /// and by <see cref="RayTracingPipeline{TLaunchParams}.SetHitRecords{TMaterial}(System.ReadOnlySpan{TMaterial}, int)"/> -
-        /// the single-hit-group-per-ray-type case every sample except Sample13/14 uses.
+        /// the single-hit-group-per-ray-type case.
         /// </summary>
         public const string Default = "default";
     }

@@ -85,6 +85,29 @@ namespace ILGPU.OptiX.Pipeline
             return ptxAssembly;
         }
 
+        /// <summary>
+        /// Creates PTX for a callable (DC/CC) program. Callable programs differ from
+        /// every other OptiX program type: they are device functions, not launchable
+        /// entries - nvcc compiles "extern \"C\" __device__ void
+        /// __direct_callable__x()" to ".visible .func", and OptiX rejects a
+        /// ".entry" under a callable name. Reuses <see cref="GeneratePTX"/> (so the
+        /// wrapper still reads launch params from the OptiX .const variable) and
+        /// downgrades the generated wrapper entry to a .visible .func.
+        /// </summary>
+        internal static string GenerateCallablePTX<TLaunchParams>(
+            this OptixDeviceContext deviceContext,
+            Action<TLaunchParams> kernel,
+            string kernelPrefix,
+            out string entryFunctionName)
+            where TLaunchParams : unmanaged
+        {
+            var ptxAssembly = deviceContext.GeneratePTX(
+                kernel, kernelPrefix, out entryFunctionName);
+            return ptxAssembly.Replace(
+                $".entry {entryFunctionName}(",
+                $".func {entryFunctionName}(");
+        }
+
         // WORKAROUND: when Context.Create() enables LibDevice(), ILGPU compiles every
         // transcendental call (sqrtf, sinf, ...) through NVVM, which emits the wrapper
         // as "__ilgpu<name>" (e.g. "__ilgpu__nv_sqrtf") with .visible linkage - meaning

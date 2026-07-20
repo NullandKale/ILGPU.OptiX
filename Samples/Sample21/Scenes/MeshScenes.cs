@@ -1,0 +1,283 @@
+using System;
+using System.IO;
+
+namespace Sample21
+{
+    /// <summary>
+    /// OBJ mesh scenes: one scene per bundled mesh plus the combined "all meshes" scene.
+    /// </summary>
+    public static class MeshScenes
+    {
+        // Shared by every single-mesh scene - reuses the existing triangle GAS
+        // pipeline as-is (meshes are pure triangle geometry, no new subsystem needed),
+        // auto-fits the camera/lights to each mesh's own bounding box since these 4 OBJs
+        // (cow, stanford-bunny, teapot, xyzrgb_dragon) are at very different
+        // real-world scales. Keeps the mesh's own vertex arrays directly
+        // (no SceneBuilder re-accumulation needed for a single unmodified mesh).
+        private static SceneData BuildMeshScene(string name, string objFileName, MaterialSbtData material, Vec3 lightColorA, Vec3 lightColorB)
+        {
+            string objPath = Path.Combine(AppContext.BaseDirectory, "models", "meshes", objFileName);
+            var mesh = OBJModel.Load(objPath);
+
+            SceneBuilder.ComputeBounds(mesh.Vertices, out Vec3 min, out Vec3 max);
+            Vec3 center = (min + max) / 2f;
+            float radius = (max - min).length() * 0.5f;
+
+            // Every triangle uses material index 0 - these OBJs have no mtllib/usemtl,
+            // so OBJModel.Load's own (unused) default-material bookkeeping is bypassed
+            // in favor of the one material passed in per mesh scene.
+            var triangleMaterialIds = new uint[mesh.Indices.Length];
+
+            var lights = new[]
+            {
+                new PointLightGpu { Position = center + new Vec3(radius * 1.5f, radius * 2f, radius * 1f), Color = lightColorA, Intensity = radius * radius * 3f },
+                new PointLightGpu { Position = center + new Vec3(-radius * 1.5f, radius * 1f, -radius * 1.5f), Color = lightColorB, Intensity = radius * radius * 1.5f },
+            };
+
+            return new SceneData
+            {
+                Name = name,
+                Vertices = mesh.Vertices,
+                Normals = mesh.Normals,
+                TexCoords = mesh.TexCoords,
+                // This builder constructs SceneData directly rather than going through
+                // SceneBuilder, so Tangents must be wired in explicitly here too, or
+                // Rays/RadianceRay.cs's unconditional
+                // launchParams.Tangents[tri.x] read (every triangle hit, no NumNeeLights-
+                // style empty-buffer guard) reads through a null device pointer the
+                // moment this scene has any Vertices at all.
+                Tangents = mesh.Tangents,
+                Indices = mesh.Indices,
+                TriangleMaterialIds = triangleMaterialIds,
+                Materials = new[] { material },
+                Lights = lights,
+                AmbientColor = new Vec3(0.5f, 0.55f, 0.65f),
+                AmbientIntensity = 0.1f,
+                BackgroundTop = new Vec3(0.35f, 0.45f, 0.6f),
+                BackgroundBottom = new Vec3(0.05f, 0.05f, 0.08f),
+                CameraOrigin = center + new Vec3(radius * 1.4f, radius * 0.9f, radius * 1.8f),
+                CameraLookAt = center,
+                CameraUp = new Vec3(0f, 1f, 0f),
+                CameraFovDeg = 45f,
+                CameraWorldScale = radius,
+            };
+        }
+
+        public static SceneData BuildCowScene() => BuildMeshScene(
+            "Mesh: Cow",
+            "cow.obj",
+            MaterialPresets.Solid(new Vec3(0.83f, 0.68f, 0.21f)),
+            new Vec3(1f, 0.95f, 0.85f), new Vec3(0.6f, 0.7f, 1f));
+
+        public static SceneData BuildBunnyScene() => BuildMeshScene(
+            "Mesh: Stanford Bunny",
+            "stanford-bunny.obj",
+            MaterialPresets.Solid(new Vec3(0.2f, 0.6f, 0.35f)),
+            new Vec3(1f, 0.95f, 0.85f), new Vec3(0.6f, 0.7f, 1f));
+
+        public static SceneData BuildTeapotScene() => BuildMeshScene(
+            "Mesh: Teapot",
+            "teapot.obj",
+            MaterialPresets.Solid(new Vec3(0.6f, 0.05f, 0.08f)),
+            new Vec3(1f, 0.95f, 0.85f), new Vec3(0.6f, 0.7f, 1f));
+
+        // Mirror (delta lobe, Roughness < Bsdf.DeltaRoughnessThreshold) rather than
+        // diffuse - exercises the bounce loop against a real high-poly mesh, matching
+        // the reference's own sapphire-mirror dragon. Roughness must be passed
+        // explicitly: MaterialPresets.Solid's own default (1f, fully rough) is what a
+        // "diffuse" material wants, and it's Roughness - not Metallic - that selects
+        // the mirror/delta lobe, so Metallic alone here would render a rough metal,
+        // not a mirror.
+        public static SceneData BuildDragonScene() => BuildMeshScene(
+            "Mesh: XYZRGB Dragon (mirror)",
+            "xyzrgb_dragon.obj",
+            MaterialPresets.Solid(new Vec3(0.85f, 0.9f, 0.95f), 0.95f, roughness: 0f),
+            new Vec3(1f, 0.95f, 0.85f), new Vec3(0.6f, 0.7f, 1f));
+
+        // Direct port of the reference's MeshScenes.BuildAllMeshesScene() - all four
+        // meshes normalized to a common size and placed side-by-side over one floor.
+        // The reference recenters each mesh at its largest-connected-component's
+        // triangle-centroid purely to compute placement (not to filter the actual
+        // rendered triangles) - approximated here with a plain bounding-box center,
+        // which places these well-formed meshes equivalently for rendering purposes.
+        public static SceneData BuildAllMeshesScene()
+        {
+            var b = new SceneBuilder
+            {
+                Name = "All meshes (cow/bunny/teapot/dragon)",
+                AmbientColor = new Vec3(1f, 1f, 1f),
+                AmbientIntensity = 0.1f,
+                BackgroundTop = new Vec3(0f, 0f, 0f),
+                BackgroundBottom = new Vec3(0f, 0f, 0f),
+                CameraOrigin = new Vec3(0f, 1.5f, 2f),
+                CameraLookAt = new Vec3(0f, 0.8f, -4f),
+                CameraUp = new Vec3(0f, 1f, 0f),
+                CameraFovDeg = 50f,
+                CameraWorldScale = 8f,
+            };
+
+            uint cow = (uint)b.AddMaterial(MaterialPresets.Solid(new Vec3(0.80f, 0.45f, 0.25f)));           // copper
+            uint bunny = (uint)b.AddMaterial(MaterialPresets.Solid(new Vec3(0.0f, 0.5f, 0.5f)));            // jade
+            uint teapot = (uint)b.AddMaterial(MaterialPresets.Solid(new Vec3(0.9f, 0.9f, 0.0f), 0.06f));    // gold
+            uint dragon = (uint)b.AddMaterial(MaterialPresets.Solid(new Vec3(0.88f, 0.0f, 0.88f), 0.65f));  // amethyst (Roughness left at Solid's default of 1 - renders as a rough, not mirror-like, metal)
+            uint floor = (uint)b.AddMaterial(MaterialPresets.Checker(new Vec3(0.82f, 0.82f, 0.82f), new Vec3(0.15f, 0.15f, 0.15f), 0.7f));
+
+            b.AddMesh("cow.obj", new Vec3(-3.2f, 0f, -4.0f), cow);
+            b.AddMesh("stanford-bunny.obj", new Vec3(-1.0f, 0f, -3.0f), bunny);
+            b.AddMesh("teapot.obj", new Vec3(1.6f, 0f, -3.2f), teapot);
+            b.AddMesh("xyzrgb_dragon.obj", new Vec3(3.2f, 0f, -4.6f), dragon);
+
+            // XZRect(-10,10, -10,4, c=0): X in [-10,10], Z in [-10,4], Y = 0, facing +Y.
+            b.AddQuad(new Vec3(-10f, 0f, 4f), new Vec3(10f, 0f, 4f), new Vec3(10f, 0f, -10f), new Vec3(-10f, 0f, -10f), new Vec3(0f, 1f, 0f), floor);
+
+            b.AddLight(new Vec3(0f, 6f, 0f), new Vec3(1f, 0.95f, 0.88f), 65f);
+            b.AddLight(new Vec3(-3f, 3f, 2f), new Vec3(0.85f, 0.90f, 1.0f), 35f);
+
+            return b.Build();
+        }
+
+        public static SceneData BuildSponzaScene()
+        {
+            string objPath = Path.Combine(AppContext.BaseDirectory, "models", "sponza", "sponza.obj");
+            var mesh = OBJModel.Load(objPath);
+
+            SceneBuilder.ComputeBounds(mesh.Vertices, out Vec3 min, out Vec3 max);
+            Vec3 center = (min + max) / 2f;
+            float radius = (max - min).length() * 0.5f;
+
+            // The bounding-box diagonal (radius above) is much larger than any single
+            // room/hall dimension, so using it directly to offset the camera places it
+            // far outside the building. Instead position the camera inside the atrium,
+            // near floor height, looking down the long axis (X, per the actual OBJ
+            // bounds) toward the far end - CameraWorldScale still uses the diagonal
+            // radius so WASD/orbit speed scales correctly with the model's real size.
+            float sizeX = max.x - min.x;
+            float sizeY = max.y - min.y;
+            float eyeHeight = min.y + (sizeY * 0.12f);
+
+            var b = new SceneBuilder
+            {
+                Name = "Sponza",
+                // Flat ambient is a pre-HDRI fill hack (see MaterialShading.ShadeSurface) -
+                // left non-zero here it would double-count diffuse illumination on top of
+                // the HDRI's own GI below, so it's zeroed the same way PbrShowcaseScene.cs
+                // does for its HDRI-lit scene.
+                AmbientColor = new Vec3(0f, 0f, 0f),
+                AmbientIntensity = 0f,
+                BackgroundTop = new Vec3(0.15f, 0.15f, 0.2f),
+                BackgroundBottom = new Vec3(0.05f, 0.05f, 0.08f),
+                // HDRI environment map test case - combined with the hand-promoted
+                // emissive vases and the existing point lights, exercises a full
+                // point+mesh+env MIS validation case through Sponza's colonnades.
+                EnvMapPath = "models/hdri/venice_sunset_1k.hdr",
+                CameraOrigin = new Vec3(min.x + (sizeX * 0.15f), eyeHeight, center.z),
+                CameraLookAt = new Vec3(max.x - (sizeX * 0.15f), eyeHeight, center.z),
+                CameraUp = new Vec3(0f, 1f, 0f),
+                CameraFovDeg = 60f,
+                CameraWorldScale = radius,
+            };
+
+            // Add materials from the OBJ file, using their textures
+            var materialIdMap = new uint[mesh.Materials.Length];
+            string modelDir = Path.GetDirectoryName(objPath) ?? ".";
+            string baseDir = AppContext.BaseDirectory;
+
+            for (int i = 0; i < mesh.Materials.Length; i++)
+            {
+                var objMat = mesh.Materials[i];
+                string relativePath = null;
+
+                // If material has a texture, compute relative path for TextureCache.GetOrLoad()
+                if (objMat.DiffuseTexturePath != null)
+                {
+                    string fullTexturePath = Path.Combine(modelDir, objMat.DiffuseTexturePath);
+                    if (File.Exists(fullTexturePath))
+                    {
+                        // TextureCache expects paths relative to AppContext.BaseDirectory
+                        // Manually compute relative path for .NET Framework compatibility
+                        fullTexturePath = Path.GetFullPath(fullTexturePath);
+                        baseDir = Path.GetFullPath(baseDir);
+                        if (fullTexturePath.StartsWith(baseDir, StringComparison.OrdinalIgnoreCase))
+                        {
+                            relativePath = fullTexturePath.Substring(baseDir.Length).TrimStart(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+                        }
+                        else
+                        {
+                            Console.WriteLine($"[Sponza] WARNING: Material '{objMat.Name}' texture {fullTexturePath} is not under the app base directory - skipping.");
+                        }
+                    }
+                    else
+                    {
+                        Console.WriteLine($"[Sponza] WARNING: Material '{objMat.Name}' texture not found: {fullTexturePath}");
+                    }
+                }
+
+                // These three materials are alpha-cutout in the original asset (MTL
+                // "d 1.000000" + a separate map_d mask) - the mask files themselves
+                // aren't bundled, but their diffuse PNGs already carry the same cutout
+                // shape baked into their own alpha channel, so AlphaCutoff alone is
+                // enough (see __anyhit__radiance/__anyhit__shadow). A no-op for
+                // Material__57/chain here since their textures aren't bundled and
+                // TextureObject stays 0.
+                bool isAlphaCutout = objMat.Name == "leaf" || objMat.Name == "Material__57" || objMat.Name == "chain";
+
+                // Hand-promoted emissive mesh-light test case - Sponza's bundled MTL
+                // has zero real emissive materials, so the three vase materials are
+                // overridden with a warm glow to exercise real emissive-triangle
+                // NEE/MIS against actual scene geometry, same pattern as the
+                // leaf/chain alpha-cutout override above.
+                bool isEmissiveVase = objMat.Name == "vase" || objMat.Name == "vase_round" || objMat.Name == "vase_hanging";
+
+                // Hand-authored scalar Metallic/Roughness overrides by material name -
+                // Sponza has no real ORM texture data to drive this from, so this is
+                // the fallback: the metal chain/flagpole get a real metallic response
+                // instead of Roughness=1's flat diffuse default, and the floor gets a
+                // subtler polished-stone gloss.
+                float materialRoughness = 1f;
+                float materialMetallic = 0f;
+                if (objMat.Name == "chain" || objMat.Name == "flagpole")
+                {
+                    materialRoughness = 0.35f;
+                    materialMetallic = 0.9f;
+                }
+                else if (objMat.Name == "floor")
+                {
+                    materialRoughness = 0.55f;
+                }
+
+                materialIdMap[i] = (uint)b.AddMaterial(
+                    new MaterialSbtData
+                    {
+                        BaseColor = objMat.Diffuse,
+                        Roughness = materialRoughness,
+                        Metallic = materialMetallic,
+                        MaterialKind = MaterialSbtData.Solid,
+                        TextureWeight = relativePath != null ? 1f : 0f,
+                        UVScale = 1f,
+                        AlphaCutoff = isAlphaCutout ? 0.5f : 0f,
+                        Emission = isEmissiveVase ? new Vec3(4f, 2.4f, 1f) : new Vec3(0f, 0f, 0f),
+                        EmissionStrength = 1f,
+                    },
+                    relativePath);
+            }
+
+            // Add the mesh with per-triangle material assignments
+            b.AddMeshWithPerTriangleMaterials(mesh, materialIdMap);
+
+            // The bounding-box diagonal (radius) is a whole-building-scale number -
+            // using it directly for light offset/intensity would put lights hundreds
+            // of units above the actual roof (maxY) and, for intensity, several million
+            // units bright (radius^2), wildly overexposing anything nearby. Use the
+            // vertical extent (sizeY, the "room-scale" dimension) instead, and place
+            // lights inside the hall below the roofline, spread along the long (X) axis
+            // since Sponza's atrium is one long corridor rather than a single room.
+            float lightHeight = min.y + (sizeY * 0.75f);
+            float lightIntensity = sizeY * sizeY * 0.4f;
+            b.AddLight(new Vec3(min.x + (sizeX * 0.2f), lightHeight, center.z), new Vec3(1f, 0.95f, 0.88f), lightIntensity);
+            b.AddLight(new Vec3(min.x + (sizeX * 0.5f), lightHeight, center.z), new Vec3(1f, 0.95f, 0.88f), lightIntensity);
+            b.AddLight(new Vec3(min.x + (sizeX * 0.8f), lightHeight, center.z), new Vec3(0.9f, 0.93f, 1.0f), lightIntensity);
+
+            return b.Build();
+        }
+    }
+}

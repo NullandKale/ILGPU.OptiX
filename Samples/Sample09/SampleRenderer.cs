@@ -28,12 +28,11 @@ using System.Windows;
 
 namespace Sample09
 {
-    // Shared placeholder payload for both ray types - matches the old pipeline-wide
-    // NumPayloadValues = 3. __closest__radiance's SetPRD writes all 3 slots (p0/p1/p2
-    // color channels); the shadow ray type only ever uses slot 0
-    // (OptixPayloadInterop.SetFloat(0, ...) in __miss__shadow) but the payload count is
-    // effectively a shared pipeline-wide register count, so declaring the same struct
-    // on both ray types matches the original behavior.
+    // Shared placeholder payload for both ray types - the payload count is a shared
+    // pipeline-wide register count, so both ray types declare the same 3-value struct
+    // even though __closest__radiance's SetPRD writes all 3 slots (p0/p1/p2 color
+    // channels) while the shadow ray type only ever uses slot 0
+    // (OptixPayloadInterop.SetFloat(0, ...) in __miss__shadow).
     public struct RadiancePayload
     {
         public uint P0, P1, P2;
@@ -130,7 +129,7 @@ namespace Sample09
             d_indices = accelerator.Allocate1D(model.Indices);
             d_materialIds = accelerator.Allocate1D(model.TriangleMaterialIds);
 
-            Console.WriteLine("Camera positioned at a fixed viewpoint chosen to show shadows under Sponza's colonnade (not auto-fit to the model, unlike Sample07/08).");
+            Console.WriteLine("Camera positioned at a fixed viewpoint chosen to show shadows under Sponza's colonnade.");
             camera = FitCameraToModel(model, width, height);
 
             var accelBuilder = new OptixAccelBuilder()
@@ -182,9 +181,9 @@ namespace Sample09
             return result.ToArray();
         }
 
-        // Matches example09_shadowRays/main.cpp exactly (same camera.from/cosFovy as
-        // Sample10) - valid because this sample bundles the identical, untransformed
-        // sponza.obj. Only camera.at depends on the loaded model's own bounds.
+        // Fixed camera.from/cosFovy values valid for this sample's bundled,
+        // untransformed sponza.obj; only camera.at depends on the loaded model's own
+        // bounds.
         private static Camera FitCameraToModel(OBJModel model, int width, int height)
         {
             Vec3 min = new Vec3(float.MaxValue, float.MaxValue, float.MaxValue);

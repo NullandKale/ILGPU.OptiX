@@ -89,8 +89,7 @@ namespace ILGPU.OptiX.Pipeline
     /// <summary>
     /// Ports the pure host-side math from the OptiX SDK's <c>optix_stack_size.h</c>
     /// (<c>optixUtilAccumulateStackSizes</c> / <c>optixUtilComputeStackSizes</c>) so
-    /// consumers never have to guess pipeline stack sizes (the "SetStackSize(2048,
-    /// 2048, 2048, 1)" magic numbers every sample used to cargo-cult).
+    /// consumers never have to guess pipeline stack sizes by hand.
     /// </summary>
     public static class OptixStackSizeUtil
     {
@@ -123,7 +122,7 @@ namespace ILGPU.OptiX.Pipeline
         /// stack sizes of every program group in its call graph, matching
         /// <c>optixUtilComputeStackSizes</c>. <paramref name="maxCCDepth"/> and
         /// <paramref name="maxDCDepth"/> default to 0 (no continuation/direct
-        /// callables), which is correct for every sample in this repository today.
+        /// callables).
         /// </summary>
         public static OptixComputedStackSize ComputeStackSizes(
             in OptixStackSizes stackSizes,
